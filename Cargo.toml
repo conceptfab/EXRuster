@@ -17,6 +17,7 @@ num_cpus = "1.17"       # Wykrywanie liczby rdzeni
 
 [build-dependencies]
 slint-build = "1.12.1"
+winres = "0.1"
 
 [profile.release]
 lto = true              # Link Time Optimization
