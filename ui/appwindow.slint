@@ -797,34 +797,43 @@ export component AppWindow inherits Window {
 
                     VerticalBox {
                         width: parent.width;
-                        spacing: 8px;
+                        // Stały odstęp między elementami galerii zgodnie z poprawki.md
+                        spacing: 24px;
 
+                        // Każdy element galerii jako Rectangle o wysokości równej zawartości
                         for t in root.thumbnails: Rectangle {
                             width: parent.width;
-                            height: 220px;
+                            height: content.preferred-height;
                             background: tile_area.has-hover ? Kolory.zakladka_tlo : Kolory.przezroczysty;
-                            border-width: 0px;
 
-                            VerticalBox {
+                            // Zawartość elementu: obrazek + opis
+                            content := VerticalBox {
                                 width: parent.width;
-                                spacing: 4px;
+                                // Stały odstęp obrazek -> opis
+                                spacing: 8px;
                                 alignment: start;
 
-                                // Miniaturka: 80% szerokości kolumny, proporcje zachowane (contain)
+                                // Miniaturka: szerokość dopasowana, wysokość zmienna (brak sztywnego height)
                                 Image {
                                     width: parent.width * (tile_area.has-hover ? 0.82 : 0.80);
-                                    height: 160px;
                                     source: t.img;
                                     image-fit: contain;
                                     horizontal-alignment: center;
                                     vertical-alignment: center;
                                 }
 
-                                Text { text: t.name;  color: Kolory.tekst_silny; font-size: 11px; font-family: "Geist"; horizontal-alignment: left;  x: 12px; }
-                                Text { text: t.size;  color: Kolory.tekst;       font-size: 10px; font-family: "Geist"; horizontal-alignment: left;  x: 12px; }
-                                Text { text: t.layers;color: Kolory.tekst;       font-size: 10px; font-family: "Geist"; horizontal-alignment: left;  x: 12px; }
+                                // Blok opisu z małym odstępem między liniami
+                                VerticalBox {
+                                    width: parent.width;
+                                    spacing: 2px;
+                                    alignment: start;
+                                    Text { text: t.name;  color: Kolory.tekst_silny; font-size: 11px; font-family: "Geist"; horizontal-alignment: left;  x: 12px; }
+                                    Text { text: t.size;  color: Kolory.tekst;       font-size: 10px; font-family: "Geist"; horizontal-alignment: left;  x: 12px; }
+                                    Text { text: t.layers;color: Kolory.tekst;       font-size: 10px; font-family: "Geist"; horizontal-alignment: left;  x: 12px; }
+                                }
                             }
 
+                            // Interakcja: kliknięcie całego elementu
                             tile_area := TouchArea {
                                 width: parent.width;
                                 height: parent.height;

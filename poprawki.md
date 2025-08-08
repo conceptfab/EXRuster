@@ -1,5 +1,4 @@
-Opis znajduje się pod swoją miniaturką.
-Wielkość (wysokość) miniaturek może być różna.
+Opis znajduje się pod swoją miniaturką.c
 Odstęp między opisem jednego elementu a miniaturką następnego elementu musi być stały.
 Odstęp między miniaturką a jej własnym opisem też musi być stały.
 To jest klasyczny problem layoutu i w Slint rozwiązuje się go bardzo elegancko przez zagnieżdżanie i odpowiednie użycie właściwości spacing.
