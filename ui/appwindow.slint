@@ -1,0 +1,943 @@
+import { HorizontalBox, VerticalBox, Button, ScrollView, TextEdit } from "std-widgets.slint";
+import { Kolory } from "colors.slint";
+
+import "../resources/fonts/Geist-Regular.otf";
+import "../resources/fonts/Geist-Bold.otf";
+import "../resources/fonts/GeistMono-Regular.otf";
+
+
+// Miniaturki folderu roboczego
+export struct ThumbItem {
+  img: image,
+  name: string,
+  size: string,
+  layers: string,
+  path: string,
+}
+
+export component AppWindow inherits Window {
+    in-out property <[ThumbItem]> thumbnails: [];
+    title: "EXRuster";
+    background: Kolory.tlo;
+    default-font-family: "Geist";
+    preferred-width: 1200px;
+    preferred-height: 700px;
+    min-width: 400px;
+    min-height: 300px;
+    
+    // Properties for column widths
+    in-out property <float> column1-percent: 0.15;
+    in-out property <float> column2-percent: 0.70;
+    property <float> column3-percent: 1.0 - column1-percent - column2-percent;
+    
+    // Menu state
+    in-out property <bool> file-menu-open: false;
+    
+    // Status bar properties
+    in-out property <string> status-text: "Ready";
+    in-out property <float> progress-value: 0.0;
+    
+    in-out property <image> exr-image;
+    in-out property <int> active-tab: 0; // 0=Info, 1=Kanały, 2=Warstwy, 3=Konsola
+    in-out property <[string]> layers-model: [];
+    in-out property <[color]> layers-colors: [];
+    in-out property <[int]> layers-font-sizes: [];
+    in-out property <string> selected-layer-item: "";
+    in-out property <[string]> console-lines: [];
+    in-out property <string> console-text: "";
+    in-out property <string> meta-text: "";
+    in-out property <[string]> meta-table-keys: [];
+    in-out property <[string]> meta-table-values: [];
+    callback clear-console();
+
+    // Kolory kanałów udostępniane do kodu Rust
+    out property <color> layers_color_default: Kolory.tekst_slabszy;
+    out property <color> layers_color_r: Kolory.kanal_r;
+    out property <color> layers_color_g: Kolory.kanal_g;
+    out property <color> layers_color_b: Kolory.kanal_b;
+
+    // Properties for image controls
+    in-out property <float> exposure-value: 0.0;
+    in-out property <float> gamma-value: 2.2;
+    // Wysokość obszaru treści zakładek
+    in-out property <length> tab-content-height: 200px;
+
+    // Callbacks
+    callback exit();
+    callback open-exr();
+    callback exposure-changed(float);
+    callback gamma-changed(float);
+    callback layer-tree-clicked(string);
+    callback choose-working-folder();
+    callback open-thumbnail(string); // otwórz plik EXR z podanej ścieżki
+    
+    // Menu Bar
+      Rectangle {
+        y: 0px;
+        x: 0px;
+        width: root.width;
+        height: 30px;
+        background: Kolory.tlo;
+        border-color: Kolory.obramowanie;
+        border-width: 1px;
+        
+        HorizontalBox {
+            padding: 4px;
+            spacing: 0px;
+            
+            // File Menu Button
+            Rectangle {
+                width: 40px;
+                height: 22px;
+                background: file-menu-area.has-hover || file-menu-open ? Kolory.hover : Kolory.przezroczysty;
+                
+                Text {
+                    text: "File";
+                    color: Kolory.tekst;
+                    font-size: 12px;
+                    font-family: "Geist";
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+                
+                file-menu-area := TouchArea {
+                    clicked => {
+                        file-menu-open = !file-menu-open;
+                    }
+                }
+            }
+        }
+    }
+    
+    // Dropdown Menu 
+    if file-menu-open: Rectangle {
+        y: 30px;
+        x: 4px;
+        width: 100px;
+        height: 52px;
+        background: Kolory.menu_tlo;
+        border-color: Kolory.menu_obramowanie;
+        border-width: 1px;
+        z: 10000;
+        
+        VerticalBox {
+            padding: 0px;
+            spacing: 0px;
+            
+            // Open EXR option
+            Rectangle {
+                height: 26px;
+                background: open-exr-area.has-hover ? Kolory.hover : Kolory.menu_tlo;
+                
+                Text {
+                    text: "Open EXR";
+                    color: Kolory.tekst;
+                    font-size: 12px;
+                    font-family: "Geist";
+                    horizontal-alignment: left;
+                    vertical-alignment: center;
+                    x: 15px;
+                }
+                
+                open-exr-area := TouchArea {
+                    width: parent.width;
+                    height: 46px;
+                    mouse-cursor: MouseCursor.default;
+                    clicked => {
+                        file-menu-open = false;
+                        open-exr();
+                    }
+                }
+            }
+            
+            // Exit option
+            Rectangle {
+                height: 26px;
+                background: exit-area.has-hover ? Kolory.hover : Kolory.menu_tlo;
+                
+                Text {
+                    text: "Exit";
+                    color: Kolory.tekst;
+                    font-size: 12px;
+                    font-family: "Geist";
+                    horizontal-alignment: left;
+                    vertical-alignment: center;
+                    x: 15px;
+                }
+                
+                exit-area := TouchArea {
+                    width: parent.width;
+                    height: parent.height;
+                    clicked => {
+                        file-menu-open = false;
+                        exit();
+                    }
+                }
+            }
+        }
+    }
+        
+    // Main content area with three resizable columns
+    HorizontalBox {
+        y: 30px;
+        x: 0px;
+        width: root.width;
+                 height: root.height - 54px; // 30px menu + 24px status bar
+        padding: 4px;
+        spacing: 2px;
+        
+        // Column 1
+        Rectangle {
+            width: (root.width - 12px) * column1-percent;
+            background: Kolory.panel_tlo;
+            border-color: Kolory.linia_podzialu;
+            border-width: 1px;
+            
+            VerticalBox {
+                padding: 4px;
+                spacing: 2px;
+                alignment: start;
+                
+                
+                // Lista warstw z obsługą przewijania
+                layers_scroll := ScrollView {
+                    height: parent.height - 10px;
+                    width: parent.width -5px;
+
+                    VerticalBox {
+                        width: layers_scroll.width;
+                        spacing: 1px;
+                        alignment: start;
+
+                        for layer-item[index] in layers-model: Rectangle {
+                            height: 18px;
+                            width: parent.width;
+                            background: (root.selected-layer-item == layer-item) ? Kolory.suwak_tlo
+                                        : (layer-hover.has-hover ? Kolory.suwak_tlo : Kolory.przezroczysty);
+
+                            // Lewy znacznik wyboru
+                            Rectangle {
+                                x: 0px;
+                                width: 3px;
+                                height: parent.height;
+                                background: (root.selected-layer-item == layer-item) ? root.layers-colors[index] : Kolory.przezroczysty;
+                            }
+
+                            Text {
+                                text: layer-item;
+                                color: root.layers-colors[index];
+                                font-size: root.layers-font-sizes[index] * 1px;
+                                font-family: "Geist";
+                                vertical-alignment: center;
+                                horizontal-alignment: left;
+                                x: 4px;
+                                font-weight: (root.selected-layer-item == layer-item) ? 700 : 400;
+                            }
+
+                            layer-hover := TouchArea {
+                                width: parent.width;
+                                height: parent.height;
+                                clicked => {
+                                    // Wywołaj callback z nazwą klikniętego elementu
+                                    layer-tree-clicked(layer-item);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Right border for resizing (bez zmian)
+            Rectangle {
+                x: parent.width - 4px;
+                width: 4px;
+                height: parent.height;
+                background: Kolory.przezroczysty;
+                
+                TouchArea {
+                    width: parent.width;
+                    height: parent.height;
+                    mouse-cursor: ew-resize;
+                    
+                    moved => {
+                        if (self.pressed) {
+                            column1-percent = max(0.05, min(0.90, column1-percent + (self.mouse-x - self.pressed-x) / (root.width - 12px)));
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Splitter 1
+        Rectangle {
+            width: 2px;
+            background: Kolory.linia_podzialu;
+        }
+        
+        // Column 2
+        Rectangle {
+            width: (root.width - 12px) * column2-percent;
+            background: Kolory.panel_tlo;
+            border-color: Kolory.linia_podzialu;
+            border-width: 1px;
+            
+            VerticalBox {
+                padding: 0px;
+                spacing: 0px;
+                alignment: stretch; // ROZCIĄGNIJ DO WYPEŁNIENIA!
+                
+                // Obraz - dopasowuje rozmiar do zawartości
+                Image {
+                    width: parent.width;
+                    height: max(0px, parent.height - 25px - tab-content-height);
+                    source: exr-image;
+                    image-fit: contain;
+                    vertical-alignment: top;
+                    horizontal-alignment: center;
+                }
+                
+                // Zakładki - zaraz pod obrazkiem
+                Rectangle {
+                    height: 25px;
+                    background: Kolory.zakladka_tlo;
+                    border-color: Kolory.zakladka_obramowanie;
+                    border-width: 1px;
+                
+                HorizontalBox {
+                    padding: 0px;
+                    spacing: 0px;
+                    
+                    // Tab 1 - Info
+                    Rectangle {
+                        background: active-tab == 0 ? Kolory.zakladka_aktywna_tlo : (tab1-area.has-hover ? Kolory.hover : Kolory.zakladka_tlo);
+                        border-color: active-tab == 0 ? Kolory.zakladka_aktywna_obramowanie : Kolory.zakladka_obramowanie;
+                        border-width: 1px;
+                        
+                         Text {
+                             text: "Exposure";
+                             color: active-tab == 0 ? Kolory.tekst_silny : Kolory.tekst;
+                             font-size: 10px;
+                             font-family: "Geist";
+                             font-weight: 700;
+                             horizontal-alignment: center;
+                             vertical-alignment: center;
+                         }
+                        
+                        tab1-area := TouchArea {
+                            clicked => {
+                                active-tab = 0;
+                            }
+                        }
+                    }
+                    
+                    // Tab 2 - Kanały
+                    Rectangle {
+                        background: active-tab == 1 ? Kolory.zakladka_aktywna_tlo : (tab2-area.has-hover ? Kolory.hover : Kolory.zakladka_tlo);
+                        border-color: active-tab == 1 ? Kolory.zakladka_aktywna_obramowanie : Kolory.zakladka_obramowanie;
+                        border-width: 1px;
+                        
+                        Text {
+                            text: "Export";
+                            color: active-tab == 1 ? Kolory.tekst_silny : Kolory.tekst;
+                            font-size: 10px;
+                        font-family: "Geist";
+                        font-weight: 700;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                        
+                        tab2-area := TouchArea {
+                            clicked => {
+                                active-tab = 1;
+                            }
+                        }
+                    }
+                    
+                    // Tab 3 - Warstwy
+                    Rectangle {
+                        background: active-tab == 2 ? Kolory.zakladka_aktywna_tlo : (tab3-area.has-hover ? Kolory.hover : Kolory.zakladka_tlo);
+                        border-color: active-tab == 2 ? Kolory.zakladka_aktywna_obramowanie : Kolory.zakladka_obramowanie;
+                        border-width: 1px;
+                        
+                        Text {
+                            text: "Meta";
+                            color: active-tab == 2 ? Kolory.tekst_silny : Kolory.tekst;
+                            font-size: 9px;
+                        font-family: "Geist";
+                        font-weight: 700;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                        
+                        tab3-area := TouchArea {
+                            clicked => {
+                                active-tab = 2;
+                            }
+                        }
+                    }
+                    
+                    // Tab 4 - Konsola
+                    Rectangle {
+                        background: active-tab == 3 ? Kolory.zakladka_aktywna_tlo : (tab4-area.has-hover ? Kolory.hover : Kolory.zakladka_tlo);
+                        border-color: active-tab == 3 ? Kolory.zakladka_aktywna_obramowanie : Kolory.zakladka_obramowanie;
+                        border-width: 1px;
+                        
+                        Text {
+                            text: "Console";
+                            color: active-tab == 3 ? Kolory.tekst_silny : Kolory.tekst;
+                            font-size: 10px;
+                        font-family: "Geist";
+                        font-weight: 700;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                        
+                        tab4-area := TouchArea {
+                            clicked => {
+                                active-tab = 3;
+                            }
+                        }
+                    }
+                }
+                }
+                
+                // Zawartość aktywnej zakładki
+                Rectangle {
+                    background: Kolory.menu_tlo;
+                    height: tab-content-height;
+                    
+                    // Info tab content
+                    if active-tab == 0: VerticalBox {
+                        padding: 10px;
+                        padding-bottom: 0px;
+                        spacing: 8px;
+                        alignment: stretch;
+                        
+                        
+                        
+                        // Exposure slider
+                        HorizontalBox {
+                            spacing: 8px;
+                            alignment: center;
+                            
+                            Text {
+                                text: "Exposure:";
+                                color: Kolory.tekst;
+                                font-size: 10px;
+                                font-family: "Geist";
+                                width: 70px;
+                            }
+                            
+                            Rectangle {
+                                width: 80%;
+                                height: 20px;
+                                background: Kolory.suwak_tlo;
+                                border-radius: 3px;
+                                
+                                // Slider track
+                                Rectangle {
+                                    y: 8px;
+                                    height: 4px;
+                                    width: parent.width - 8px;
+                                    x: 4px;
+                                    background: Kolory.suwak_tor;
+                                    border-radius: 2px;
+                                    
+                                    // Slider handle
+                                    Rectangle {
+                                        width: 12px;
+                                        height: 12px;
+                                        y: -4px;
+                                        x: (parent.width - 12px) * ((exposure-value + 5.0) / 10.0);
+                                        background: exposure-area.has-hover ? Kolory.ekspozycja_galka_hover : Kolory.ekspozycja_galka;
+                                        border-radius: 6px;
+                                        border-color: Kolory.tekst_silny;
+                                        border-width: 1px;
+                                    }
+                                }
+                                
+                                exposure-area := TouchArea {
+                                    width: parent.width;
+                                    height: parent.height;
+                                    
+                                    moved => {
+                                        if (self.pressed) {
+                                            exposure-value = -5.0 + (self.mouse-x / parent.width) * 10.0;
+                                            exposure-value = max(-5.0, min(5.0, exposure-value));
+                                            // KURWA NAPRAWIONE! Callback NATYCHMIAST podczas przesuwania!
+                                            exposure-changed(exposure-value);
+                                        }
+                                    }
+                                    
+                                    clicked => {
+                                        // Również dla pojedynczego kliknięcia
+                                        exposure-value = -5.0 + (self.mouse-x / parent.width) * 10.0;
+                                        exposure-value = max(-5.0, min(5.0, exposure-value));
+                                        exposure-changed(exposure-value);
+                                    }
+                                }
+                            }
+                            
+                            Text {
+                                text: Math.round(exposure-value * 100) / 100;
+                                color: Kolory.tekst_silny;
+                                font-size: 10px;
+                                font-family: "Geist";
+                                width: 40px;
+                                horizontal-alignment: center;
+                            }
+                        }
+                        
+                        // Gamma slider
+                        HorizontalBox {
+                            spacing: 8px;
+                            alignment: center;
+                            
+                            Text {
+                                text: "Gamma:";
+                                color: Kolory.tekst;
+                                font-size: 10px;
+                                font-family: "Geist";
+                                width: 70px;
+                            }
+                            
+                            Rectangle {
+                                width: 80%;
+                                height: 20px;
+                                background: Kolory.suwak_tlo;
+                                border-radius: 3px;
+                                
+                                // Slider track
+                                Rectangle {
+                                    y: 8px;
+                                    height: 4px;
+                                    width: parent.width - 8px;
+                                    x: 4px;
+                                    background: Kolory.suwak_tor;
+                                    border-radius: 2px;
+                                    
+                                    // Slider handle
+                                    Rectangle {
+                                        width: 12px;
+                                        height: 12px;
+                                        y: -4px;
+                                        x: (parent.width - 12px) * ((gamma-value - 0.5) / 4.0);
+                                        background: gamma-area.has-hover ? Kolory.gamma_galka_hover : Kolory.gamma_galka;
+                                        border-radius: 6px;
+                                        border-color: Kolory.tekst_silny;
+                                        border-width: 1px;
+                                    }
+                                }
+                                
+                                gamma-area := TouchArea {
+                                    width: parent.width;
+                                    height: parent.height;
+                                    
+                                    moved => {
+                                        if (self.pressed) {
+                                            gamma-value = 0.5 + (self.mouse-x / parent.width) * 4.0;
+                                            gamma-value = max(0.5, min(4.5, gamma-value));
+                                            // KURWA NAPRAWIONE! Callback NATYCHMIAST podczas przesuwania!
+                                            gamma-changed(gamma-value);
+                                        }
+                                    }
+                                    
+                                    clicked => {
+                                        // Również dla pojedynczego kliknięcia
+                                        gamma-value = 0.5 + (self.mouse-x / parent.width) * 4.0;
+                                        gamma-value = max(0.5, min(4.5, gamma-value));
+                                        gamma-changed(gamma-value);
+                                    }
+                                }
+                            }
+                            
+                            Text {
+                                text: Math.round(gamma-value * 100) / 100;
+                                color: Kolory.tekst_silny;
+                                font-size: 10px;
+                                font-family: "Geist";
+                                width: 40px;
+                                horizontal-alignment: center;
+                            }
+                        }
+                        
+                        // Spacer to push reset button to bottom
+                        Rectangle {
+                            height: 5px;
+                        }
+                        
+                        // Reset button
+                        Rectangle {
+                            height: 25px;
+                            background: reset-area.has-hover ? Kolory.hover : Kolory.suwak_tlo;
+                            border-color: Kolory.suwak_tor;
+                            border-width: 1px;
+                            border-radius: 3px;
+                            
+                            Text {
+                                text: "Reset";
+                                color: Kolory.tekst;
+                                font-size: 10px;
+                                font-family: "Geist";
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                            
+                            reset-area := TouchArea {
+                                width: parent.width;
+                                height: parent.height;
+                                clicked => {
+                                    exposure-value = 0.0;
+                                    gamma-value = 2.2;
+                                    // Wywołaj callback'i aby zaktualizować obraz
+                                    exposure-changed(exposure-value);
+                                    gamma-changed(gamma-value);
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Kanały tab content
+                    if active-tab == 1: VerticalBox {
+                        padding: 10px;
+                        spacing: 5px;
+                        alignment: start;
+                        
+                        Text {
+                            text: "Color Channels";
+                            color: Kolory.tekst_silny;
+                            font-size: 12px;
+                            font-family: "Geist";
+                            font-weight: 700;
+                        }
+                        
+                        Text {
+                            text: "☑ Red Channel";
+                            color: Kolory.kanal_r;
+                            font-size: 10px;
+                            font-family: "Geist";
+                        }
+                        
+                        Text {
+                            text: "☑ Green Channel";
+                            color: Kolory.kanal_g;
+                            font-size: 10px;
+                            font-family: "Geist";
+                        }
+                        
+                        Text {
+                            text: "☑ Blue Channel";
+                            color: Kolory.kanal_b;
+                            font-size: 10px;
+                            font-family: "Geist";
+                        }
+                        
+                        Text {
+                            text: "☑ Alpha Channel";
+                            color: Kolory.tekst;
+                            font-size: 10px;
+                            font-family: "Geist";
+                        }
+                    }
+                    
+                    // Meta tab content — tabela 2 kolumny (zawijanie i nagłówki sekcji)
+                    if active-tab == 2: ScrollView {
+                        padding: 0px; width: parent.width - 8px; height: parent.height - 8px; x: 4px; y: 4px;
+                        VerticalBox {
+                            width: parent.width - 8px; spacing: 0px; alignment: start;
+                            for key[i] in meta-table-keys: Rectangle {
+                                property <bool> is_header: root.meta-table-values[i] == "";
+                                width: parent.width;
+                                background: Kolory.przezroczysty;
+                                height: is_header ? header_text.preferred-height + 20px : Math.max(22px, Math.max(k_text.preferred-height, v_text.preferred-height) + 20px);
+
+                                // Nagłówek sekcji
+                                header_text := Text { visible: is_header; x: 4px; y: 10px; text: key; color: Kolory.tekst_silny; font-size: 11px; font-family: "Geist"; }
+
+                                // Zwykły wiersz
+                                HorizontalBox {
+                                    visible: !is_header; spacing: 8px; x: 4px; y: 10px; width: parent.width - 8px; height: parent.height - 20px;
+                                    Rectangle { width: (parent.width - 8px) * 0.30; height: parent.height;
+                                        k_text := Text { text: key; color: Kolory.tekst_silny; font-size: 10px; font-family: "Geist"; wrap: word-wrap; width: parent.width; height: parent.height; vertical-alignment: center; }
+                                    }
+                                    Rectangle { width: (parent.width - 8px) * 0.70; height: parent.height;
+                                        v_text := Text {
+                                            text: root.meta-table-values[i];
+                                            color: Kolory.tekst;
+                                            wrap: word-wrap;
+                                            font-size: 10px;
+                                            horizontal-alignment: left;
+                                            vertical-alignment: center;
+                                            width: parent.width; height: parent.height;
+                                        }
+                                    }
+                                }
+
+                                // Dolny separator (tylko linia)
+                                Rectangle { y: parent.height - 1px; x: 0px; width: parent.width; height: 1px; background: Kolory.zakladka_obramowanie; }
+                            }
+                        }
+                    }
+                    
+                    // Konsola tab content
+                    if active-tab == 3: HorizontalBox {
+                        padding: 6px;
+                        spacing: 6px;
+                        alignment: stretch;
+
+                        // Lewo: okno konsoli 70% szerokości, 100% wysokości
+                        Rectangle {
+                            width: parent.width * 0.85;
+                            height: parent.height;
+                            border-color: Kolory.zakladka_obramowanie;
+                            border-width: 1px;
+                            background: Kolory.konsola_tlo;
+
+                            ScrollView {
+                                x: 4px;
+                                y: 4px;
+                                width: parent.width - 8px;
+                                height: parent.height - 8px;
+                                TextEdit {
+                                    text: console-text;
+                                    read-only: true;
+                                    wrap: word-wrap;
+                                    font-size: 10px;
+                                    horizontal-alignment: left;
+                                    width: parent.width;
+                                    height: parent.height;
+                                }
+                            }
+                        }
+
+                        // Prawo: 30% szerokości — przyciski / narzędzia
+                        Rectangle {
+                            width: parent.width * 0.14;
+                            height: parent.height;
+                            background: Kolory.menu_tlo;
+
+                            VerticalBox {
+                                padding: 0px;
+                                spacing: 6px;
+                                alignment: start;
+
+                                Rectangle {
+                                    width: parent.width * 0.95;
+                                    height: 24px;
+                                    background: btn_area.has-hover ? Kolory.hover : Kolory.suwak_tlo;
+                                    border-color: Kolory.suwak_tor;
+                                    border-width: 1px;
+                                    border-radius: 3px;
+
+                            Text {
+                                text: "Clear";
+                                        color: Kolory.tekst;
+                                        font-size: 10px;
+                                        font-family: "Geist";
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                    }
+
+                                    btn_area := TouchArea {
+                                        width: parent.width;
+                                        height: parent.height;
+                                        clicked => { root.clear-console(); }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Right border for resizing
+            Rectangle {
+                x: parent.width - 4px;
+                width: 4px;
+                height: parent.height;
+            background: Kolory.przezroczysty;
+                
+                TouchArea {
+                    width: parent.width;
+                    height: parent.height;
+                    mouse-cursor: ew-resize;
+                    
+                    moved => {
+                        if (self.pressed) {
+                            column2-percent = max(0.05, min(0.90, column2-percent + (self.mouse-x - self.pressed-x) / (root.width - 12px)));
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Splitter 2
+        Rectangle {
+            width: 2px;
+            background: Kolory.linia_podzialu;
+        }
+        
+        // Column 3
+        Rectangle {
+            width: (root.width - 12px) * column3-percent - 8px;
+            background: Kolory.panel_tlo;
+            border-color: Kolory.linia_podzialu;
+            border-width: 1px;
+            
+            // Prawa kolumna: lista miniaturek + przycisk wyboru folderu na dole
+            VerticalBox {
+                padding: 6px;
+                spacing: 6px;
+                alignment: start;
+
+                // Obszar na miniaturki (placeholder do wypełnienia modelem)
+                ScrollView {
+                    width: parent.width - 12px;
+                    height: parent.height - 40px; // zostaw miejsce na przycisk
+
+                    VerticalBox {
+                        width: parent.width;
+                        spacing: 8px;
+
+                        for t in root.thumbnails: Rectangle {
+                            width: parent.width;
+                            height: 220px;
+                            background: tile_area.has-hover ? Kolory.zakladka_tlo : Kolory.przezroczysty;
+                            border-width: 0px;
+
+                            VerticalBox {
+                                width: parent.width;
+                                spacing: 4px;
+                                alignment: start;
+
+                                // Miniaturka: 80% szerokości kolumny, proporcje zachowane (contain)
+                                Image {
+                                    width: parent.width * (tile_area.has-hover ? 0.82 : 0.80);
+                                    height: 160px;
+                                    source: t.img;
+                                    image-fit: contain;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+
+                                Text { text: t.name;  color: Kolory.tekst_silny; font-size: 11px; font-family: "Geist"; horizontal-alignment: left;  x: 12px; }
+                                Text { text: t.size;  color: Kolory.tekst;       font-size: 10px; font-family: "Geist"; horizontal-alignment: left;  x: 12px; }
+                                Text { text: t.layers;color: Kolory.tekst;       font-size: 10px; font-family: "Geist"; horizontal-alignment: left;  x: 12px; }
+                            }
+
+                            tile_area := TouchArea {
+                                width: parent.width;
+                                height: parent.height;
+                                mouse-cursor: MouseCursor.pointer;
+                                clicked => { root.open-thumbnail(t.path); }
+                            }
+                        }
+                    }
+                }
+
+                // Przyciski na dole
+                Rectangle {
+                    width: parent.width - 12px;
+                    height: 28px;
+                    background: choose_folder_area.has-hover ? Kolory.hover : Kolory.suwak_tlo;
+                    border-color: Kolory.suwak_tor;
+                    border-width: 1px;
+                    border-radius: 3px;
+
+                    Text {
+                        text: "Select working folder";
+                        color: Kolory.tekst;
+                        font-size: 10px;
+                        font-family: "Geist";
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+
+                    choose_folder_area := TouchArea {
+                        width: parent.width;
+                        height: parent.height;
+                        clicked => { root.choose-working-folder(); }
+                    }
+                }
+            }
+        }
+         }
+     
+     // Status Bar
+     Rectangle {
+         y: root.height - 24px;
+         x: 0px;
+         width: root.width;
+         height: 24px;
+          background: Kolory.menu_tlo;
+          border-color: Kolory.obramowanie;
+         border-width: 1px;
+         
+         HorizontalBox {
+             padding: 4px;
+             spacing: 8px;
+             alignment: stretch;
+             
+             // Column 1 - status text (lewa strona)
+             Rectangle {
+                width: root.width/3 - 12px;
+
+                 Text {
+                     horizontal-alignment: TextHorizontalAlignment.left;
+                     font-size: 10px;
+                     text: status-text;
+                      font-family: "Geist";
+                     x:15px;
+
+                 }
+             }
+             
+             // Column 2
+             Rectangle {
+                width: root.width/3;
+
+             }
+             
+             // Column 3 - progress (right side)
+             Rectangle {
+                width: root.width/3 - 12px;
+
+                // Progress bar anchored to the right
+                Rectangle {
+                    // container
+                    width: parent.width * 0.75;
+                    height: 8px;
+                    x: parent.width - self.width - 8px;
+                    y: (parent.height - self.height) / 2;
+                    background: Kolory.suwak_tlo;
+                    border-radius: 4px;
+
+                    // fill
+                    if root.progress-value >= 0.0: Rectangle {
+                        width: parent.width * max(0.0, min(1.0, root.progress-value));
+                        height: parent.height;
+                        background: Kolory.progress_fill;
+                        border-radius: 4px;
+                    }
+
+                    // indeterminate animation when progress-value < 0
+                    if root.progress-value < 0.0: Rectangle {
+                        y: 0px;
+                        height: parent.height;
+                        width: parent.width * 0.25;
+                        background: Kolory.progress_fill;
+                        border-radius: 4px;
+                        property <float> phase: 0.0;
+                        // move chunk across continuously
+                        x: (parent.width - self.width) * phase;
+                        Timer {
+                            interval: 16ms;
+                            running: true;
+                            triggered => { parent.phase = Math.mod(parent.phase + 0.01, 1.0); self.running = true; }
+                        }
+                    }
+                }
+             }
+         }
+     }
+ }
