@@ -193,8 +193,8 @@ fn setup_ui_callbacks(
                     let t0 = std::time::Instant::now();
                     match crate::thumbnails::generate_exr_thumbnails_in_dir(&dir, 384, exposure, gamma) {
                         Ok(mut thumbs) => {
-                            // sortowanie alfabetyczne wg nazwy pliku
-                            thumbs.sort_by(|a, b| a.file_name.to_lowercase().cmp(&b.file_name.to_lowercase()));
+                            // sortowanie: więcej wiodących '_' wyżej, potem naturalne porównanie
+                            thumbs.sort_by(|a, b| crate::thumbnails::natural_cmp_with_priority(&a.file_name, &b.file_name));
                             // mapowanie do modelu Slint
                             let items: Vec<ThumbItem> = thumbs.into_iter().map(|t| ThumbItem {
                                 img: t.image,

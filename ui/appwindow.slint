@@ -786,13 +786,15 @@ export component AppWindow inherits Window {
             
             // Prawa kolumna: lista miniaturek + przycisk wyboru folderu na dole
             VerticalBox {
-                padding: 6px;
+                // brak paddingu: elementy kleją się do prawej krawędzi kolumny
+                padding: 0px;
                 spacing: 6px;
                 alignment: start;
 
                 // Obszar na miniaturki (placeholder do wypełnienia modelem)
                 ScrollView {
-                    width: parent.width - 12px;
+                    // pełna szerokość kolumny, aby uniknąć poziomego scrolla
+                    width: parent.width;
                     height: parent.height - 40px; // zostaw miejsce na przycisk
 
                     VerticalBox {
@@ -809,27 +811,36 @@ export component AppWindow inherits Window {
                             // Zawartość elementu: obrazek + opis
                             content := VerticalBox {
                                 width: parent.width;
-                                // Stały odstęp obrazek -> opis
-                                spacing: 8px;
+                                // Overlay opisów na miniaturze, brak odstępu pionowego
+                                spacing: 0px;
                                 alignment: start;
 
-                                // Miniaturka: szerokość dopasowana, wysokość zmienna (brak sztywnego height)
-                                Image {
-                                    width: parent.width * (tile_area.has-hover ? 0.82 : 0.80);
-                                    source: t.img;
-                                    image-fit: contain;
-                                    horizontal-alignment: center;
-                                    vertical-alignment: center;
-                                }
+                                // Kontener miniatury z prawym marginesem 10px
+                                thumb := Rectangle {
+                                    // prawa krawędź 10px od prawej krawędzi kolumny
+                                    width: parent.width - 10px;
+                                    height: img.preferred-height;
 
-                                // Blok opisu z małym odstępem między liniami
-                                VerticalBox {
-                                    width: parent.width;
-                                    spacing: 2px;
-                                    alignment: start;
-                                    Text { text: t.name;  color: Kolory.tekst_silny; font-size: 11px; font-family: "Geist"; horizontal-alignment: left;  x: 12px; }
-                                    Text { text: t.size;  color: Kolory.tekst;       font-size: 10px; font-family: "Geist"; horizontal-alignment: left;  x: 12px; }
-                                    Text { text: t.layers;color: Kolory.tekst;       font-size: 10px; font-family: "Geist"; horizontal-alignment: left;  x: 12px; }
+                                    // Obraz dopasowany do szerokości kontenera
+                                    img := Image {
+                                        width: parent.width;
+                                        source: t.img;
+                                        image-fit: contain;
+                                        horizontal-alignment: right;
+                                        vertical-alignment: center;
+                                    }
+
+                                    // Opisy przyklejone do lewego dolnego narożnika miniatury
+                                    overlay := VerticalBox {
+                                        x: 0px;
+                                        y: parent.height - self.preferred-height;
+                                        width: parent.width;
+                                        spacing: 2px;
+                                        alignment: start;
+                                        Text { text: t.name;  color: Kolory.tekst_silny; font-size: 11px; font-family: "Geist"; horizontal-alignment: left; }
+                                        Text { text: t.size;  color: Kolory.tekst;       font-size: 10px; font-family: "Geist"; horizontal-alignment: left; }
+                                        Text { text: t.layers;color: Kolory.tekst;       font-size: 10px; font-family: "Geist"; horizontal-alignment: left; }
+                                    }
                                 }
                             }
 

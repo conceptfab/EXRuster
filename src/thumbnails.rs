@@ -7,6 +7,7 @@ use rayon::prelude::*;
 use slint::{Image, Rgba8Pixel, SharedPixelBuffer};
 
 use crate::image_processing::process_pixel;
+use std::cmp::Ordering;
 
 /// Zwięzła reprezentacja miniaturki EXR do wyświetlenia w UI
 pub struct ExrThumbnailInfo {
@@ -39,12 +40,11 @@ pub fn generate_exr_thumbnails_in_dir(
         .collect();
 
     // 2) Na głównym wątku skonstruuj slint::Image (nie jest Send)
-    let thumbnails: Vec<ExrThumbnailInfo> = works
+    let mut thumbnails: Vec<ExrThumbnailInfo> = works
         .into_iter()
         .map(|w| {
             let mut buffer = SharedPixelBuffer::<Rgba8Pixel>::new(w.width, w.height);
             let slice = buffer.make_mut_slice();
-            // skopiuj surowe RGBA8 do bufora Slint
             for (dst, chunk) in slice.iter_mut().zip(w.pixels.chunks_exact(4)) {
                 *dst = Rgba8Pixel { r: chunk[0], g: chunk[1], b: chunk[2], a: chunk[3] };
             }
@@ -59,7 +59,90 @@ pub fn generate_exr_thumbnails_in_dir(
         })
         .collect();
 
+    // Sortowanie z priorytetem wiodących podkreślników, potem naturalne porównanie
+    thumbnails.sort_by(|a, b| natural_cmp_with_priority(&a.file_name, &b.file_name));
+
     Ok(thumbnails)
+}
+
+/// Naturalne porównanie napisów (case-insensitive, sekwencje cyfr porównywane numerycznie)
+pub fn natural_cmp_str(a: &str, b: &str) -> Ordering {
+    fn take_number<I>(it: &mut std::iter::Peekable<I>) -> (u128, usize)
+    where
+        I: Iterator<Item = char>,
+    {
+        let mut value: u128 = 0;
+        let mut len: usize = 0;
+        while let Some(&ch) = it.peek() {
+            if ch.is_ascii_digit() {
+                it.next();
+                value = value.saturating_mul(10).saturating_add((ch as u32 - '0' as u32) as u128);
+                len += 1;
+            } else {
+                break;
+            }
+        }
+        (value, len)
+    }
+
+    let mut ia = a.chars().peekable();
+    let mut ib = b.chars().peekable();
+
+    loop {
+        let ca = ia.peek().copied();
+        let cb = ib.peek().copied();
+
+        match (ca, cb) {
+            (None, None) => return Ordering::Equal,
+            (None, Some(_)) => return Ordering::Less,
+            (Some(_), None) => return Ordering::Greater,
+            (Some(cha), Some(chb)) => {
+                let da = cha.is_ascii_digit();
+                let db = chb.is_ascii_digit();
+                if da && db {
+                    let (va, la) = take_number(&mut ia);
+                    let (vb, lb) = take_number(&mut ib);
+                    match va.cmp(&vb) {
+                        Ordering::Equal => {
+                            // Równe numerycznie — krótsza sekwencja cyfr najpierw (np. 1 < 01)
+                            match la.cmp(&lb) {
+                                Ordering::Equal => continue,
+                                ord => return ord,
+                            }
+                        }
+                        ord => return ord,
+                    }
+                } else {
+                    // Porównanie case-insensitive pojedynczych znaków
+                    let la = ia.next().unwrap().to_ascii_lowercase();
+                    let lb = ib.next().unwrap().to_ascii_lowercase();
+                    match la.cmp(&lb) {
+                        Ordering::Equal => continue,
+                        ord => return ord,
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[inline]
+fn count_leading_underscores(s: &str) -> usize {
+    let mut count = 0usize;
+    for ch in s.chars() {
+        if ch == '_' { count += 1; } else { break; }
+    }
+    count
+}
+
+/// Najpierw więcej wiodących '_' => wyżej, a przy remisie naturalne porównanie całej nazwy
+pub fn natural_cmp_with_priority(a: &str, b: &str) -> Ordering {
+    let ua = count_leading_underscores(a);
+    let ub = count_leading_underscores(b);
+    match ub.cmp(&ua) { // więcej '_' ma pierwszeństwo
+        Ordering::Equal => natural_cmp_str(a, b),
+        ord => ord,
+    }
 }
 
 fn list_exr_files(dir: &Path) -> anyhow::Result<Vec<PathBuf>> {
