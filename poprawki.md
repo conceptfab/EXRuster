@@ -1,2 +1,0 @@
-poprawki sortowania miniaturek
-centrowanie miniaturek w kolumnie

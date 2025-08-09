@@ -62,6 +62,11 @@ export component AppWindow inherits Window {
     // Wysokość obszaru treści zakładek
     in-out property <length> tab-content-height: 200px;
 
+    // Dolny panel (wariant A: 0px gdy ukryty)
+    in-out property <bool> bottom-panel-visible: false;
+    in-out property <length> bottom-panel-expanded-height: 140px;
+    property <length> bottom-panel-current-height: bottom-panel-visible ? bottom-panel-expanded-height : 0px;
+
     // Callbacks
     callback exit();
     callback open-exr();
@@ -182,7 +187,7 @@ export component AppWindow inherits Window {
         y: 30px;
         x: 0px;
         width: root.width;
-                 height: root.height - 54px; // 30px menu + 24px status bar
+                 height: root.height - 54px - bottom-panel-current-height; // 30px menu + 24px status bar + dolny panel
         padding: 4px;
         spacing: 2px;
         
@@ -871,6 +876,20 @@ export component AppWindow inherits Window {
             }
         }
          }
+
+     // Dolny panel (pełna szerokość, nad paskiem statusu)
+     Rectangle {
+         x: 0px;
+         y: root.height - 24px - bottom-panel-current-height;
+         width: root.width;
+         height: bottom-panel-current-height;
+         background: Kolory.menu_tlo;
+         border-color: Kolory.obramowanie;
+         border-width: 1px;
+         clip: true;
+
+         animate height { duration: 300ms; easing: ease-in-out; }
+     }
      
      // Status Bar
      Rectangle {
@@ -905,6 +924,32 @@ export component AppWindow inherits Window {
              Rectangle {
                 width: root.width/3;
 
+                // Przycisk do pokazywania/chowania dolnego panelu
+                Rectangle {
+                    width: 90px;
+                    height: 18px;
+                    y: (parent.height - self.height) / 2;
+                    x: 8px;
+                    background: toggle_panel_area.has-hover ? Kolory.hover : Kolory.suwak_tlo;
+                    border-color: Kolory.suwak_tor;
+                    border-width: 1px;
+                    border-radius: 3px;
+
+                    Text {
+                        text: bottom-panel-visible ? "Ukryj panel" : "Pokaż panel";
+                        color: Kolory.tekst;
+                        font-size: 10px;
+                        font-family: "Geist";
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+
+                    toggle_panel_area := TouchArea {
+                        width: parent.width;
+                        height: parent.height;
+                        clicked => { bottom-panel-visible = !bottom-panel-visible; }
+                    }
+                }
              }
              
              // Column 3 - progress (right side)
