@@ -795,59 +795,8 @@ export component AppWindow inherits Window {
                 spacing: 6px;
                 alignment: start;
 
-                // Obszar na miniaturki (placeholder do wypełnienia modelem)
-                ScrollView {
-                    width: parent.width - 12px;
-                    height: parent.height - 40px; // zostaw miejsce na przycisk
-
-                    VerticalBox {
-                        width: parent.width;
-                        // Stały odstęp między elementami galerii zgodnie z poprawki.md
-                        spacing: 24px;
-
-                        // Każdy element galerii jako Rectangle o wysokości równej zawartości
-                        for t in root.thumbnails: Rectangle {
-                            width: parent.width;
-                            height: content.preferred-height;
-                            background: tile_area.has-hover ? Kolory.zakladka_tlo : Kolory.przezroczysty;
-
-                            // Zawartość elementu: obrazek + opis
-                            content := VerticalBox {
-                                width: parent.width;
-                                // Stały odstęp obrazek -> opis
-                                spacing: 8px;
-                                alignment: start;
-
-                                // Miniaturka: szerokość dopasowana, wysokość zmienna (brak sztywnego height)
-                                Image {
-                                    width: parent.width * (tile_area.has-hover ? 0.82 : 0.80);
-                                    source: t.img;
-                                    image-fit: contain;
-                                    horizontal-alignment: center;
-                                    vertical-alignment: center;
-                                }
-
-                                // Blok opisu z małym odstępem między liniami
-                                VerticalBox {
-                                    width: parent.width;
-                                    spacing: 2px;
-                                    alignment: start;
-                                    Text { text: t.name;  color: Kolory.tekst_silny; font-size: 11px; font-family: "Geist"; horizontal-alignment: left;  x: 12px; }
-                                    Text { text: t.size;  color: Kolory.tekst;       font-size: 10px; font-family: "Geist"; horizontal-alignment: left;  x: 12px; }
-                                    Text { text: t.layers;color: Kolory.tekst;       font-size: 10px; font-family: "Geist"; horizontal-alignment: left;  x: 12px; }
-                                }
-                            }
-
-                            // Interakcja: kliknięcie całego elementu
-                            tile_area := TouchArea {
-                                width: parent.width;
-                                height: parent.height;
-                                mouse-cursor: MouseCursor.pointer;
-                                clicked => { root.open-thumbnail(t.path); }
-                            }
-                        }
-                    }
-                }
+                // Miejsce na inne narzędzia (miniaturki przeniesione do dolnego panelu)
+                Rectangle { width: parent.width - 12px; height: parent.height - 40px; }
 
                 // Przyciski na dole
                 Rectangle {
@@ -889,6 +838,69 @@ export component AppWindow inherits Window {
          clip: true;
 
          animate height { duration: 300ms; easing: ease-in-out; }
+
+         // Miniaturki — układ poziomy z przewijaniem tylko poziomym
+         thumbs_scroll := ScrollView {
+             x: 6px;
+             y: 6px;
+             width: parent.width - 12px;
+             height: parent.height - 12px;
+             // clip usunięty: ScrollView nie wspiera clip
+
+             content := HorizontalBox {
+                 spacing: 24px; // zgodnie z poprawki.md (stały odstęp)
+                 alignment: start;
+                 height: thumbs_scroll.height; // wysokość równa panelowi → brak pionowego scrolla
+
+                for t in root.thumbnails: Rectangle {
+                    // Kafelek miniatury: stała szerokość, stały opis; zmienia się tylko miniatura
+                    width: 220px;
+                    height: thumbs_scroll.height - 12px;
+                     background: tile_area.has-hover ? Kolory.zakladka_tlo : Kolory.przezroczysty;
+
+                     VerticalBox {
+                         padding: 0px;
+                         spacing: 8px; // odstęp obrazek -> opis
+                         alignment: start;
+                         height: parent.height;
+
+                        // Miniaturka (dopasowana do dostępnej wysokości po odjęciu opisu)
+                         Image {
+                             width: parent.width * 0.92;
+                            height: max(0px, thumbs_scroll.height - 12px - desc.height - 8px);
+                             source: t.img;
+                             image-fit: contain;
+                             horizontal-alignment: center;
+                             vertical-alignment: center;
+                         }
+
+                         // Opis (stała wysokość i układ — zawsze taki sam) z klipowaniem przez Rectangle
+                         desc := Rectangle {
+                             width: parent.width;
+                             height: 36px;
+                             clip: true;
+                             background: Kolory.przezroczysty;
+                             VerticalBox {
+                                 width: parent.width;
+                                 height: parent.height;
+                                 spacing: 2px;
+                                 alignment: start;
+                                 Text { text: t.name;  color: Kolory.tekst_silny; font-size: 11px; font-family: "Geist"; horizontal-alignment: left; x: 6px; }
+                                 Text { text: t.size;  color: Kolory.tekst;       font-size: 10px; font-family: "Geist"; horizontal-alignment: left; x: 6px; }
+                                 Text { text: t.layers;color: Kolory.tekst;       font-size: 10px; font-family: "Geist"; horizontal-alignment: left; x: 6px; }
+                             }
+                         }
+                     }
+
+                     tile_area := TouchArea {
+                         width: parent.width;
+                         height: parent.height;
+                         mouse-cursor: MouseCursor.pointer;
+                         clicked => { root.open-thumbnail(t.path); }
+                     }
+                 }
+             }
+         }
      }
      
      // Status Bar
