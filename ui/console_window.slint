@@ -1,4 +1,3 @@
-import { HorizontalBox, VerticalBox } from "std-widgets.slint";
 import { Kolory } from "colors.slint";
 
 import "../resources/fonts/Geist-Regular.otf";
@@ -11,89 +10,147 @@ export component ConsoleWindow inherits Window {
     default-font-family: "Geist";
     preferred-width: 640px;
     preferred-height: 480px;
-    min-width: 640px;
-    min-height: 480px;
-    max-width: 640px;
-    max-height: 480px;
-
-    // Properties
+    min-width: 400px;
+    min-height: 300px;
+    
+    // <<< ZMIANA 1: Usunięcie systemowego paska tytułu
     in-out property <string> status-text: "";
+    in-out property <length> initial-window-x: 0px;
+    in-out property <length> initial-window-y: 0px;
+    in-out property <bool> is-dragging: false;
 
-    // Callbacks
+    // Callbacki do komunikacji z oknem nadrzędnym
     callback exit();
     callback button-clicked();
 
-    VerticalBox {
-        padding: 0px;
-        spacing: 0px;
+    // Główny kontener
+    Rectangle {
+        background: Kolory.tlo;
+        border-radius: 4px;
+        clip: true;
 
-        // Główna zawartość (rozciąga się do wypełnienia dostępnej przestrzeni)
-        Rectangle {
-            background: transparent;
-        }
+        VerticalLayout {
+            padding: 0px;
+            spacing: 0px;
 
-        // Przyciski na dole - 32px wysokości, przyklejone do dolnej krawędzi
-        Rectangle {
-            height: 32px;
-            background: Kolory.panel_tlo;
-            border-color: Kolory.obramowanie;
-            border-width: 1px;
+            // Belka tytułowa
+            title-bar := Rectangle {
+                height: 30px;
+                background: Kolory.panel_tlo;
 
-            HorizontalBox {
-                padding: 4px;
-                spacing: 10px;
-                alignment: center;
-
-                // Przycisk 1
-                Rectangle {
-                    width: 80px;
-                    height: 20px;
-                    background: button1-area.has-hover ? Kolory.hover : Kolory.suwak_tlo;
-                    border-color: Kolory.suwak_tor;
-                    border-width: 1px;
-                    border-radius: 3px;
-
-                    Text {
-                        text: "Przycisk 1";
-                        color: Kolory.tekst;
-                        font-size: 10px;
-                        font-family: "Geist";
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                    }
-
-                    button1-area := TouchArea {
-                        width: parent.width;
-                        height: parent.height;
-                        clicked => {
-                            root.button-clicked();
+                // <<< ZMIANA 2: Dodanie obszaru do przeciągania okna
+                // Ta MouseArea jest pod spodem i przechwytuje zdarzenia myszy.
+                drag-area := TouchArea {
+                    moved => {
+                        if (self.pressed) {
+                            if (!root.is-dragging) { // If drag just started
+                                root.initial-window-x = root.x;
+                                root.initial-window-y = root.y;
+                                root.is-dragging = true;
+                            }
+                            root.x = root.initial-window-x + (self.mouse-x - self.pressed-x);
+                            root.y = root.initial-window-y + (self.mouse-y - self.pressed-y);
+                        } else { // Mouse button released, drag ended
+                            root.is-dragging = false;
                         }
                     }
                 }
 
-                // Przycisk 2
-                Rectangle {
-                    width: 80px;
-                    height: 20px;
-                    background: button2-area.has-hover ? Kolory.hover : Kolory.suwak_tlo;
-                    border-color: Kolory.suwak_tor;
-                    border-width: 1px;
-                    border-radius: 3px;
+                // Twój istniejący układ jest na wierzchu, więc wszystko działa jak dawniej.
+                HorizontalLayout {
+                    alignment: space-between;
+                    padding-left: 5px;
+                    padding-right: 5px;
 
                     Text {
-                        text: "Przycisk 2";
+                        text: root.title;
                         color: Kolory.tekst;
-                        font-size: 10px;
+                        font-size: 12px;
                         font-family: "Geist";
-                        horizontal-alignment: center;
                         vertical-alignment: center;
+                        padding-left: 5px;
                     }
 
-                    button2-area := TouchArea {
-                        width: parent.width;
-                        height: parent.height;
-                        clicked => {
-                            root.exit();
+                    close-button-area := TouchArea {
+                        width: 25px;
+                        height: 25px;
+                        
+                        Rectangle {
+                            width: 100%;
+                            height: 100%;
+                            background: close-button-area.has-hover ? Kolory.hover : transparent;
+                            border-radius: 3px;
+
+                            Text {
+                                text: "×";
+                                color: Kolory.tekst;
+                                font-size: 20px;
+                                font-family: "Geist";
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                        clicked => { root.exit(); }
+                    }
+                }
+            }
+
+            // Główna zawartość
+            Rectangle {
+                background: transparent;
+                vertical-stretch: 1;
+
+                Text {
+                    text: "Główna zawartość okna tutaj...";
+                    color: Kolory.tekst;
+                    font-family: "Geist";
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+
+            // Stopka z przyciskami
+            footer := Rectangle {
+                height: 32px;
+                background: Kolory.panel_tlo;
+
+                VerticalLayout {
+                    spacing: 0px;
+                    padding: 0px;
+
+                    // Linia symulująca górne obramowanie
+                    Rectangle {
+                        height: 1px;
+                        background: Kolory.obramowanie;
+                    }
+
+                    // Kontener na przyciski
+                    HorizontalLayout {
+                        padding: 4px;
+                        spacing: 10px;
+                        alignment: center;
+                        vertical-stretch: 1;
+
+                        Rectangle {
+                            width: 80px;
+                            height: 20px;
+                            background: button1-area.has-hover ? Kolory.hover : Kolory.suwak_tlo;
+                            border-color: Kolory.suwak_tor;
+                            border-width: 1px;
+                            border-radius: 3px;
+                            Text { text: "Przycisk 1"; color: Kolory.tekst; font-size: 10px; font-family: "Geist"; horizontal-alignment: center; vertical-alignment: center; }
+                            button1-area := TouchArea { clicked => { root.button-clicked(); } }
+                        }
+
+                        Rectangle {
+                            width: 80px;
+                            height: 20px;
+                            background: button2-area.has-hover ? Kolory.hover : Kolory.suwak_tlo;
+                            border-color: Kolory.suwak_tor;
+                            border-width: 1px;
+                            border-radius: 3px;
+                            Text { text: "Przycisk 2"; color: Kolory.tekst; font-size: 10px; font-family: "Geist"; horizontal-alignment: center; vertical-alignment: center; }
+                            button2-area := TouchArea { clicked => { root.exit(); } }
                         }
                     }
                 }
