@@ -4,7 +4,7 @@ import { Kolory } from "colors.slint";
 import "../resources/fonts/Geist-Regular.otf";
 import "../resources/fonts/Geist-Bold.otf";
 import "../resources/fonts/GeistMono-Regular.otf";
-export { ConsoleWindow } from "console_window.slint";
+import { ConsoleWindow } from "console_window.slint";
 
 
 // Miniaturki folderu roboczego
@@ -50,6 +50,12 @@ export component AppWindow inherits Window {
     in-out property <string> meta-text: "";
     in-out property <[string]> meta-table-keys: [];
     in-out property <[string]> meta-table-values: [];
+    in-out property <bool> internal-console-visible: false; // New property for internal console visibility
+    in-out property <length> internal-console-x: 0px;
+    in-out property <length> internal-console-y: 0px;
+    in-out property <bool> internal-console-is-dragging: false;
+    in-out property <length> internal-console-drag-start-x: 0px;
+    in-out property <length> internal-console-drag-start-y: 0px;
     callback clear-console();
 
     // Kolory kanałów udostępniane do kodu Rust
@@ -244,7 +250,8 @@ export component AppWindow inherits Window {
                     height: parent.height;
                     clicked => {
                         view-menu-open = false;
-                        root.open-console-window();
+                        root.internal-console-visible = true; // Set visibility directly
+                        // root.open-console-window(); // No longer needed to call the callback
                     }
                 }
             }
@@ -1118,5 +1125,32 @@ export component AppWindow inherits Window {
                 }
              }
          }
+     }
+     if internal-console-visible: ConsoleWindow {
+         x: root.internal-console-x; // Use new property
+         y: root.internal-console-y; // Use new property
+         width: 640px; // Preferred width from console_window.slint
+         height: 480px; // Preferred height from console_window.slint
+         console-text: root.console-text;
+         clear-console => { root.clear-console(); }
+         exit => { root.internal-console-visible = false; }
+         button-clicked => { /* Optional: handle button 1 click */ }
+         z: 1000; // Ensure it's on top
+
+         dragged(dx, dy) => {
+             if (!root.internal-console-is-dragging) {
+                 root.internal-console-drag-start-x = root.internal-console-x;
+                 root.internal-console-drag-start-y = root.internal-console-y;
+                 root.internal-console-is-dragging = true;
+             }
+
+             root.internal-console-x = Math.max(0px, Math.min(root.width - self.width, root.internal-console-drag-start-x + dx));
+
+             root.internal-console-y = Math.max(30px, Math.min(root.height - self.height - (24px + 32px), root.internal-console-drag-start-y + dy));
+         }
+         drag-ended => {
+             root.internal-console-is-dragging = false;
+         }
+         
      }
  }

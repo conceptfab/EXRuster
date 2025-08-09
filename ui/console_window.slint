@@ -1,157 +1,167 @@
+import { HorizontalBox, VerticalBox, ScrollView, TextEdit } from "std-widgets.slint";
 import { Kolory } from "colors.slint";
 
 import "../resources/fonts/Geist-Regular.otf";
 import "../resources/fonts/Geist-Bold.otf";
 import "../resources/fonts/GeistMono-Regular.otf";
 
-export component ConsoleWindow inherits Window {
-    title: "Konsola";
-    background: Kolory.tlo;
-    default-font-family: "Geist";
-    preferred-width: 640px;
-    preferred-height: 480px;
-    min-width: 400px;
-    min-height: 300px;
+export component ConsoleWindow {
+    in-out property <string> console-text: "";
+    callback clear-console();
+    callback exit(); // This might be used to hide the component
+    callback button-clicked(); // For the example buttons in the footer
+    callback dragged(length, length); // New callback for dragging
+    callback drag-ended(); // New callback for drag ended
+    in-out property <bool> is-dragging-active: false;
+    in-out property <string> window-title: "Console";
+
     
-    // <<< ZMIANA 1: Usunięcie systemowego paska tytułu
-    in-out property <string> status-text: "";
-    in-out property <length> initial-window-x: 0px;
-    in-out property <length> initial-window-y: 0px;
-    in-out property <bool> is-dragging: false;
 
-    // Callbacki do komunikacji z oknem nadrzędnym
-    callback exit();
-    callback button-clicked();
+    VerticalLayout {
+        padding: 4px; // Apply padding here
+        spacing: 0px;
 
-    // Główny kontener
-    Rectangle {
-        background: Kolory.tlo;
-        border-radius: 4px;
-        clip: true;
-
-        VerticalLayout {
-            padding: 0px;
-            spacing: 0px;
-
-            // Belka tytułowa
-            title-bar := Rectangle {
-                height: 30px;
-                background: Kolory.panel_tlo;
-
-                // <<< ZMIANA 2: Dodanie obszaru do przeciągania okna
-                // Ta MouseArea jest pod spodem i przechwytuje zdarzenia myszy.
-                drag-area := TouchArea {
-                    moved => {
-                        if (self.pressed) {
-                            if (!root.is-dragging) { // If drag just started
-                                root.initial-window-x = root.x;
-                                root.initial-window-y = root.y;
-                                root.is-dragging = true;
-                            }
-                            root.x = root.initial-window-x + (self.mouse-x - self.pressed-x);
-                            root.y = root.initial-window-y + (self.mouse-y - self.pressed-y);
-                        } else { // Mouse button released, drag ended
-                            root.is-dragging = false;
+        // Drag Handle
+        Rectangle {
+            height: 20px; // Height of the drag handle
+            background: Kolory.hover; // Make it clearly visible
+            
+            TouchArea { // This TouchArea now covers the whole bar for dragging
+                width: parent.width;
+                height: parent.height;
+                mouse-cursor: move;
+                moved => {
+                    if (self.pressed) {
+                        if (!root.is-dragging-active) {
+                            root.is-dragging-active = true;
+                        }
+                        root.dragged(self.mouse-x - self.pressed-x, self.mouse-y - self.pressed-y);
+                    } else {
+                        if (root.is-dragging-active) {
+                            root.is-dragging-active = false;
+                            root.drag-ended();
                         }
                     }
                 }
-
-                // Twój istniejący układ jest na wierzchu, więc wszystko działa jak dawniej.
-                HorizontalLayout {
-                    alignment: space-between;
-                    padding-left: 5px;
-                    padding-right: 5px;
-
-                    Text {
-                        text: root.title;
-                        color: Kolory.tekst;
-                        font-size: 12px;
-                        font-family: "Geist";
-                        vertical-alignment: center;
-                        padding-left: 5px;
-                    }
-
-                    close-button-area := TouchArea {
-                        width: 25px;
-                        height: 25px;
-                        
-                        Rectangle {
-                            width: 100%;
-                            height: 100%;
-                            background: close-button-area.has-hover ? Kolory.hover : transparent;
-                            border-radius: 3px;
-
-                            Text {
-                                text: "×";
-                                color: Kolory.tekst;
-                                font-size: 20px;
-                                font-family: "Geist";
-                                horizontal-alignment: center;
-                                vertical-alignment: center;
-                            }
-                        }
-                        clicked => { root.exit(); }
+                clicked => {
+                    if (root.is-dragging-active) {
+                        root.is-dragging-active = false;
+                        root.drag-ended();
                     }
                 }
-            }
 
-            // Główna zawartość
-            Rectangle {
-                background: transparent;
-                vertical-stretch: 1;
-
-                Text {
-                    text: "Główna zawartość okna tutaj...";
-                    color: Kolory.tekst;
-                    font-family: "Geist";
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
-                }
-            }
-
-            // Stopka z przyciskami
-            footer := Rectangle {
-                height: 32px;
-                background: Kolory.panel_tlo;
-
-                VerticalLayout {
-                    spacing: 0px;
+                HorizontalBox {
                     padding: 0px;
+                    spacing: 0px;
+                    alignment: stretch;
 
-                    // Linia symulująca górne obramowanie
-                    Rectangle {
-                        height: 1px;
-                        background: Kolory.obramowanie;
+                    // Window Title
+                    Rectangle { width: 5px; background: transparent; }
+                    Text {
+                        text: root.window-title;
+                        color: Kolory.tekst_silny;
+                        font-size: 10px;
+                        font-family: "Geist";
+                        horizontal-alignment: left;
+                        vertical-alignment: center;
                     }
 
-                    // Kontener na przyciski
-                    HorizontalLayout {
-                        padding: 4px;
-                        spacing: 10px;
-                        alignment: center;
-                        vertical-stretch: 1;
+                    // Spacer to push X to the right
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        background: transparent;
+                    }
 
-                        Rectangle {
-                            width: 80px;
-                            height: 20px;
-                            background: button1-area.has-hover ? Kolory.hover : Kolory.suwak_tlo;
-                            border-color: Kolory.suwak_tor;
-                            border-width: 1px;
-                            border-radius: 3px;
-                            Text { text: "Przycisk 1"; color: Kolory.tekst; font-size: 10px; font-family: "Geist"; horizontal-alignment: center; vertical-alignment: center; }
-                            button1-area := TouchArea { clicked => { root.button-clicked(); } }
+                    // Close Button
+                    Rectangle {
+                        width: 20px;
+                        height: parent.height;
+                        background: close-button-area.has-hover ? Kolory.obramowanie : transparent;
+                        
+                        Text {
+                            text: "×";
+                            color: Kolory.tekst_silny;
+                            font-size: 16px;
+                            font-family: "Geist";
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
                         }
 
-                        Rectangle {
-                            width: 80px;
-                            height: 20px;
-                            background: button2-area.has-hover ? Kolory.hover : Kolory.suwak_tlo;
-                            border-color: Kolory.suwak_tor;
-                            border-width: 1px;
-                            border-radius: 3px;
-                            Text { text: "Przycisk 2"; color: Kolory.tekst; font-size: 10px; font-family: "Geist"; horizontal-alignment: center; vertical-alignment: center; }
-                            button2-area := TouchArea { clicked => { root.exit(); } }
+                        close-button-area := TouchArea {
+                            width: parent.width;
+                            height: parent.height;
+                            clicked => { root.exit(); }
                         }
+                    }
+                }
+            }
+        }
+
+        // Główna zawartość - konsola
+        ScrollView {
+            vertical-stretch: 1;
+            // x, y, width, height removed - layout will manage
+
+            Rectangle {
+                background: Kolory.konsola_tlo;
+                width: parent.width;
+                height: parent.height;
+
+                TextEdit {
+                    text: root.console-text;
+                    read-only: true;
+                    wrap: word-wrap;
+                    font-size: 10px;
+                    // font-family: "GeistMono"; // Removed
+                    horizontal-alignment: left;
+                    width: parent.width;
+                    height: parent.height;
+                }
+            }
+        }
+
+        // Stopka z przyciskami
+        footer := Rectangle {
+            height: 32px;
+            background: Kolory.panel_tlo;
+
+            VerticalLayout {
+                spacing: 0px;
+                padding: 0px;
+
+                // Linia symulująca górne obramowanie
+                Rectangle {
+                    height: 1px;
+                    background: Kolory.obramowanie;
+                }
+
+                // Kontener na przyciski
+                HorizontalLayout {
+                    padding: 4px;
+                    spacing: 10px;
+                    alignment: center;
+                    vertical-stretch: 1;
+
+                    Rectangle {
+                        width: 80px;
+                        height: 20px;
+                        background: button1-area.has-hover ? Kolory.hover : Kolory.suwak_tlo;
+                        border-color: Kolory.suwak_tor;
+                        border-width: 1px;
+                        border-radius: 3px;
+                        Text { text: "Przycisk 1"; color: Kolory.tekst; font-size: 10px; font-family: "Geist"; horizontal-alignment: center; vertical-alignment: center; }
+                        button1-area := TouchArea { clicked => { root.button-clicked(); } }
+                    }
+
+                    Rectangle {
+                        width: 80px;
+                        height: 20px;
+                        background: button2-area.has-hover ? Kolory.hover : Kolory.suwak_tlo;
+                        border-color: Kolory.suwak_tor;
+                        border-width: 1px;
+                        border-radius: 3px;
+                        Text { text: "Przycisk 2"; color: Kolory.tekst; font-size: 10px; font-family: "Geist"; horizontal-alignment: center; vertical-alignment: center; }
+                        button2-area := TouchArea { clicked => { root.exit(); } }
                     }
                 }
             }

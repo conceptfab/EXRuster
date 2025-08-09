@@ -261,20 +261,7 @@ fn setup_ui_callbacks(
         }
     });
 
-    // Otwórz okno konsoli
-    ui.on_open_console_window({
-        move || {
-            if let Ok(console_window) = ConsoleWindow::new() {
-                let console_handle = console_window.as_weak();
-                console_window.on_exit(move || {
-                    if let Some(console) = console_handle.upgrade() {
-                        console.hide().unwrap();
-                    }
-                });
-                let _ = console_window.show();
-            }
-        }
-    });
+    
 }
 
 fn human_size(bytes: u64) -> String {
