@@ -4,6 +4,7 @@ import { Kolory } from "colors.slint";
 import "../resources/fonts/Geist-Regular.otf";
 import "../resources/fonts/Geist-Bold.otf";
 import "../resources/fonts/GeistMono-Regular.otf";
+export { ConsoleWindow } from "console_window.slint";
 
 
 // Miniaturki folderu roboczego
@@ -76,6 +77,7 @@ export component AppWindow inherits Window {
     callback layer-tree-clicked(string);
     callback choose-working-folder();
     callback open-thumbnail(string); // otwórz plik EXR z podanej ścieżki
+    callback open-console-window(); // otwórz okno konsoli
     
     // Menu Bar
       Rectangle {
@@ -242,7 +244,7 @@ export component AppWindow inherits Window {
                     height: parent.height;
                     clicked => {
                         view-menu-open = false;
-                        active-tab = 3; // Console tab
+                        root.open-console-window();
                     }
                 }
             }

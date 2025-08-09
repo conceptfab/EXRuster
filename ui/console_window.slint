@@ -1,0 +1,103 @@
+import { HorizontalBox, VerticalBox } from "std-widgets.slint";
+import { Kolory } from "colors.slint";
+
+import "../resources/fonts/Geist-Regular.otf";
+import "../resources/fonts/Geist-Bold.otf";
+import "../resources/fonts/GeistMono-Regular.otf";
+
+export component ConsoleWindow inherits Window {
+    title: "Konsola";
+    background: Kolory.tlo;
+    default-font-family: "Geist";
+    preferred-width: 640px;
+    preferred-height: 480px;
+    min-width: 640px;
+    min-height: 480px;
+    max-width: 640px;
+    max-height: 480px;
+
+    // Properties
+    in-out property <string> status-text: "";
+
+    // Callbacks
+    callback exit();
+    callback button-clicked();
+
+    VerticalBox {
+        padding: 0px;
+        spacing: 0px;
+
+        // Główna zawartość (rozciąga się do wypełnienia dostępnej przestrzeni)
+        Rectangle {
+            background: transparent;
+        }
+
+        // Przyciski na dole - 32px wysokości, przyklejone do dolnej krawędzi
+        Rectangle {
+            height: 32px;
+            background: Kolory.panel_tlo;
+            border-color: Kolory.obramowanie;
+            border-width: 1px;
+
+            HorizontalBox {
+                padding: 4px;
+                spacing: 10px;
+                alignment: center;
+
+                // Przycisk 1
+                Rectangle {
+                    width: 80px;
+                    height: 20px;
+                    background: button1-area.has-hover ? Kolory.hover : Kolory.suwak_tlo;
+                    border-color: Kolory.suwak_tor;
+                    border-width: 1px;
+                    border-radius: 3px;
+
+                    Text {
+                        text: "Przycisk 1";
+                        color: Kolory.tekst;
+                        font-size: 10px;
+                        font-family: "Geist";
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+
+                    button1-area := TouchArea {
+                        width: parent.width;
+                        height: parent.height;
+                        clicked => {
+                            root.button-clicked();
+                        }
+                    }
+                }
+
+                // Przycisk 2
+                Rectangle {
+                    width: 80px;
+                    height: 20px;
+                    background: button2-area.has-hover ? Kolory.hover : Kolory.suwak_tlo;
+                    border-color: Kolory.suwak_tor;
+                    border-width: 1px;
+                    border-radius: 3px;
+
+                    Text {
+                        text: "Przycisk 2";
+                        color: Kolory.tekst;
+                        font-size: 10px;
+                        font-family: "Geist";
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+
+                    button2-area := TouchArea {
+                        width: parent.width;
+                        height: parent.height;
+                        clicked => {
+                            root.exit();
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

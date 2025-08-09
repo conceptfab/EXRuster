@@ -33,8 +33,6 @@ fn main() -> Result<(), slint::PlatformError> {
     ui.run()
 }
 
-// usunięto nieużywany helper lock_or_recover z main.rs (istnieje w ui_handlers.rs)
-
 fn setup_ui_callbacks(
     ui: &AppWindow,
     image_cache: ImageCacheType,
@@ -259,6 +257,15 @@ fn setup_ui_callbacks(
                 }
                 // użyj tej samej procedury co przy pojedynczym pliku
                 ui_handlers::handle_open_exr_from_path(ui_handle.clone(), current_file_path.clone(), image_cache.clone(), console_model.clone(), path);
+            }
+        }
+    });
+
+    // Otwórz okno konsoli
+    ui.on_open_console_window({
+        move || {
+            if let Ok(console_window) = ConsoleWindow::new() {
+                let _ = console_window.run();
             }
         }
     });

@@ -1,6 +1,9 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+// Import komponentów Slint
+use crate::AppWindow;
+
 pub trait ProgressSink: Send + Sync {
     fn start_indeterminate(&self, message: Option<&str>);
     fn set(&self, progress_0_1: f32, message: Option<&str>);
@@ -9,17 +12,17 @@ pub trait ProgressSink: Send + Sync {
 }
 
 pub struct UiProgress {
-    ui: slint::Weak<crate::AppWindow>,
+    ui: slint::Weak<AppWindow>,
     last_update: Arc<Mutex<Instant>>, // throttling
     min_interval: Duration,
 }
 
 impl UiProgress {
-    pub fn new(ui: slint::Weak<crate::AppWindow>) -> Self {
+    pub fn new(ui: slint::Weak<AppWindow>) -> Self {
         Self { ui, last_update: Arc::new(Mutex::new(Instant::now() - Duration::from_millis(100))), min_interval: Duration::from_millis(80) }
     }
 
-    fn maybe_update<F: FnOnce(&crate::AppWindow)>(&self, f: F) {
+    fn maybe_update<F: FnOnce(&AppWindow)>(&self, f: F) {
         if let Some(ui) = self.ui.upgrade() {
             let mut last = self.last_update.lock().unwrap();
             let now = Instant::now();
