@@ -207,6 +207,8 @@ fn setup_ui_callbacks(
                             ui.set_thumbnails(ModelRc::new(VecModel::from(items)));
                             let ms = t0.elapsed().as_millis();
                             ui.set_status_text("Thumbnails loaded".into());
+                            // Automatycznie pokaż panel z galerią po udanym wczytaniu folderu
+                            ui.set_bottom_panel_visible(true);
                             // log sukces
                             {
                                 let msg = format!("[folder] {} EXR files | thumbnails in {} ms", count, ms);

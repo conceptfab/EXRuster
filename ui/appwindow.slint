@@ -32,13 +32,14 @@ export component AppWindow inherits Window {
     
     // Menu state
     in-out property <bool> file-menu-open: false;
+    in-out property <bool> view-menu-open: false;
     
     // Status bar properties
     in-out property <string> status-text: "Ready";
     in-out property <float> progress-value: 0.0;
     
     in-out property <image> exr-image;
-    in-out property <int> active-tab: 0; // 0=Info, 1=Kanały, 2=Warstwy, 3=Konsola
+    in-out property <int> active-tab: 0; // 0=Exposure, 1=Export, 2=Meta, 3=Console
     in-out property <[string]> layers-model: [];
     in-out property <[color]> layers-colors: [];
     in-out property <[int]> layers-font-sizes: [];
@@ -64,7 +65,7 @@ export component AppWindow inherits Window {
 
     // Dolny panel (wariant A: 0px gdy ukryty)
     in-out property <bool> bottom-panel-visible: false;
-    in-out property <length> bottom-panel-expanded-height: 140px;
+    in-out property <length> bottom-panel-expanded-height: 160px;
     property <length> bottom-panel-current-height: bottom-panel-visible ? bottom-panel-expanded-height : 0px;
 
     // Callbacks
@@ -108,6 +109,30 @@ export component AppWindow inherits Window {
                 file-menu-area := TouchArea {
                     clicked => {
                         file-menu-open = !file-menu-open;
+                        view-menu-open = false; // Zamknij inne menu
+                    }
+                }
+            }
+            
+            // View Menu Button
+            Rectangle {
+                width: 40px;
+                height: 22px;
+                background: view-menu-area.has-hover || view-menu-open ? Kolory.hover : Kolory.przezroczysty;
+                
+                Text {
+                    text: "View";
+                    color: Kolory.tekst;
+                    font-size: 12px;
+                    font-family: "Geist";
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+                
+                view-menu-area := TouchArea {
+                    clicked => {
+                        view-menu-open = !view-menu-open;
+                        file-menu-open = false; // Zamknij inne menu
                     }
                 }
             }
@@ -181,13 +206,80 @@ export component AppWindow inherits Window {
             }
         }
     }
+    
+    // View Dropdown Menu 
+    if view-menu-open: Rectangle {
+        y: 30px;
+        x: 44px; // Pozycja obok menu File (4px + 40px)
+        width: 100px;
+        height: 52px;
+        background: Kolory.menu_tlo;
+        border-color: Kolory.menu_obramowanie;
+        border-width: 1px;
+        z: 10000;
+        
+        VerticalBox {
+            padding: 0px;
+            spacing: 0px;
+            
+            // Console option
+            Rectangle {
+                height: 26px;
+                background: console-area.has-hover ? Kolory.hover : Kolory.menu_tlo;
+                
+                Text {
+                    text: "Console";
+                    color: Kolory.tekst;
+                    font-size: 12px;
+                    font-family: "Geist";
+                    horizontal-alignment: left;
+                    vertical-alignment: center;
+                    x: 15px;
+                }
+                
+                console-area := TouchArea {
+                    width: parent.width;
+                    height: parent.height;
+                    clicked => {
+                        view-menu-open = false;
+                        active-tab = 3; // Console tab
+                    }
+                }
+            }
+            
+            // Meta option
+            Rectangle {
+                height: 26px;
+                background: meta-area.has-hover ? Kolory.hover : Kolory.menu_tlo;
+                
+                Text {
+                    text: "Meta";
+                    color: Kolory.tekst;
+                    font-size: 12px;
+                    font-family: "Geist";
+                    horizontal-alignment: left;
+                    vertical-alignment: center;
+                    x: 15px;
+                }
+                
+                meta-area := TouchArea {
+                    width: parent.width;
+                    height: parent.height;
+                    clicked => {
+                        view-menu-open = false;
+                        active-tab = 2; // Meta tab
+                    }
+                }
+            }
+        }
+    }
         
     // Main content area with three resizable columns
     HorizontalBox {
         y: 30px;
         x: 0px;
         width: root.width;
-                 height: root.height - 54px - bottom-panel-current-height; // 30px menu + 24px status bar + dolny panel
+                 height: root.height - 86px - bottom-panel-current-height; // 30px menu + 24px status bar + 32px panel z przyciskami + dolny panel
         padding: 4px;
         spacing: 2px;
         
@@ -414,191 +506,17 @@ export component AppWindow inherits Window {
                     // Info tab content
                     if active-tab == 0: VerticalBox {
                         padding: 10px;
-                        padding-bottom: 0px;
                         spacing: 8px;
                         alignment: stretch;
                         
-                        
-                        
-                        // Exposure slider
-                        HorizontalBox {
-                            spacing: 8px;
-                            alignment: center;
-                            
-                            Text {
-                                text: "Exposure:";
-                                color: Kolory.tekst;
-                                font-size: 10px;
-                                font-family: "Geist";
-                                width: 70px;
-                            }
-                            
-                            Rectangle {
-                                width: 80%;
-                                height: 20px;
-                                background: Kolory.suwak_tlo;
-                                border-radius: 3px;
-                                
-                                // Slider track
-                                Rectangle {
-                                    y: 8px;
-                                    height: 4px;
-                                    width: parent.width - 8px;
-                                    x: 4px;
-                                    background: Kolory.suwak_tor;
-                                    border-radius: 2px;
-                                    
-                                    // Slider handle
-                                    Rectangle {
-                                        width: 12px;
-                                        height: 12px;
-                                        y: -4px;
-                                        x: (parent.width - 12px) * ((exposure-value + 5.0) / 10.0);
-                                        background: exposure-area.has-hover ? Kolory.ekspozycja_galka_hover : Kolory.ekspozycja_galka;
-                                        border-radius: 6px;
-                                        border-color: Kolory.tekst_silny;
-                                        border-width: 1px;
-                                    }
-                                }
-                                
-                                exposure-area := TouchArea {
-                                    width: parent.width;
-                                    height: parent.height;
-                                    
-                                    moved => {
-                                        if (self.pressed) {
-                                            exposure-value = -5.0 + (self.mouse-x / parent.width) * 10.0;
-                                            exposure-value = max(-5.0, min(5.0, exposure-value));
-                                            // KURWA NAPRAWIONE! Callback NATYCHMIAST podczas przesuwania!
-                                            exposure-changed(exposure-value);
-                                        }
-                                    }
-                                    
-                                    clicked => {
-                                        // Również dla pojedynczego kliknięcia
-                                        exposure-value = -5.0 + (self.mouse-x / parent.width) * 10.0;
-                                        exposure-value = max(-5.0, min(5.0, exposure-value));
-                                        exposure-changed(exposure-value);
-                                    }
-                                }
-                            }
-                            
-                            Text {
-                                text: Math.round(exposure-value * 100) / 100;
-                                color: Kolory.tekst_silny;
-                                font-size: 10px;
-                                font-family: "Geist";
-                                width: 40px;
-                                horizontal-alignment: center;
-                            }
-                        }
-                        
-                        // Gamma slider
-                        HorizontalBox {
-                            spacing: 8px;
-                            alignment: center;
-                            
-                            Text {
-                                text: "Gamma:";
-                                color: Kolory.tekst;
-                                font-size: 10px;
-                                font-family: "Geist";
-                                width: 70px;
-                            }
-                            
-                            Rectangle {
-                                width: 80%;
-                                height: 20px;
-                                background: Kolory.suwak_tlo;
-                                border-radius: 3px;
-                                
-                                // Slider track
-                                Rectangle {
-                                    y: 8px;
-                                    height: 4px;
-                                    width: parent.width - 8px;
-                                    x: 4px;
-                                    background: Kolory.suwak_tor;
-                                    border-radius: 2px;
-                                    
-                                    // Slider handle
-                                    Rectangle {
-                                        width: 12px;
-                                        height: 12px;
-                                        y: -4px;
-                                        x: (parent.width - 12px) * ((gamma-value - 0.5) / 4.0);
-                                        background: gamma-area.has-hover ? Kolory.gamma_galka_hover : Kolory.gamma_galka;
-                                        border-radius: 6px;
-                                        border-color: Kolory.tekst_silny;
-                                        border-width: 1px;
-                                    }
-                                }
-                                
-                                gamma-area := TouchArea {
-                                    width: parent.width;
-                                    height: parent.height;
-                                    
-                                    moved => {
-                                        if (self.pressed) {
-                                            gamma-value = 0.5 + (self.mouse-x / parent.width) * 4.0;
-                                            gamma-value = max(0.5, min(4.5, gamma-value));
-                                            // KURWA NAPRAWIONE! Callback NATYCHMIAST podczas przesuwania!
-                                            gamma-changed(gamma-value);
-                                        }
-                                    }
-                                    
-                                    clicked => {
-                                        // Również dla pojedynczego kliknięcia
-                                        gamma-value = 0.5 + (self.mouse-x / parent.width) * 4.0;
-                                        gamma-value = max(0.5, min(4.5, gamma-value));
-                                        gamma-changed(gamma-value);
-                                    }
-                                }
-                            }
-                            
-                            Text {
-                                text: Math.round(gamma-value * 100) / 100;
-                                color: Kolory.tekst_silny;
-                                font-size: 10px;
-                                font-family: "Geist";
-                                width: 40px;
-                                horizontal-alignment: center;
-                            }
-                        }
-                        
-                        // Spacer to push reset button to bottom
-                        Rectangle {
-                            height: 5px;
-                        }
-                        
-                        // Reset button
-                        Rectangle {
-                            height: 25px;
-                            background: reset-area.has-hover ? Kolory.hover : Kolory.suwak_tlo;
-                            border-color: Kolory.suwak_tor;
-                            border-width: 1px;
-                            border-radius: 3px;
-                            
-                            Text {
-                                text: "Reset";
-                                color: Kolory.tekst;
-                                font-size: 10px;
-                                font-family: "Geist";
-                                horizontal-alignment: center;
-                                vertical-alignment: center;
-                            }
-                            
-                            reset-area := TouchArea {
-                                width: parent.width;
-                                height: parent.height;
-                                clicked => {
-                                    exposure-value = 0.0;
-                                    gamma-value = 2.2;
-                                    // Wywołaj callback'i aby zaktualizować obraz
-                                    exposure-changed(exposure-value);
-                                    gamma-changed(gamma-value);
-                                }
-                            }
+                        // Funkcje Exposure przeniesione do prawej kolumny
+                        Text {
+                            text: "Funkcje Exposure przeniesione do prawej kolumny";
+                            color: Kolory.tekst_slabszy;
+                            font-size: 10px;
+                            font-family: "Geist";
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
                         }
                     }
                     
@@ -789,38 +707,196 @@ export component AppWindow inherits Window {
             border-color: Kolory.linia_podzialu;
             border-width: 1px;
             
-            // Prawa kolumna: lista miniaturek + przycisk wyboru folderu na dole
+            // Prawa kolumna: funkcje Exposure na górze
             VerticalBox {
                 padding: 6px;
-                spacing: 6px;
+                spacing: 8px;
                 alignment: start;
 
-                // Miejsce na inne narzędzia (miniaturki przeniesione do dolnego panelu)
-                Rectangle { width: parent.width - 12px; height: parent.height - 40px; }
-
-                // Przyciski na dole
+                // Exposure slider
+                VerticalBox {
+                    spacing: 4px;
+                    alignment: stretch;
+                    
+                    Text {
+                        text: "Exposure:";
+                        color: Kolory.tekst;
+                        font-size: 10px;
+                        font-family: "Geist";
+                        font-weight: 700;
+                    }
+                    
+                    HorizontalBox {
+                        spacing: 8px;
+                        alignment: center;
+                        
+                        Rectangle {
+                            width: parent.width - 50px;
+                            height: 20px;
+                            background: Kolory.suwak_tlo;
+                            border-radius: 3px;
+                            
+                            // Slider track
+                            Rectangle {
+                                y: 8px;
+                                height: 4px;
+                                width: parent.width - 8px;
+                                x: 4px;
+                                background: Kolory.suwak_tor;
+                                border-radius: 2px;
+                                
+                                // Slider handle
+                                Rectangle {
+                                    width: 12px;
+                                    height: 12px;
+                                    y: -4px;
+                                    x: (parent.width - 12px) * ((exposure-value + 5.0) / 10.0);
+                                    background: exposure-area-right.has-hover ? Kolory.ekspozycja_galka_hover : Kolory.ekspozycja_galka;
+                                    border-radius: 6px;
+                                    border-color: Kolory.tekst_silny;
+                                    border-width: 1px;
+                                }
+                            }
+                            
+                            exposure-area-right := TouchArea {
+                                width: parent.width;
+                                height: parent.height;
+                                
+                                moved => {
+                                    if (self.pressed) {
+                                        exposure-value = -5.0 + (self.mouse-x / parent.width) * 10.0;
+                                        exposure-value = max(-5.0, min(5.0, exposure-value));
+                                        exposure-changed(exposure-value);
+                                    }
+                                }
+                                
+                                clicked => {
+                                    exposure-value = -5.0 + (self.mouse-x / parent.width) * 10.0;
+                                    exposure-value = max(-5.0, min(5.0, exposure-value));
+                                    exposure-changed(exposure-value);
+                                }
+                            }
+                        }
+                        
+                        Text {
+                            text: Math.round(exposure-value * 100) / 100;
+                            color: Kolory.tekst_silny;
+                            font-size: 10px;
+                            font-family: "Geist";
+                            width: 40px;
+                            horizontal-alignment: center;
+                        }
+                    }
+                }
+                
+                // Gamma slider
+                VerticalBox {
+                    spacing: 4px;
+                    alignment: stretch;
+                    
+                    Text {
+                        text: "Gamma:";
+                        color: Kolory.tekst;
+                        font-size: 10px;
+                        font-family: "Geist";
+                        font-weight: 700;
+                    }
+                    
+                    HorizontalBox {
+                        spacing: 8px;
+                        alignment: center;
+                        
+                        Rectangle {
+                            width: parent.width - 50px;
+                            height: 20px;
+                            background: Kolory.suwak_tlo;
+                            border-radius: 3px;
+                            
+                            // Slider track
+                            Rectangle {
+                                y: 8px;
+                                height: 4px;
+                                width: parent.width - 8px;
+                                x: 4px;
+                                background: Kolory.suwak_tor;
+                                border-radius: 2px;
+                                
+                                // Slider handle
+                                Rectangle {
+                                    width: 12px;
+                                    height: 12px;
+                                    y: -4px;
+                                    x: (parent.width - 12px) * ((gamma-value - 0.5) / 4.0);
+                                    background: gamma-area-right.has-hover ? Kolory.gamma_galka_hover : Kolory.gamma_galka;
+                                    border-radius: 6px;
+                                    border-color: Kolory.tekst_silny;
+                                    border-width: 1px;
+                                }
+                            }
+                            
+                            gamma-area-right := TouchArea {
+                                width: parent.width;
+                                height: parent.height;
+                                
+                                moved => {
+                                    if (self.pressed) {
+                                        gamma-value = 0.5 + (self.mouse-x / parent.width) * 4.0;
+                                        gamma-value = max(0.5, min(4.5, gamma-value));
+                                        gamma-changed(gamma-value);
+                                    }
+                                }
+                                
+                                clicked => {
+                                    gamma-value = 0.5 + (self.mouse-x / parent.width) * 4.0;
+                                    gamma-value = max(0.5, min(4.5, gamma-value));
+                                    gamma-changed(gamma-value);
+                                }
+                            }
+                        }
+                        
+                        Text {
+                            text: Math.round(gamma-value * 100) / 100;
+                            color: Kolory.tekst_silny;
+                            font-size: 10px;
+                            font-family: "Geist";
+                            width: 40px;
+                            horizontal-alignment: center;
+                        }
+                    }
+                }
+                
+                // Reset button
                 Rectangle {
-                    width: parent.width - 12px;
-                    height: 28px;
-                    background: choose_folder_area.has-hover ? Kolory.hover : Kolory.suwak_tlo;
+                    height: 25px;
+                    background: reset-area-right.has-hover ? Kolory.hover : Kolory.suwak_tlo;
                     border-color: Kolory.suwak_tor;
                     border-width: 1px;
                     border-radius: 3px;
-
+                    
                     Text {
-                        text: "Select working folder";
+                        text: "Reset";
                         color: Kolory.tekst;
                         font-size: 10px;
                         font-family: "Geist";
                         horizontal-alignment: center;
                         vertical-alignment: center;
                     }
-
-                    choose_folder_area := TouchArea {
+                    
+                    reset-area-right := TouchArea {
                         width: parent.width;
                         height: parent.height;
-                        clicked => { root.choose-working-folder(); }
+                        clicked => {
+                            exposure-value = 0.0;
+                            gamma-value = 2.2;
+                            exposure-changed(exposure-value);
+                            gamma-changed(gamma-value);
+                        }
                     }
+                }
+                
+                // Spacer
+                Rectangle {
+                    height: 10px;
                 }
             }
         }
@@ -885,9 +961,9 @@ export component AppWindow inherits Window {
                                  height: parent.height;
                                  spacing: 2px;
                                  alignment: start;
-                                 Text { text: t.name;  color: Kolory.tekst_silny; font-size: 11px; font-family: "Geist"; horizontal-alignment: left; x: 6px; }
-                                 Text { text: t.size;  color: Kolory.tekst;       font-size: 10px; font-family: "Geist"; horizontal-alignment: left; x: 6px; }
-                                 Text { text: t.layers;color: Kolory.tekst;       font-size: 10px; font-family: "Geist"; horizontal-alignment: left; x: 6px; }
+                                 Text { text: t.name;  color: Kolory.tekst_silny; font-size: 10px; font-family: "Geist"; horizontal-alignment: left; x: 6px; }
+                                 Text { text: t.size;  color: Kolory.tekst;       font-size: 8px; font-family: "Geist"; horizontal-alignment: left; x: 6px; }
+                                 Text { text: t.layers;color: Kolory.tekst;       font-size: 8px; font-family: "Geist"; horizontal-alignment: left; x: 6px; }
                              }
                          }
                      }
@@ -898,6 +974,73 @@ export component AppWindow inherits Window {
                          mouse-cursor: MouseCursor.pointer;
                          clicked => { root.open-thumbnail(t.path); }
                      }
+                 }
+             }
+         }
+     }
+     
+     // Nowy panel poziomy między panelem z galerią a status barem
+     Rectangle {
+         x: 0px;
+         y: root.height - 24px - 32px;
+         width: root.width;
+         height: 32px;
+         background: Kolory.menu_tlo;
+         border-color: Kolory.obramowanie;
+         border-width: 1px;
+         
+         HorizontalBox {
+             padding: 6px;
+             spacing: 8px;
+             alignment: center;
+             
+             // Przycisk "Pokaż panel"
+             Rectangle {
+                 width: 90px;
+                 height: 20px;
+                 background: toggle_panel_area.has-hover ? Kolory.hover : Kolory.suwak_tlo;
+                 border-color: Kolory.suwak_tor;
+                 border-width: 1px;
+                 border-radius: 3px;
+
+                 Text {
+                     text: bottom-panel-visible ? "Ukryj panel" : "Pokaż panel";
+                     color: Kolory.tekst;
+                     font-size: 10px;
+                     font-family: "Geist";
+                     horizontal-alignment: center;
+                     vertical-alignment: center;
+                 }
+
+                 toggle_panel_area := TouchArea {
+                     width: parent.width;
+                     height: parent.height;
+                     clicked => { bottom-panel-visible = !bottom-panel-visible; }
+                 }
+             }
+             
+             // Przycisk "Select working folder"
+             Rectangle {
+                 width: 140px;
+                 height: 20px;
+                 background: choose_folder_area.has-hover ? Kolory.hover : Kolory.suwak_tlo;
+                 border-color: Kolory.suwak_tor;
+                 border-width: 1px;
+                 border-radius: 3px;
+
+                 Text {
+                     text: "Select working folder";
+                     color: Kolory.tekst;
+                     font-size: 10px;
+                     font-family: "Geist";
+                     horizontal-alignment: center;
+                     vertical-alignment: center;
+                 }
+
+                 choose_folder_area := TouchArea {
+                     width: parent.width;
+                     height: parent.height;
+                     clicked => { root.choose-working-folder(); }
                  }
              }
          }
@@ -920,7 +1063,7 @@ export component AppWindow inherits Window {
              
              // Column 1 - status text (lewa strona)
              Rectangle {
-                width: root.width/3 - 12px;
+                width: root.width/2 - 12px;
 
                  Text {
                      horizontal-alignment: TextHorizontalAlignment.left;
@@ -932,41 +1075,9 @@ export component AppWindow inherits Window {
                  }
              }
              
-             // Column 2
+             // Column 2 - progress (right side)
              Rectangle {
-                width: root.width/3;
-
-                // Przycisk do pokazywania/chowania dolnego panelu
-                Rectangle {
-                    width: 90px;
-                    height: 18px;
-                    y: (parent.height - self.height) / 2;
-                    x: 8px;
-                    background: toggle_panel_area.has-hover ? Kolory.hover : Kolory.suwak_tlo;
-                    border-color: Kolory.suwak_tor;
-                    border-width: 1px;
-                    border-radius: 3px;
-
-                    Text {
-                        text: bottom-panel-visible ? "Ukryj panel" : "Pokaż panel";
-                        color: Kolory.tekst;
-                        font-size: 10px;
-                        font-family: "Geist";
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                    }
-
-                    toggle_panel_area := TouchArea {
-                        width: parent.width;
-                        height: parent.height;
-                        clicked => { bottom-panel-visible = !bottom-panel-visible; }
-                    }
-                }
-             }
-             
-             // Column 3 - progress (right side)
-             Rectangle {
-                width: root.width/3 - 12px;
+                width: root.width/2 - 12px;
 
                 // Progress bar anchored to the right
                 Rectangle {
