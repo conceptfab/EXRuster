@@ -3,3 +3,5 @@
 
 
 Chcesz, żebym dodał opcjonalną kompresję TIFF (LZW/Deflate) lub wybór bit‑głębi (f32/16‑bit) zgodnie z export.md?
+
+Jeśli wolisz od razu pełne „warstwy Photoshopa” (34377) lub eksport PSD, napisz którą opcję wybierasz.

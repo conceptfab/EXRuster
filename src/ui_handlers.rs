@@ -561,7 +561,33 @@ pub fn handle_export_convert(
                     }
                 };
 
-                let mut pages_written = 0usize;
+                // Pre-skan: policz ile stron zapiszemy (aby ustawić poprawny PageNumber total)
+                let total_pages: u16 = {
+                    let mut count: usize = 0;
+                    for layer in &cache.layers_info {
+                        let mut has_r = false;
+                        let mut has_g = false;
+                        let mut has_b = false;
+                        let mut has_a = false;
+                        for ch in &layer.channels {
+                            let short = ch.name.split('.').last().unwrap_or(&ch.name).to_ascii_uppercase();
+                            match short.as_str() {
+                                "R" | "RED" => has_r = true,
+                                "G" | "GREEN" => has_g = true,
+                                "B" | "BLUE" => has_b = true,
+                                "A" | "ALPHA" => has_a = true,
+                                _ => {}
+                            }
+                        }
+                        if has_r && has_g && has_b { count += 1; }
+                        else if (has_r as u8 + has_g as u8 + has_b as u8) == 1 && !has_a { count += 1; }
+                        else if layer.channels.len() == 1 { count += 1; }
+                    }
+                    (count as u16).max(1)
+                };
+
+                let mut pages_written: u16 = 0;
+                let mut current_page: u16 = 1;
                 for layer in &cache.layers_info {
                     // Ustal dostępność kanałów w tej warstwie (po krótkich nazwach R/G/B/A)
                     let mut has_r = false;
@@ -619,6 +645,7 @@ pub fn handle_export_convert(
                                     }
                                 }
                                 pages_written += 1;
+                                current_page += 1;
                                 push_console(&ui, &console, format!("[export] page: {} ({}x{}, {})", display_name, width, height, if has_a { "RGBAf32" } else { "RGBf32" }));
                             }
                             Err(e) => {
@@ -644,6 +671,7 @@ pub fn handle_export_convert(
                                     return;
                                 }
                                 pages_written += 1;
+                                current_page += 1;
                                 push_console(&ui, &console, format!("[export] page: {} ({}x{}, Grayf32)", display_name, width, height));
                             }
                             Err(e) => {
@@ -670,6 +698,7 @@ pub fn handle_export_convert(
                                     return;
                                 }
                                 pages_written += 1;
+                                current_page += 1;
                                 push_console(&ui, &console, format!("[export] page: {} ({}x{}, Grayf32)", display_name, width, height));
                             }
                             Err(e) => {
@@ -710,10 +739,7 @@ fn write_tiff_page_rgba_f32(
         .new_image::<RGBA32Float>(width, height)
         .map_err(|e| anyhow::anyhow!("{}", e))?;
     // Tag opisu warstwy
-    image_writer
-        .encoder()
-        .write_tag(Tag::ImageDescription, layer_name)
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    image_writer.encoder().write_tag(Tag::ImageDescription, layer_name).map_err(|e| anyhow::anyhow!("{}", e))?;
     image_writer
         .write_data(data)
         .map_err(|e| anyhow::anyhow!("{}", e))?;
@@ -730,10 +756,7 @@ fn write_tiff_page_rgb_f32(
     let mut image_writer = encoder
         .new_image::<RGB32Float>(width, height)
         .map_err(|e| anyhow::anyhow!("{}", e))?;
-    image_writer
-        .encoder()
-        .write_tag(Tag::ImageDescription, layer_name)
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    image_writer.encoder().write_tag(Tag::ImageDescription, layer_name).map_err(|e| anyhow::anyhow!("{}", e))?;
     image_writer
         .write_data(data)
         .map_err(|e| anyhow::anyhow!("{}", e))?;
@@ -750,10 +773,7 @@ fn write_tiff_page_gray_f32(
     let mut image_writer = encoder
         .new_image::<Gray32Float>(width, height)
         .map_err(|e| anyhow::anyhow!("{}", e))?;
-    image_writer
-        .encoder()
-        .write_tag(Tag::ImageDescription, layer_name)
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    image_writer.encoder().write_tag(Tag::ImageDescription, layer_name).map_err(|e| anyhow::anyhow!("{}", e))?;
     image_writer
         .write_data(data)
         .map_err(|e| anyhow::anyhow!("{}", e))?;
