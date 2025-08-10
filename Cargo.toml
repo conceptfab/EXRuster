@@ -1,10 +1,16 @@
 [package]
-name = "EXRuster"
+name = "exruster"
 version = "0.1.1"
 edition = "2021"
+authors = ["Your Name <your.email@example.com>"]
+description = "EXR image processing tool"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/yourusername/exruster"
+keywords = ["exr", "image", "processing"]
+categories = ["multimedia::images"]
 
 [[bin]]
-name = "EXRuster"
+name = "exruster"
 path = "src/main.rs"
 
 [dependencies]
@@ -12,19 +18,60 @@ slint = "1.12.1"
 exr = "1.73.0"
 rfd = { version = "0.15", features = ["file-handle-inner"] }
 anyhow = "1.0"
-rayon = "1.7"           # Przetwarzanie równoległe
-num_cpus = "1.17"       # Wykrywanie liczby rdzeni
-image = { version = "0.25.6", default-features = false, features = ["png", "tiff"] }
-tiff = "0.9"
-tiff-encoder = "0.3.2"
+rayon = "1.7"
+num_cpus = "1.17"
+image = { version = "0.25.6", default-features = false, features = ["png", "tiff", "jpeg"] }
+tiff = "0.9.1"
 
 [build-dependencies]
 slint-build = "1.12.1"
 winres = "0.1"
 
+[profile.dev]
+opt-level = 1
+debug = true
+incremental = true
+overflow-checks = true
+
+[profile.dev-fast]
+inherits = "dev"
+opt-level = 0
+debug = false
+incremental = true
+codegen-units = 16
+
 [profile.release]
-lto = true              # Link Time Optimization
-codegen-units = 1       # Lepsza optymalizacja kosztem czasu kompilacji
-panic = "abort"         # Mniejszy binary size
-opt-level = 3           # Maksymalne optymalizacje
-overflow-checks = false # Wyłącz sprawdzanie overflow w release
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+opt-level = 3
+strip = true
+overflow-checks = false
+debug = false
+
+[profile.release-with-debug]
+inherits = "release"
+debug = true
+strip = false
+
+# Konfiguracja dla testów
+[profile.test]
+opt-level = 1
+debug = true
+
+# Konfiguracja dla benchmarks
+[profile.bench]
+opt-level = 3
+debug = false
+lto = "thin"
+
+# Workspace configuration (jeśli planujesz rozszerzenie)
+# [workspace]
+# members = [".", "crates/*"]
+
+# Metadane dla cargo-release
+[package.metadata.release]
+sign-commit = false
+sign-tag = false
+pre-release-commit-message = "chore: Release {{version}}"
+tag-message = "chore: Release {{version}}"

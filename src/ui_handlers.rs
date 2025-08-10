@@ -10,6 +10,9 @@ use std::rc::Rc;
 use crate::exr_metadata;
 use crate::progress::{ProgressSink, UiProgress};
 use crate::utils::{get_channel_info, normalize_channel_name};
+use std::fs::File;
+use tiff::encoder::{TiffEncoder, colortype::{RGBA32Float, RGB32Float, Gray32Float}};
+use tiff::tags::Tag;
 use image::{ImageBuffer, Rgb};
 
 // Import komponentów Slint
@@ -526,7 +529,7 @@ pub fn handle_export_convert(
     console: ConsoleModel,
 ) {
     if let Some(ui) = ui_handle.upgrade() {
-        let Some(_path) = with_current_path(&current_file_path) else {
+        let Some(path) = with_current_path(&current_file_path) else {
             ui.set_status_text("Error: No file loaded".into());
             return;
         };
@@ -540,31 +543,221 @@ pub fn handle_export_convert(
             prog.start_indeterminate(Some("Exporting TIFF..."));
             let guard = lock_or_recover(&image_cache);
             if let Some(ref cache) = *guard {
-                let width = cache.width;
-                let height = cache.height;
-                let mut buf = ImageBuffer::<image::Rgba<f32>, Vec<f32>>::new(width, height);
-                for (x, y, p) in buf.enumerate_pixels_mut() {
-                    let idx = (y as usize) * (width as usize) + (x as usize);
-                    if let Some(&(mut r, mut g, mut b, a)) = cache.raw_pixels.get(idx) {
-                        if let Some(mat) = cache.color_matrix() {
-                            let rr = mat[0][0] * r + mat[0][1] * g + mat[0][2] * b;
-                            let gg = mat[1][0] * r + mat[1][1] * g + mat[1][2] * b;
-                            let bb = mat[2][0] * r + mat[2][1] * g + mat[2][2] * b;
-                            r = rr; g = gg; b = bb;
+                // Utwórz encoder TIFF
+                let mut output_file = match File::create(&dst) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        ui.set_status_text(format!("Export error: {}", e).into());
+                        prog.reset();
+                        return;
+                    }
+                };
+                let mut tiff_encoder = match TiffEncoder::new(&mut output_file) {
+                    Ok(enc) => enc,
+                    Err(e) => {
+                        ui.set_status_text(format!("Export error (encoder): {}", e).into());
+                        prog.reset();
+                        return;
+                    }
+                };
+
+                let mut pages_written = 0usize;
+                for layer in &cache.layers_info {
+                    // Ustal dostępność kanałów w tej warstwie (po krótkich nazwach R/G/B/A)
+                    let mut has_r = false;
+                    let mut has_g = false;
+                    let mut has_b = false;
+                    let mut has_a = false;
+                    for ch in &layer.channels {
+                        let short = ch.name.split('.').last().unwrap_or(&ch.name).to_ascii_uppercase();
+                        match short.as_str() {
+                            "R" | "RED" => has_r = true,
+                            "G" | "GREEN" => has_g = true,
+                            "B" | "BLUE" => has_b = true,
+                            "A" | "ALPHA" => has_a = true,
+                            _ => {}
                         }
-                        *p = image::Rgba([r, g, b, a]);
+                    }
+
+                    let display_name = if layer.name.is_empty() { "Beauty".to_string() } else { layer.name.clone() };
+
+                    // Przypadek: pełny RGB(A)
+                    if has_r && has_g && has_b {
+                        match crate::image_cache::load_specific_layer(&path, &layer.name, None) {
+                            Ok((pixels, width, height, _)) => {
+                                let pixel_count = (width as usize) * (height as usize);
+                                if has_a {
+                                    // RGBA f32
+                                    let mut buf: Vec<f32> = vec![0.0; pixel_count * 4];
+                                    for i in 0..pixel_count {
+                                        let (r, g, b, a) = pixels[i];
+                                        let base = i * 4;
+                                        buf[base + 0] = r;
+                                        buf[base + 1] = g;
+                                        buf[base + 2] = b;
+                                        buf[base + 3] = a;
+                                    }
+                                    if let Err(e) = write_tiff_page_rgba_f32(&mut tiff_encoder, width, height, &display_name, &buf) {
+                                        ui.set_status_text(format!("Export error (TIFF RGBA): {}", e).into());
+                                        prog.reset();
+                                        return;
+                                    }
+                                } else {
+                                    // RGB f32
+                                    let mut buf: Vec<f32> = vec![0.0; pixel_count * 3];
+                                    for i in 0..pixel_count {
+                                        let (r, g, b, _a) = pixels[i];
+                                        let base = i * 3;
+                                        buf[base + 0] = r;
+                                        buf[base + 1] = g;
+                                        buf[base + 2] = b;
+                                    }
+                                    if let Err(e) = write_tiff_page_rgb_f32(&mut tiff_encoder, width, height, &display_name, &buf) {
+                                        ui.set_status_text(format!("Export error (TIFF RGB): {}", e).into());
+                                        prog.reset();
+                                        return;
+                                    }
+                                }
+                                pages_written += 1;
+                                push_console(&ui, &console, format!("[export] page: {} ({}x{}, {})", display_name, width, height, if has_a { "RGBAf32" } else { "RGBf32" }));
+                            }
+                            Err(e) => {
+                                push_console(&ui, &console, format!("[export] skip '{}' (read error): {}", display_name, e));
+                                continue;
+                            }
+                        }
+                    }
+                    // Przypadek: pojedynczy kanał RGB (np. tylko R) → Gray f32
+                    else if (has_r as u8 + has_g as u8 + has_b as u8) == 1 && !has_a {
+                        let wanted = if has_r { "R" } else if has_g { "G" } else { "B" };
+                        match crate::image_cache::load_single_channel_as_grayscale(&path, &layer.name, wanted, None) {
+                            Ok((pixels, width, height, _)) => {
+                                let pixel_count = (width as usize) * (height as usize);
+                                let mut buf: Vec<f32> = vec![0.0; pixel_count];
+                                for i in 0..pixel_count {
+                                    let (v, _vg, _vb, _a) = pixels[i];
+                                    buf[i] = v;
+                                }
+                                if let Err(e) = write_tiff_page_gray_f32(&mut tiff_encoder, width, height, &display_name, &buf) {
+                                    ui.set_status_text(format!("Export error (TIFF Gray): {}", e).into());
+                                    prog.reset();
+                                    return;
+                                }
+                                pages_written += 1;
+                                push_console(&ui, &console, format!("[export] page: {} ({}x{}, Grayf32)", display_name, width, height));
+                            }
+                            Err(e) => {
+                                push_console(&ui, &console, format!("[export] skip '{}' (read error): {}", display_name, e));
+                                continue;
+                            }
+                        }
+                    }
+                    // Przypadek: dokładnie jeden kanał o innej nazwie (np. Z/Depth/Mask) → Gray f32
+                    else if layer.channels.len() == 1 {
+                        let ch_name = &layer.channels[0].name;
+                        let wanted_short = ch_name.split('.').last().unwrap_or(ch_name);
+                        match crate::image_cache::load_single_channel_as_grayscale(&path, &layer.name, wanted_short, None) {
+                            Ok((pixels, width, height, _)) => {
+                                let pixel_count = (width as usize) * (height as usize);
+                                let mut buf: Vec<f32> = vec![0.0; pixel_count];
+                                for i in 0..pixel_count {
+                                    let (v, _vg, _vb, _a) = pixels[i];
+                                    buf[i] = v;
+                                }
+                                if let Err(e) = write_tiff_page_gray_f32(&mut tiff_encoder, width, height, &display_name, &buf) {
+                                    ui.set_status_text(format!("Export error (TIFF Gray): {}", e).into());
+                                    prog.reset();
+                                    return;
+                                }
+                                pages_written += 1;
+                                push_console(&ui, &console, format!("[export] page: {} ({}x{}, Grayf32)", display_name, width, height));
+                            }
+                            Err(e) => {
+                                push_console(&ui, &console, format!("[export] skip '{}' (read error): {}", display_name, e));
+                                continue;
+                            }
+                        }
+                    }
+                    // Inne/niestandardowe układy kanałów – pomiń
+                    else {
+                        push_console(&ui, &console, format!("[export] skip '{}' (unsupported channel layout)", display_name));
+                        continue;
                     }
                 }
-                if let Err(e) = buf.save_with_format(&dst, image::ImageFormat::Tiff) {
-                    ui.set_status_text(format!("Export error: {}", e).into());
+
+                if pages_written == 0 {
+                    ui.set_status_text("Export error: no pages written".into());
                     prog.reset();
                     return;
                 }
-                ui.set_status_text("Exported TIFF".into());
+
+                ui.set_status_text(format!("Exported TIFF ({} pages)", pages_written).into());
                 prog.finish(Some("TIFF saved"));
             }
         }
     }
+}
+
+// Pomocnicze funkcje zapisu strony TIFF z tagiem nazwy warstwy (tiff 0.9 API)
+fn write_tiff_page_rgba_f32(
+    encoder: &mut TiffEncoder<&mut File>,
+    width: u32,
+    height: u32,
+    layer_name: &str,
+    data: &[f32],
+) -> anyhow::Result<()> {
+    let mut image_writer = encoder
+        .new_image::<RGBA32Float>(width, height)
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    // Tag opisu warstwy
+    image_writer
+        .encoder()
+        .write_tag(Tag::ImageDescription, layer_name)
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    image_writer
+        .write_data(data)
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    Ok(())
+}
+
+fn write_tiff_page_rgb_f32(
+    encoder: &mut TiffEncoder<&mut File>,
+    width: u32,
+    height: u32,
+    layer_name: &str,
+    data: &[f32],
+) -> anyhow::Result<()> {
+    let mut image_writer = encoder
+        .new_image::<RGB32Float>(width, height)
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    image_writer
+        .encoder()
+        .write_tag(Tag::ImageDescription, layer_name)
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    image_writer
+        .write_data(data)
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    Ok(())
+}
+
+fn write_tiff_page_gray_f32(
+    encoder: &mut TiffEncoder<&mut File>,
+    width: u32,
+    height: u32,
+    layer_name: &str,
+    data: &[f32],
+) -> anyhow::Result<()> {
+    let mut image_writer = encoder
+        .new_image::<Gray32Float>(width, height)
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    image_writer
+        .encoder()
+        .write_tag(Tag::ImageDescription, layer_name)
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    image_writer
+        .write_data(data)
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    Ok(())
 }
 
 pub fn handle_export_beauty(
