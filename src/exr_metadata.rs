@@ -2,6 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use anyhow::Context;
 use exr::prelude as exr;
+use crate::utils::{split_layer_and_short, human_size};
 
 #[derive(Debug, Clone)]
 pub struct MetadataGroup {
@@ -53,9 +54,10 @@ pub fn read_and_group_metadata(path: &Path) -> anyhow::Result<ExrMetadata> {
     general_items.push(("Rozmiar pliku".into(), human_size(file_size_bytes)));
     general_items.push(("Warstwy".into(), image.layer_data.len().to_string()));
 
-    // Zbierz nagłówek pliku jako key→value (parsowanie z Debug → spłaszczone do "klucz: wartość")
-    let image_header_debug = format!("{:#?}", image.attributes);
-    let header_items = parse_attributes_debug_flat(&image_header_debug);
+    // Zbierz nagłówek pliku jako key→value (bezpośrednia iteracja po atrybutach)
+    let header_items: Vec<(String, String)> = image.attributes.other.iter()
+        .map(|(name, value)| (name.to_string(), format!("{:?}", value)))
+        .collect();
     let mut groups: Vec<MetadataGroup> = Vec::new();
     groups.push(MetadataGroup { name: "Ogólne".into(), items: general_items });
     groups.push(MetadataGroup { name: "Nagłówek".into(), items: header_items });
@@ -85,9 +87,10 @@ pub fn read_and_group_metadata(path: &Path) -> anyhow::Result<ExrMetadata> {
 
         // Nazwa warstwy (pusta dla warstwy bazowej)
         let layer_name = base_layer_name.unwrap_or_else(|| "".to_string());
-        // Atrybuty warstwy (Debug → key/value)
-        let layer_header_debug = format!("{:#?}", layer.attributes);
-        let layer_items = parse_attributes_debug_flat(&layer_header_debug);
+        // Atrybuty warstwy (bezpośrednia iteracja po atrybutach)
+        let layer_items: Vec<(String, String)> = layer.attributes.other.iter()
+            .map(|(name, value)| (name.to_string(), format!("{:?}", value)))
+            .collect();
         layers.push(LayerMetadata { name: layer_name, width: w, height: h, channel_groups, attributes: layer_items });
     }
 
@@ -268,102 +271,9 @@ fn classify_channel_group(upper_short: &str) -> ChannelGroup {
 // Rozdziela "warstwa.kanał" na (warstwa, kanał_krótki).
 // Jeżeli nagłówek warstwy zawiera atrybut `layer_name`, używa go jako nazwy warstwy,
 // w przeciwnym razie rozcina po ostatniej kropce.
-fn split_layer_and_short(full: &str, base_attr: Option<&str>) -> (String, String) {
-    if let Some(base) = base_attr {
-        let short = full.rsplit('.').next().unwrap_or(full).to_string();
-        (base.to_string(), short)
-    } else if let Some(p) = full.rfind('.') {
-        (full[..p].to_string(), full[p + 1..].to_string())
-    } else {
-        ("".to_string(), full.to_string())
-    }
-}
+// split_layer_and_short oraz human_size przeniesione do utils
 
-fn human_size(bytes: u64) -> String {
-    const UNITS: [&str; 6] = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"]; 
-    let mut size = bytes as f64;
-    let mut unit = 0usize;
-    while size >= 1024.0 && unit < UNITS.len() - 1 {
-        size /= 1024.0;
-        unit += 1;
-    }
-    if unit == 0 { format!("{} {}", bytes, UNITS[unit]) } else { format!("{:.2} {}", size, UNITS[unit]) }
-}
 
-fn parse_attributes_debug_flat(debug_str: &str) -> Vec<(String, String)> {
-    // Heurystyczne spłaszczenie pretty-printed Debug do par "klucz: wartość".
-    // Działa dla:
-    // - key: SimpleValue
-    // - key: Type( ...scalar lines... )
-    // - key: Type { ...scalar lines... }
-    // Zagnieżdżenia łączymy w jedną linię wartości (po spacji), pomijając nawiasy i przecinki.
-    let lines: Vec<&str> = debug_str.lines().collect();
-    let mut i = 0usize;
-    let mut out: Vec<(String, String)> = Vec::new();
-
-    // Pomiń nagłówki typu "ImageAttributes {"/"LayerAttributes ...{" itp.
-    while i < lines.len() {
-        let t = lines[i].trim();
-        if t.is_empty() { i += 1; continue; }
-
-        // Zamkniecia bloków – ignoruj
-        if t == "}" || t == ")," || t == ")" || t == "}," { i += 1; continue; }
-
-        // Jeśli linia ma postać key: value... (bez otwierania nowego bloku) -> emituj
-        if let Some(pos) = t.find(':') {
-            let key = t[..pos].trim().trim_matches('"').to_string();
-            let rest = t[pos+1..].trim();
-
-            // Jeżeli rest kończy się '{' lub '(' → zbieraj do zamknięcia jako jedna wartość
-            let opens_block = rest.ends_with('{') || rest.ends_with('(');
-            if opens_block {
-                // Ustal jaki nawias kończy blok
-                let _closing = if rest.ends_with('{') { '}' } else { ')' };
-                let mut depth: i32 = 1; // mamy już jeden otwarty poziom
-                let mut acc: Vec<String> = Vec::new();
-                i += 1;
-                while i < lines.len() && depth > 0 {
-                    let s = lines[i].trim();
-                    // zliczaj zagnieżdżenia
-                    if s.ends_with('{') { depth += 1; }
-                    if s.ends_with('(') { depth += 1; }
-                    if s.starts_with('}') || s.starts_with(')') { depth -= 1; i += 1; continue; }
-                    if s == "{" || s == "}" || s == "(" || s == ")" { i += 1; continue; }
-                    if depth > 0 {
-                        // wyczyść przecinki i cudzysłowy brzegowe
-                        let mut v = s.trim_end_matches(',').to_string();
-                        // wyciągnij zawartość w cudzysłowie jeśli jest
-                        if v.matches('"').count() >= 2 {
-                            if let Some(first) = v.find('"') {
-                                if let Some(last) = v.rfind('"') { if last > first { v = v[first+1..last].to_string(); } }
-                            }
-                        }
-                        if !v.is_empty() { acc.push(v); }
-                    }
-                    i += 1;
-                }
-                let value = acc.join(" ");
-                if !key.is_empty() && !value.is_empty() { out.push((key, value)); }
-                continue; // już przesunęliśmy i
-            } else {
-                // Prosta wartość w tej samej linii
-                let mut value = rest.trim_end_matches(',').to_string();
-                // Usuń zewnętrzne cudzysłowy
-                if value.starts_with('"') && value.ends_with('"') && value.len() >= 2 {
-                    value = value[1..value.len()-1].to_string();
-                }
-                out.push((key, value));
-                i += 1;
-                continue;
-            }
-        }
-
-        // Linia bez ':' – pomiń
-        i += 1;
-    }
-
-    out
-}
 
 // --- Proste formatery wartości dla UI ---
 

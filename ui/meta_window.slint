@@ -1,0 +1,112 @@
+import { HorizontalBox, VerticalBox, ScrollView, TextEdit } from "std-widgets.slint";
+import { Kolory } from "colors.slint";
+import { DraggableWindow } from "DraggableWindow.slint";
+
+import "../resources/fonts/Geist-Regular.otf";
+import "../resources/fonts/Geist-Bold.otf";
+import "../resources/fonts/GeistMono-Regular.otf";
+
+export component MetaWindow inherits Rectangle {
+    background: Kolory.tlo;
+    border-color: Kolory.obramowanie;
+    border-width: 1px;
+    border-radius: 4px;
+    in-out property <[string]> meta-table-keys: [];
+    in-out property <[string]> meta-table-values: [];
+    callback exit();
+    callback dragged(length, length);
+    callback drag-ended();
+    in-out property <bool> is-dragging-active: false;
+    in-out property <string> window-title: "Meta";
+
+    VerticalLayout {
+        padding: 4px;
+        spacing: 0px;
+
+        DraggableWindow {
+            window-title: root.window-title;
+            exit => { root.exit(); }
+            dragged(dx, dy) => { root.dragged(dx, dy); }
+            drag-ended => { root.drag-ended(); }
+            is-dragging-active: root.is-dragging-active;
+        }
+
+        Rectangle {
+            vertical-stretch: 1;
+            background: Kolory.konsola_tlo;
+
+            ScrollView {
+                width: parent.width;
+                height: parent.height;
+
+                VerticalBox {
+                    width: parent.width - 8px; spacing: 0px; alignment: start;
+
+                    for key[i] in meta-table-keys: Rectangle {
+                        property <bool> is_header: root.meta-table-values[i] == "";
+                        width: parent.width;
+                        background: Kolory.przezroczysty;
+                        height: is_header ? header_text.preferred-height + 20px : Math.max(22px, Math.max(k_text.preferred-height, v_text.preferred-height) + 20px);
+
+                        // Header row
+                        header_text := Text { visible: is_header; x: 4px; y: 10px; text: key; color: Kolory.tekst_silny; font-size: 11px; font-family: "Geist"; }
+
+                        // Regular row
+                        HorizontalBox {
+                            visible: !is_header; spacing: 8px; x: 4px; y: 10px; width: parent.width - 8px; height: parent.height - 20px;
+
+                            Rectangle { width: (parent.width - 8px) * 0.30; height: parent.height;
+                                k_text := Text { text: key; color: Kolory.tekst_silny; font-size: 10px; font-family: "Geist"; wrap: word-wrap; width: parent.width; height: parent.height; vertical-alignment: center; }
+                            }
+
+                            Rectangle { width: (parent.width - 8px) * 0.70; height: parent.height;
+                                v_text := Text {
+                                    text: root.meta-table-values[i];
+                                    color: Kolory.tekst;
+                                    wrap: word-wrap;
+                                    font-size: 10px;
+                                    horizontal-alignment: left;
+                                    vertical-alignment: center;
+                                    width: parent.width; height: parent.height;
+                                }
+                            }
+                        }
+
+                        // Bottom separator line
+                        Rectangle { y: parent.height - 1px; x: 0px; width: parent.width; height: 1px; background: Kolory.zakladka_obramowanie; }
+                    }
+                }
+            }
+        }
+
+        Rectangle {
+            height: 32px;
+            background: Kolory.panel_tlo;
+
+            VerticalLayout {
+                spacing: 0px;
+                padding: 0px;
+
+                Rectangle { height: 1px; background: Kolory.obramowanie; }
+
+                HorizontalLayout {
+                    padding: 4px;
+                    spacing: 10px;
+                    alignment: center;
+                    vertical-stretch: 1;
+
+                    Rectangle {
+                        width: 80px;
+                        height: 20px;
+                        background: button1-area.has-hover ? Kolory.hover : Kolory.suwak_tlo;
+                        border-color: Kolory.suwak_tor;
+                        border-width: 1px;
+                        border-radius: 3px;
+                        Text { text: "Close"; color: Kolory.tekst; font-size: 10px; font-family: "Geist"; horizontal-alignment: center; vertical-alignment: center; }
+                        button1-area := TouchArea { clicked => { root.exit(); } }
+                    }
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,86 @@
+import { HorizontalBox, VerticalBox } from "std-widgets.slint";
+import { Kolory } from "colors.slint";
+
+export component ParameterSlider inherits Rectangle {
+    in property <string> label-text;
+    in-out property <float> value;
+    in property <float> min-value;
+    in property <float> max-value;
+    in property <length> slider-width; // New property for width
+    callback value-changed(float);
+
+    width: slider-width; // Use the new property
+    height: 50px; // Adjust height as needed for the component
+
+    VerticalBox {
+        spacing: 4px;
+        alignment: stretch;
+        
+        Text {
+            text: label-text;
+            color: Kolory.tekst;
+            font-size: 10px;
+            font-family: "Geist";
+            font-weight: 700;
+        }
+        
+        HorizontalBox {
+            spacing: 0.4px;
+            alignment: start;
+            
+            Rectangle {
+                width: parent.width - 60px;
+                height: 20px;
+                background: Kolory.przezroczysty;
+                border-radius: 1px;
+                
+                // Slider track
+                Rectangle {
+                    y: 8px;
+                    height: 4px;
+                    width: parent.width;
+                    x: 0px;
+                    background: Kolory.suwak_tor;
+                    border-radius: 2px;
+                    
+                    // Slider handle
+                    Rectangle {
+                        width: 12px;
+                        height: 12px;
+                        y: -4px;
+                        x: (parent.width - 12px) * ((value - min-value) / (max-value - min-value));
+                        background: slider-area.has-hover ? Kolory.ekspozycja_galka_hover : Kolory.ekspozycja_galka; // Using exposure color for now, can be parameterized
+                        border-radius: 6px;
+                        border-color: Kolory.tekst_silny;
+                        border-width: 1px;
+                    }
+                }
+                
+                slider-area := TouchArea {
+                    width: parent.width;
+                    height: parent.height;
+                    x: 0px;
+                    
+                    moved => {
+                        if (self.pressed) {
+                            value-changed(max(min-value, min(max-value, min-value + (self.mouse-x / parent.width) * (max-value - min-value))));
+                        }
+                    }
+                    
+                    clicked => {
+                        value-changed(max(min-value, min(max-value, min-value + (self.mouse-x / parent.width) * (max-value - min-value))));
+                    }
+                }
+            }
+            
+            Text {
+                text: (Math.round(value * 1.6 * 100) / 100) + "";
+                color: Kolory.tekst_silny;
+                font-size: 10px;
+                font-family: "Geist";
+                width: 60px;
+                horizontal-alignment: center;
+            }
+        }
+    }
+}

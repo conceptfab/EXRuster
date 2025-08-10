@@ -4,6 +4,9 @@ import { Kolory } from "colors.slint";
 import "../resources/fonts/Geist-Regular.otf";
 import "../resources/fonts/Geist-Bold.otf";
 import "../resources/fonts/GeistMono-Regular.otf";
+import { ConsoleWindow } from "console_window.slint";
+import { MetaWindow } from "meta_window.slint";
+import { ParameterSlider } from "ParameterSlider.slint";
 
 
 // Miniaturki folderu roboczego
@@ -13,6 +16,8 @@ export struct ThumbItem {
   size: string,
   layers: string,
   path: string,
+  width: int,  // rzeczywista szerokość miniaturki
+  height: int, // rzeczywista wysokość miniaturki
 }
 
 export component AppWindow inherits Window {
@@ -28,39 +33,77 @@ export component AppWindow inherits Window {
     // Properties for column widths
     in-out property <float> column1-percent: 0.15;
     in-out property <float> column2-percent: 0.70;
-    property <float> column3-percent: 1.0 - column1-percent - column2-percent;
+    in-out property <float> column3-percent: 0.15; // niezależne, nie powiązane z kolumnami
+    // Widoczność skrajnych kolumn
+    in-out property <bool> show-left-panel: true;
+    in-out property <bool> show-right-panel: true;
     
     // Menu state
     in-out property <bool> file-menu-open: false;
+    in-out property <bool> view-menu-open: false;
     
     // Status bar properties
     in-out property <string> status-text: "Ready";
     in-out property <float> progress-value: 0.0;
     
     in-out property <image> exr-image;
-    in-out property <int> active-tab: 0; // 0=Info, 1=Kanały, 2=Warstwy, 3=Konsola
+    // Usunięto system zakładek
     in-out property <[string]> layers-model: [];
     in-out property <[color]> layers-colors: [];
     in-out property <[int]> layers-font-sizes: [];
     in-out property <string> selected-layer-item: "";
-    in-out property <[string]> console-lines: [];
+    // konsola w oknie pływającym — model linii nieużywany tutaj
     in-out property <string> console-text: "";
     in-out property <string> meta-text: "";
     in-out property <[string]> meta-table-keys: [];
     in-out property <[string]> meta-table-values: [];
+    in-out property <bool> internal-console-visible: false; // New property for internal console visibility
+    in-out property <length> internal-console-x: 0px;
+    in-out property <length> internal-console-y: 0px;
+    in-out property <bool> internal-console-is-dragging: false;
+    in-out property <length> internal-console-drag-start-x: 0px;
+    in-out property <length> internal-console-drag-start-y: 0px;
+    // Meta floating window state
+    in-out property <bool> internal-meta-visible: false;
+    in-out property <length> internal-meta-x: 0px;
+    in-out property <length> internal-meta-y: 0px;
+    in-out property <bool> internal-meta-is-dragging: false;
+    in-out property <length> internal-meta-drag-start-x: 0px;
+    in-out property <length> internal-meta-drag-start-y: 0px;
     callback clear-console();
+
+    // Helper properties to mirror column layout for positioning elements in the menu bar
+    // These compute the effective normalized widths of the three columns and allow
+    // us to align menu content with the right panel horizontally
+    property <length> _menu_non_column_width: 8px + (show-left-panel ? 2px : 0px) + (show-right-panel ? 2px : 0px);
+    property <float> _menu_col1_eff: show-left-panel ? column1-percent : 0.0;
+    property <float> _menu_col2_eff: column2-percent + (show-left-panel ? 0.0 : column1-percent) + (show-right-panel ? 0.0 : column3-percent);
+    property <float> _menu_col3_eff: show-right-panel ? column3-percent : 0.0;
+    property <float> _menu_sum_eff: max(0.0001, column1-percent + column2-percent + column3-percent);
+    property <float> _menu_n1: _menu_col1_eff / _menu_sum_eff;
+    property <float> _menu_n2: _menu_col2_eff / _menu_sum_eff;
+    property <float> _menu_n3: _menu_col3_eff / _menu_sum_eff;
+    property <length> _right_panel_width: (root.width - _menu_non_column_width) * _menu_n3;
+    property <length> _right_panel_x: 4px + (show-left-panel ? 2px : 0px) + (root.width - _menu_non_column_width) * (_menu_n1 + _menu_n2) + (show-right-panel ? 2px : 0px);
 
     // Kolory kanałów udostępniane do kodu Rust
     out property <color> layers_color_default: Kolory.tekst_slabszy;
     out property <color> layers_color_r: Kolory.kanal_r;
     out property <color> layers_color_g: Kolory.kanal_g;
     out property <color> layers_color_b: Kolory.kanal_b;
+    out property <color> hover: #f4971d;
+    // Aktualnie otwarta z miniatury ścieżka (do zaznaczenia miniatury)
+    in-out property <string> opened-thumbnail-path: "";
 
     // Properties for image controls
     in-out property <float> exposure-value: 0.0;
     in-out property <float> gamma-value: 2.2;
-    // Wysokość obszaru treści zakładek
-    in-out property <length> tab-content-height: 200px;
+    // Usunięto obszar zakładek
+
+    // Dolny panel (wariant A: 0px gdy ukryty)
+    in-out property <bool> bottom-panel-visible: false;
+    in-out property <length> bottom-panel-expanded-height: 160px;
+    property <length> bottom-panel-current-height: bottom-panel-visible ? bottom-panel-expanded-height : 0px;
 
     // Callbacks
     callback exit();
@@ -70,7 +113,8 @@ export component AppWindow inherits Window {
     callback layer-tree-clicked(string);
     callback choose-working-folder();
     callback open-thumbnail(string); // otwórz plik EXR z podanej ścieżki
-    
+    callback open-console-window(); // otwórz okno konsoli
+
     // Menu Bar
       Rectangle {
         y: 0px;
@@ -103,9 +147,45 @@ export component AppWindow inherits Window {
                 file-menu-area := TouchArea {
                     clicked => {
                         file-menu-open = !file-menu-open;
+                        view-menu-open = false; // Zamknij inne menu
                     }
                 }
             }
+            
+            // View Menu Button
+            Rectangle {
+                width: 40px;
+                height: 22px;
+                background: view-menu-area.has-hover || view-menu-open ? Kolory.hover : Kolory.przezroczysty;
+                
+                Text {
+                    text: "View";
+                    color: Kolory.tekst;
+                    font-size: 12px;
+                    font-family: "Geist";
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+                
+                view-menu-area := TouchArea {
+                    clicked => {
+                        view-menu-open = !view-menu-open;
+                        file-menu-open = false; // Zamknij inne menu
+                    }
+                }
+            }
+        }
+
+        // Image aligned with the right panel region in the menu bar
+        if show-right-panel: Image {
+            x: _right_panel_x;
+            y: 0px;
+            width: _right_panel_width;
+            height: parent.height;
+            source: @image-url("../resources/img/logo.png");
+            image-fit: contain;
+            horizontal-alignment: left;
+            vertical-alignment: center;
         }
     }
     
@@ -176,19 +256,181 @@ export component AppWindow inherits Window {
             }
         }
     }
+    
+    // View Dropdown Menu
+    if view-menu-open: Rectangle {
+        y: 30px;
+        x: 4px + 40px; // align under the View button (after File's 40px)
+        width: 160px;
+        height: 130px; // 5 items * 26px
+        background: Kolory.menu_tlo;
+        border-color: Kolory.menu_obramowanie;
+        border-width: 1px;
+        z: 10000;
+        
+        VerticalBox {
+            padding: 0px;
+            spacing: 0px;
+            
+            // Toggle Left Panel
+            Rectangle {
+                height: 26px;
+                background: left-panel-area.has-hover ? Kolory.hover : Kolory.menu_tlo;
+                
+                Text {
+                    text: root.show-left-panel ? "Hide Left Panel" : "Show Left Panel";
+                    color: Kolory.tekst;
+                    font-size: 12px;
+                    font-family: "Geist";
+                    horizontal-alignment: left;
+                    vertical-alignment: center;
+                    x: 15px;
+                }
+                
+                left-panel-area := TouchArea {
+                    width: parent.width;
+                    height: parent.height;
+                    mouse-cursor: MouseCursor.default;
+                    clicked => {
+                        show-left-panel = !show-left-panel;
+                        view-menu-open = false;
+                    }
+                }
+            }
+            
+            // Toggle Right Panel
+            Rectangle {
+                height: 26px;
+                background: right-panel-area.has-hover ? Kolory.hover : Kolory.menu_tlo;
+                
+                Text {
+                    text: root.show-right-panel ? "Hide Right Panel" : "Show Right Panel";
+                    color: Kolory.tekst;
+                    font-size: 12px;
+                    font-family: "Geist";
+                    horizontal-alignment: left;
+                    vertical-alignment: center;
+                    x: 15px;
+                }
+                
+                right-panel-area := TouchArea {
+                    width: parent.width;
+                    height: parent.height;
+                    mouse-cursor: MouseCursor.default;
+                    clicked => {
+                        show-right-panel = !show-right-panel;
+                        view-menu-open = false;
+                    }
+                }
+            }
+            
+            // Reset View
+            Rectangle {
+                height: 26px;
+                background: reset-view-area.has-hover ? Kolory.hover : Kolory.menu_tlo;
+                
+                Text {
+                    text: "Reset View";
+                    color: Kolory.tekst;
+                    font-size: 12px;
+                    font-family: "Geist";
+                    horizontal-alignment: left;
+                    vertical-alignment: center;
+                    x: 15px;
+                }
+                
+                reset-view-area := TouchArea {
+                    width: parent.width;
+                    height: parent.height;
+                    mouse-cursor: MouseCursor.default;
+                    clicked => {
+                        show-left-panel = true;
+                        show-right-panel = true;
+                        view-menu-open = false;
+                    }
+                }
+            }
+
+            // Open Console
+            Rectangle {
+                height: 26px;
+                background: open-console-area.has-hover ? Kolory.hover : Kolory.menu_tlo;
+                
+                Text {
+                    text: "Open Console";
+                    color: Kolory.tekst;
+                    font-size: 12px;
+                    font-family: "Geist";
+                    horizontal-alignment: left;
+                    vertical-alignment: center;
+                    x: 15px;
+                }
+                
+                open-console-area := TouchArea {
+                    width: parent.width;
+                    height: parent.height;
+                    mouse-cursor: MouseCursor.default;
+                    clicked => {
+                        internal-console-visible = true;
+                        view-menu-open = false;
+                    }
+                }
+            }
+
+            // Open Meta
+            Rectangle {
+                height: 26px;
+                background: open-meta-area.has-hover ? Kolory.hover : Kolory.menu_tlo;
+                
+                Text {
+                    text: "Open Meta";
+                    color: Kolory.tekst;
+                    font-size: 12px;
+                    font-family: "Geist";
+                    horizontal-alignment: left;
+                    vertical-alignment: center;
+                    x: 15px;
+                }
+                
+                open-meta-area := TouchArea {
+                    width: parent.width;
+                    height: parent.height;
+                    mouse-cursor: MouseCursor.default;
+                    clicked => {
+                        internal-meta-visible = true;
+                        view-menu-open = false;
+                    }
+                }
+            }
+        }
+    }
         
     // Main content area with three resizable columns
     HorizontalBox {
         y: 30px;
         x: 0px;
         width: root.width;
-                 height: root.height - 54px; // 30px menu + 24px status bar
+                 height: root.height - 78px - bottom-panel-current-height; // 30px menu + 24px status bar + 24px przyciski + dolny panel
         padding: 4px;
-        spacing: 2px;
+        spacing: 0px;
+
+        // Dynamicznie obliczana szerokość elementów niebędących kolumnami (dopełnienie + widoczne separatory)
+        property <length> _non_column_width: 8px + (show-left-panel ? 2px : 0px) + (show-right-panel ? 2px : 0px);
         
+        // Helpery normalizujące szerokości na podstawie widoczności paneli
+        property <float> _col1_eff: show-left-panel ? column1-percent : 0.0;
+        property <float> _col2_eff: column2-percent + (show-left-panel ? 0.0 : column1-percent) + (show-right-panel ? 0.0 : column3-percent);
+        property <float> _col3_eff: show-right-panel ? column3-percent : 0.0;
+        property <float> _sum_eff: max(0.0001, column1-percent + column2-percent + column3-percent);
+        property <float> _n1: _col1_eff / _sum_eff;
+        property <float> _n2: _col2_eff / _sum_eff;
+        property <float> _n3: _col3_eff / _sum_eff;
+
         // Column 1
         Rectangle {
-            width: (root.width - 12px) * column1-percent;
+            width: (root.width - _non_column_width) * _n1;
+            visible: show-left-panel;
+            clip: true;
             background: Kolory.panel_tlo;
             border-color: Kolory.linia_podzialu;
             border-width: 1px;
@@ -199,19 +441,22 @@ export component AppWindow inherits Window {
                 alignment: start;
                 
                 
-                // Lista warstw z obsługą przewijania
+                // Lista warstw z obsługą przewijania (tylko pionowy; poziomy wyłączony przez klip i elipsę tekstu)
                 layers_scroll := ScrollView {
                     height: parent.height - 10px;
                     width: parent.width -5px;
 
-                    VerticalBox {
-                        width: layers_scroll.width;
+                    // Kontener treści zwężony względem viewportu (eliminuje poziomy scroll), wysokość według zawartości (pionowy scroll działa)
+                    content_box := VerticalBox {
+                        // zostaw zapas na pionowy scrollbar, by nie pojawiał się poziomy
+                        width: max(0px, layers_scroll.width - 24px);
                         spacing: 1px;
                         alignment: start;
 
                         for layer-item[index] in layers-model: Rectangle {
                             height: 18px;
                             width: parent.width;
+                            clip: true;
                             background: (root.selected-layer-item == layer-item) ? Kolory.suwak_tlo
                                         : (layer-hover.has-hover ? Kolory.suwak_tlo : Kolory.przezroczysty);
 
@@ -231,6 +476,8 @@ export component AppWindow inherits Window {
                                 vertical-alignment: center;
                                 horizontal-alignment: left;
                                 x: 4px;
+                                width: parent.width - 8px;
+                                wrap: no-wrap;
                                 font-weight: (root.selected-layer-item == layer-item) ? 700 : 400;
                             }
 
@@ -261,7 +508,7 @@ export component AppWindow inherits Window {
                     
                     moved => {
                         if (self.pressed) {
-                            column1-percent = max(0.05, min(0.90, column1-percent + (self.mouse-x - self.pressed-x) / (root.width - 12px)));
+                            column1-percent = max(0.05, min(0.90, column1-percent + (self.mouse-x - self.pressed-x) / (root.width - _non_column_width)));
                         }
                     }
                 }
@@ -270,16 +517,27 @@ export component AppWindow inherits Window {
         
         // Splitter 1
         Rectangle {
-            width: 2px;
+            width: show-left-panel ? 2px : 0px;
             background: Kolory.linia_podzialu;
         }
         
         // Column 2
         Rectangle {
-            width: (root.width - 12px) * column2-percent;
+            width: (root.width - _non_column_width) * _n2;
             background: Kolory.panel_tlo;
             border-color: Kolory.linia_podzialu;
             border-width: 1px;
+            
+            // Background image for the middle column
+            Image {
+                width: parent.width;
+                height: parent.height;
+                source: @image-url("../resources/img/pattern.png");
+                horizontal-tiling: repeat;
+                vertical-tiling: repeat;
+                horizontal-alignment: left;
+                vertical-alignment: top;
+            }
             
             VerticalBox {
                 padding: 0px;
@@ -289,465 +547,18 @@ export component AppWindow inherits Window {
                 // Obraz - dopasowuje rozmiar do zawartości
                 Image {
                     width: parent.width;
-                    height: max(0px, parent.height - 25px - tab-content-height);
+                    height: parent.height;
                     source: exr-image;
                     image-fit: contain;
                     vertical-alignment: top;
                     horizontal-alignment: center;
                 }
                 
-                // Zakładki - zaraz pod obrazkiem
-                Rectangle {
-                    height: 25px;
-                    background: Kolory.zakladka_tlo;
-                    border-color: Kolory.zakladka_obramowanie;
-                    border-width: 1px;
+                // Zakładki usunięte
+                Rectangle { height: 0px; width: 0px; }
                 
-                HorizontalBox {
-                    padding: 0px;
-                    spacing: 0px;
-                    
-                    // Tab 1 - Info
-                    Rectangle {
-                        background: active-tab == 0 ? Kolory.zakladka_aktywna_tlo : (tab1-area.has-hover ? Kolory.hover : Kolory.zakladka_tlo);
-                        border-color: active-tab == 0 ? Kolory.zakladka_aktywna_obramowanie : Kolory.zakladka_obramowanie;
-                        border-width: 1px;
-                        
-                         Text {
-                             text: "Exposure";
-                             color: active-tab == 0 ? Kolory.tekst_silny : Kolory.tekst;
-                             font-size: 10px;
-                             font-family: "Geist";
-                             font-weight: 700;
-                             horizontal-alignment: center;
-                             vertical-alignment: center;
-                         }
-                        
-                        tab1-area := TouchArea {
-                            clicked => {
-                                active-tab = 0;
-                            }
-                        }
-                    }
-                    
-                    // Tab 2 - Kanały
-                    Rectangle {
-                        background: active-tab == 1 ? Kolory.zakladka_aktywna_tlo : (tab2-area.has-hover ? Kolory.hover : Kolory.zakladka_tlo);
-                        border-color: active-tab == 1 ? Kolory.zakladka_aktywna_obramowanie : Kolory.zakladka_obramowanie;
-                        border-width: 1px;
-                        
-                        Text {
-                            text: "Export";
-                            color: active-tab == 1 ? Kolory.tekst_silny : Kolory.tekst;
-                            font-size: 10px;
-                        font-family: "Geist";
-                        font-weight: 700;
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
-                        }
-                        
-                        tab2-area := TouchArea {
-                            clicked => {
-                                active-tab = 1;
-                            }
-                        }
-                    }
-                    
-                    // Tab 3 - Warstwy
-                    Rectangle {
-                        background: active-tab == 2 ? Kolory.zakladka_aktywna_tlo : (tab3-area.has-hover ? Kolory.hover : Kolory.zakladka_tlo);
-                        border-color: active-tab == 2 ? Kolory.zakladka_aktywna_obramowanie : Kolory.zakladka_obramowanie;
-                        border-width: 1px;
-                        
-                        Text {
-                            text: "Meta";
-                            color: active-tab == 2 ? Kolory.tekst_silny : Kolory.tekst;
-                            font-size: 9px;
-                        font-family: "Geist";
-                        font-weight: 700;
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
-                        }
-                        
-                        tab3-area := TouchArea {
-                            clicked => {
-                                active-tab = 2;
-                            }
-                        }
-                    }
-                    
-                    // Tab 4 - Konsola
-                    Rectangle {
-                        background: active-tab == 3 ? Kolory.zakladka_aktywna_tlo : (tab4-area.has-hover ? Kolory.hover : Kolory.zakladka_tlo);
-                        border-color: active-tab == 3 ? Kolory.zakladka_aktywna_obramowanie : Kolory.zakladka_obramowanie;
-                        border-width: 1px;
-                        
-                        Text {
-                            text: "Console";
-                            color: active-tab == 3 ? Kolory.tekst_silny : Kolory.tekst;
-                            font-size: 10px;
-                        font-family: "Geist";
-                        font-weight: 700;
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
-                        }
-                        
-                        tab4-area := TouchArea {
-                            clicked => {
-                                active-tab = 3;
-                            }
-                        }
-                    }
-                }
-                }
-                
-                // Zawartość aktywnej zakładki
-                Rectangle {
-                    background: Kolory.menu_tlo;
-                    height: tab-content-height;
-                    
-                    // Info tab content
-                    if active-tab == 0: VerticalBox {
-                        padding: 10px;
-                        padding-bottom: 0px;
-                        spacing: 8px;
-                        alignment: stretch;
-                        
-                        
-                        
-                        // Exposure slider
-                        HorizontalBox {
-                            spacing: 8px;
-                            alignment: center;
-                            
-                            Text {
-                                text: "Exposure:";
-                                color: Kolory.tekst;
-                                font-size: 10px;
-                                font-family: "Geist";
-                                width: 70px;
-                            }
-                            
-                            Rectangle {
-                                width: 80%;
-                                height: 20px;
-                                background: Kolory.suwak_tlo;
-                                border-radius: 3px;
-                                
-                                // Slider track
-                                Rectangle {
-                                    y: 8px;
-                                    height: 4px;
-                                    width: parent.width - 8px;
-                                    x: 4px;
-                                    background: Kolory.suwak_tor;
-                                    border-radius: 2px;
-                                    
-                                    // Slider handle
-                                    Rectangle {
-                                        width: 12px;
-                                        height: 12px;
-                                        y: -4px;
-                                        x: (parent.width - 12px) * ((exposure-value + 5.0) / 10.0);
-                                        background: exposure-area.has-hover ? Kolory.ekspozycja_galka_hover : Kolory.ekspozycja_galka;
-                                        border-radius: 6px;
-                                        border-color: Kolory.tekst_silny;
-                                        border-width: 1px;
-                                    }
-                                }
-                                
-                                exposure-area := TouchArea {
-                                    width: parent.width;
-                                    height: parent.height;
-                                    
-                                    moved => {
-                                        if (self.pressed) {
-                                            exposure-value = -5.0 + (self.mouse-x / parent.width) * 10.0;
-                                            exposure-value = max(-5.0, min(5.0, exposure-value));
-                                            // KURWA NAPRAWIONE! Callback NATYCHMIAST podczas przesuwania!
-                                            exposure-changed(exposure-value);
-                                        }
-                                    }
-                                    
-                                    clicked => {
-                                        // Również dla pojedynczego kliknięcia
-                                        exposure-value = -5.0 + (self.mouse-x / parent.width) * 10.0;
-                                        exposure-value = max(-5.0, min(5.0, exposure-value));
-                                        exposure-changed(exposure-value);
-                                    }
-                                }
-                            }
-                            
-                            Text {
-                                text: Math.round(exposure-value * 100) / 100;
-                                color: Kolory.tekst_silny;
-                                font-size: 10px;
-                                font-family: "Geist";
-                                width: 40px;
-                                horizontal-alignment: center;
-                            }
-                        }
-                        
-                        // Gamma slider
-                        HorizontalBox {
-                            spacing: 8px;
-                            alignment: center;
-                            
-                            Text {
-                                text: "Gamma:";
-                                color: Kolory.tekst;
-                                font-size: 10px;
-                                font-family: "Geist";
-                                width: 70px;
-                            }
-                            
-                            Rectangle {
-                                width: 80%;
-                                height: 20px;
-                                background: Kolory.suwak_tlo;
-                                border-radius: 3px;
-                                
-                                // Slider track
-                                Rectangle {
-                                    y: 8px;
-                                    height: 4px;
-                                    width: parent.width - 8px;
-                                    x: 4px;
-                                    background: Kolory.suwak_tor;
-                                    border-radius: 2px;
-                                    
-                                    // Slider handle
-                                    Rectangle {
-                                        width: 12px;
-                                        height: 12px;
-                                        y: -4px;
-                                        x: (parent.width - 12px) * ((gamma-value - 0.5) / 4.0);
-                                        background: gamma-area.has-hover ? Kolory.gamma_galka_hover : Kolory.gamma_galka;
-                                        border-radius: 6px;
-                                        border-color: Kolory.tekst_silny;
-                                        border-width: 1px;
-                                    }
-                                }
-                                
-                                gamma-area := TouchArea {
-                                    width: parent.width;
-                                    height: parent.height;
-                                    
-                                    moved => {
-                                        if (self.pressed) {
-                                            gamma-value = 0.5 + (self.mouse-x / parent.width) * 4.0;
-                                            gamma-value = max(0.5, min(4.5, gamma-value));
-                                            // KURWA NAPRAWIONE! Callback NATYCHMIAST podczas przesuwania!
-                                            gamma-changed(gamma-value);
-                                        }
-                                    }
-                                    
-                                    clicked => {
-                                        // Również dla pojedynczego kliknięcia
-                                        gamma-value = 0.5 + (self.mouse-x / parent.width) * 4.0;
-                                        gamma-value = max(0.5, min(4.5, gamma-value));
-                                        gamma-changed(gamma-value);
-                                    }
-                                }
-                            }
-                            
-                            Text {
-                                text: Math.round(gamma-value * 100) / 100;
-                                color: Kolory.tekst_silny;
-                                font-size: 10px;
-                                font-family: "Geist";
-                                width: 40px;
-                                horizontal-alignment: center;
-                            }
-                        }
-                        
-                        // Spacer to push reset button to bottom
-                        Rectangle {
-                            height: 5px;
-                        }
-                        
-                        // Reset button
-                        Rectangle {
-                            height: 25px;
-                            background: reset-area.has-hover ? Kolory.hover : Kolory.suwak_tlo;
-                            border-color: Kolory.suwak_tor;
-                            border-width: 1px;
-                            border-radius: 3px;
-                            
-                            Text {
-                                text: "Reset";
-                                color: Kolory.tekst;
-                                font-size: 10px;
-                                font-family: "Geist";
-                                horizontal-alignment: center;
-                                vertical-alignment: center;
-                            }
-                            
-                            reset-area := TouchArea {
-                                width: parent.width;
-                                height: parent.height;
-                                clicked => {
-                                    exposure-value = 0.0;
-                                    gamma-value = 2.2;
-                                    // Wywołaj callback'i aby zaktualizować obraz
-                                    exposure-changed(exposure-value);
-                                    gamma-changed(gamma-value);
-                                }
-                            }
-                        }
-                    }
-                    
-                    // Kanały tab content
-                    if active-tab == 1: VerticalBox {
-                        padding: 10px;
-                        spacing: 5px;
-                        alignment: start;
-                        
-                        Text {
-                            text: "Color Channels";
-                            color: Kolory.tekst_silny;
-                            font-size: 12px;
-                            font-family: "Geist";
-                            font-weight: 700;
-                        }
-                        
-                        Text {
-                            text: "☑ Red Channel";
-                            color: Kolory.kanal_r;
-                            font-size: 10px;
-                            font-family: "Geist";
-                        }
-                        
-                        Text {
-                            text: "☑ Green Channel";
-                            color: Kolory.kanal_g;
-                            font-size: 10px;
-                            font-family: "Geist";
-                        }
-                        
-                        Text {
-                            text: "☑ Blue Channel";
-                            color: Kolory.kanal_b;
-                            font-size: 10px;
-                            font-family: "Geist";
-                        }
-                        
-                        Text {
-                            text: "☑ Alpha Channel";
-                            color: Kolory.tekst;
-                            font-size: 10px;
-                            font-family: "Geist";
-                        }
-                    }
-                    
-                    // Meta tab content — tabela 2 kolumny (zawijanie i nagłówki sekcji)
-                    if active-tab == 2: ScrollView {
-                        padding: 0px; width: parent.width - 8px; height: parent.height - 8px; x: 4px; y: 4px;
-                        VerticalBox {
-                            width: parent.width - 8px; spacing: 0px; alignment: start;
-                            for key[i] in meta-table-keys: Rectangle {
-                                property <bool> is_header: root.meta-table-values[i] == "";
-                                width: parent.width;
-                                background: Kolory.przezroczysty;
-                                height: is_header ? header_text.preferred-height + 20px : Math.max(22px, Math.max(k_text.preferred-height, v_text.preferred-height) + 20px);
-
-                                // Nagłówek sekcji
-                                header_text := Text { visible: is_header; x: 4px; y: 10px; text: key; color: Kolory.tekst_silny; font-size: 11px; font-family: "Geist"; }
-
-                                // Zwykły wiersz
-                                HorizontalBox {
-                                    visible: !is_header; spacing: 8px; x: 4px; y: 10px; width: parent.width - 8px; height: parent.height - 20px;
-                                    Rectangle { width: (parent.width - 8px) * 0.30; height: parent.height;
-                                        k_text := Text { text: key; color: Kolory.tekst_silny; font-size: 10px; font-family: "Geist"; wrap: word-wrap; width: parent.width; height: parent.height; vertical-alignment: center; }
-                                    }
-                                    Rectangle { width: (parent.width - 8px) * 0.70; height: parent.height;
-                                        v_text := Text {
-                                            text: root.meta-table-values[i];
-                                            color: Kolory.tekst;
-                                            wrap: word-wrap;
-                                            font-size: 10px;
-                                            horizontal-alignment: left;
-                                            vertical-alignment: center;
-                                            width: parent.width; height: parent.height;
-                                        }
-                                    }
-                                }
-
-                                // Dolny separator (tylko linia)
-                                Rectangle { y: parent.height - 1px; x: 0px; width: parent.width; height: 1px; background: Kolory.zakladka_obramowanie; }
-                            }
-                        }
-                    }
-                    
-                    // Konsola tab content
-                    if active-tab == 3: HorizontalBox {
-                        padding: 6px;
-                        spacing: 6px;
-                        alignment: stretch;
-
-                        // Lewo: okno konsoli 70% szerokości, 100% wysokości
-                        Rectangle {
-                            width: parent.width * 0.85;
-                            height: parent.height;
-                            border-color: Kolory.zakladka_obramowanie;
-                            border-width: 1px;
-                            background: Kolory.konsola_tlo;
-
-                            ScrollView {
-                                x: 4px;
-                                y: 4px;
-                                width: parent.width - 8px;
-                                height: parent.height - 8px;
-                                TextEdit {
-                                    text: console-text;
-                                    read-only: true;
-                                    wrap: word-wrap;
-                                    font-size: 10px;
-                                    horizontal-alignment: left;
-                                    width: parent.width;
-                                    height: parent.height;
-                                }
-                            }
-                        }
-
-                        // Prawo: 30% szerokości — przyciski / narzędzia
-                        Rectangle {
-                            width: parent.width * 0.14;
-                            height: parent.height;
-                            background: Kolory.menu_tlo;
-
-                            VerticalBox {
-                                padding: 0px;
-                                spacing: 6px;
-                                alignment: start;
-
-                                Rectangle {
-                                    width: parent.width * 0.95;
-                                    height: 24px;
-                                    background: btn_area.has-hover ? Kolory.hover : Kolory.suwak_tlo;
-                                    border-color: Kolory.suwak_tor;
-                                    border-width: 1px;
-                                    border-radius: 3px;
-
-                            Text {
-                                text: "Clear";
-                                        color: Kolory.tekst;
-                                        font-size: 10px;
-                                        font-family: "Geist";
-                                        horizontal-alignment: center;
-                                        vertical-alignment: center;
-                                    }
-
-                                    btn_area := TouchArea {
-                                        width: parent.width;
-                                        height: parent.height;
-                                        clicked => { root.clear-console(); }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+                // Zawartość zakładek usunięta
+                Rectangle { height: 0px; width: 0px; }
             }
             
             // Right border for resizing
@@ -764,7 +575,7 @@ export component AppWindow inherits Window {
                     
                     moved => {
                         if (self.pressed) {
-                            column2-percent = max(0.05, min(0.90, column2-percent + (self.mouse-x - self.pressed-x) / (root.width - 12px)));
+                            column2-percent = max(0.05, min(0.90, column2-percent + (self.mouse-x - self.pressed-x) / (root.width - _non_column_width)));
                         }
                     }
                 }
@@ -773,116 +584,348 @@ export component AppWindow inherits Window {
         
         // Splitter 2
         Rectangle {
-            width: 2px;
+            width: show-right-panel ? 2px : 0px;
             background: Kolory.linia_podzialu;
         }
         
         // Column 3
         Rectangle {
-            width: (root.width - 12px) * column3-percent - 8px;
+            width: (root.width - _non_column_width) * _n3;
+            visible: show-right-panel;
+            clip: true;
             background: Kolory.panel_tlo;
             border-color: Kolory.linia_podzialu;
             border-width: 1px;
             
-            // Prawa kolumna: lista miniaturek + przycisk wyboru folderu na dole
+            // Prawa kolumna: funkcje Exposure na górze
             VerticalBox {
-                // brak paddingu: elementy kleją się do prawej krawędzi kolumny
-                padding: 0px;
-                spacing: 6px;
+                padding: 3px;
+                spacing: 8px;
                 alignment: start;
 
-                // Obszar na miniaturki (placeholder do wypełnienia modelem)
-                ScrollView {
-                    // pełna szerokość kolumny, aby uniknąć poziomego scrolla
-                    width: parent.width;
-                    height: parent.height - 40px; // zostaw miejsce na przycisk
-
-                    VerticalBox {
-                        width: parent.width;
-                        // Stały odstęp między elementami galerii zgodnie z poprawki.md
-                        spacing: 24px;
-
-                        // Każdy element galerii jako Rectangle o wysokości równej zawartości
-                        for t in root.thumbnails: Rectangle {
-                            width: parent.width;
-                            height: content.preferred-height;
-                            background: tile_area.has-hover ? Kolory.zakladka_tlo : Kolory.przezroczysty;
-
-                            // Zawartość elementu: obrazek + opis
-                            content := VerticalBox {
-                                width: parent.width;
-                                // Overlay opisów na miniaturze, brak odstępu pionowego
-                                spacing: 0px;
-                                alignment: start;
-
-                                // Kontener miniatury z prawym marginesem 10px
-                                thumb := Rectangle {
-                                    // prawa krawędź 10px od prawej krawędzi kolumny
-                                    width: parent.width - 10px;
-                                    height: img.preferred-height;
-
-                                    // Obraz dopasowany do szerokości kontenera
-                                    img := Image {
-                                        width: parent.width;
-                                        source: t.img;
-                                        image-fit: contain;
-                                        horizontal-alignment: right;
-                                        vertical-alignment: center;
-                                    }
-
-                                    // Opisy przyklejone do lewego dolnego narożnika miniatury
-                                    overlay := VerticalBox {
-                                        x: 0px;
-                                        y: parent.height - self.preferred-height;
-                                        width: parent.width;
-                                        spacing: 2px;
-                                        alignment: start;
-                                        Text { text: t.name;  color: Kolory.tekst_silny; font-size: 11px; font-family: "Geist"; horizontal-alignment: left; }
-                                        Text { text: t.size;  color: Kolory.tekst;       font-size: 10px; font-family: "Geist"; horizontal-alignment: left; }
-                                        Text { text: t.layers;color: Kolory.tekst;       font-size: 10px; font-family: "Geist"; horizontal-alignment: left; }
-                                    }
-                                }
-                            }
-
-                            // Interakcja: kliknięcie całego elementu
-                            tile_area := TouchArea {
-                                width: parent.width;
-                                height: parent.height;
-                                mouse-cursor: MouseCursor.pointer;
-                                clicked => { root.open-thumbnail(t.path); }
-                            }
-                        }
+                ParameterSlider {
+                    label-text: "Exposure:";
+                    value: root.exposure-value;
+                    min-value: -5.0;
+                    max-value: 5.0;
+                    slider-width: parent.width - 10px;
+                    value-changed(new-value) => {
+                        root.exposure-value = new-value;
+                        root.exposure-changed(new-value);
                     }
                 }
-
-                // Przyciski na dole
+                
+                ParameterSlider {
+                    label-text: "Gamma:";
+                    value: root.gamma-value;
+                    min-value: 0.5;
+                    max-value: 4.5;
+                    slider-width: parent.width - 10px;
+                    value-changed(new-value) => {
+                        root.gamma-value = new-value;
+                        root.gamma-changed(new-value);
+                    }
+                }
+                
+                // Reset button
                 Rectangle {
-                    width: parent.width - 12px;
-                    height: 28px;
-                    background: choose_folder_area.has-hover ? Kolory.hover : Kolory.suwak_tlo;
+                    height: 25px;
+                    background: reset_area_right.has-hover ? Kolory.hover : Kolory.suwak_tlo;
                     border-color: Kolory.suwak_tor;
                     border-width: 1px;
                     border-radius: 3px;
-
+                    
                     Text {
-                        text: "Select working folder";
+                        text: "Reset";
                         color: Kolory.tekst;
                         font-size: 10px;
                         font-family: "Geist";
                         horizontal-alignment: center;
                         vertical-alignment: center;
                     }
-
-                    choose_folder_area := TouchArea {
+                    
+                    reset_area_right := TouchArea {
                         width: parent.width;
                         height: parent.height;
-                        clicked => { root.choose-working-folder(); }
+                        clicked => {
+                            exposure-value = 0.0;
+                            gamma-value = 2.2;
+                            exposure-changed(exposure-value);
+                            gamma-changed(gamma-value);
+                        }
+                    }
+                }
+                
+                // Spacer
+                Rectangle {
+                    height: 10px;
+                }
+            }
+
+            // Nakładka maskująca prawą krawędź, aby uniknąć podwójnego obramowania przy krawędzi okna
+            Rectangle {
+                x: parent.width - 1px;
+                width: 1px;
+                height: parent.height;
+                background: Kolory.panel_tlo;
+            }
+        }
+         }
+
+    // Dolny panel (pełna szerokość, nad paskiem przycisków i statusem)
+    thumbs_panel := Rectangle {
+         x: 0px;
+         y: root.height - 24px - 24px - bottom-panel-current-height;
+         width: root.width;
+         height: bottom-panel-current-height;
+         background: Kolory.menu_tlo;
+         border-color: Kolory.obramowanie;
+         border-width: 1px;
+         clip: true;
+
+         animate height { duration: 300ms; easing: ease-in-out; }
+
+        property <length> thumbs_bar_height: 10px;
+
+        viewport := Rectangle {
+            x: 6px;
+            y: 6px;
+            width: parent.width - 12px;
+            height: parent.height - 12px - thumbs_panel.thumbs_bar_height - 4px;
+            clip: true;
+
+            scroll_view := ScrollView {
+                width: parent.width;
+                height: parent.height;
+
+                thumbs_content := HorizontalLayout {
+                    spacing: 24px;
+
+                    for t[index] in root.thumbnails: Rectangle {
+                        width: max(0px, viewport.height - 12px - desc.height - 1.6px)
+                                  * ((t.width * 1.0) / (t.height * 1.0));
+                        height: viewport.height - 12px;
+                        background: Kolory.przezroczysty;
+
+                        VerticalBox {
+                            padding: 0px;
+                            spacing: 1.6px;
+                            alignment: start;
+                            height: parent.height;
+
+                            image_frame := Rectangle {
+                                width: parent.width;
+                                height: max(0px, viewport.height - 12px - desc.height - 1.6px);
+                                background: Kolory.przezroczysty;
+                                border-width: (root.opened-thumbnail-path == t.path) ? 2px : (tile_area.has-hover ? 2px : 0px);
+                                border-color: (root.opened-thumbnail-path == t.path) ? #ffffff : root.hover;
+                                clip: true;
+
+                                Image {
+                                    width: parent.width;
+                                    height: parent.height;
+                                    source: t.img;
+                                    image-fit: contain;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                            }
+
+                            desc := Rectangle {
+                                width: parent.width;
+                                height: 36px;
+                                clip: true;
+                                background: Kolory.przezroczysty;
+                                VerticalBox {
+                                    width: parent.width;
+                                    height: parent.height;
+                                    spacing: 0px;
+                                    alignment: start;
+                                    Text { text: t.name;  color: Kolory.tekst; font-size: 10px; font-family: "Geist"; horizontal-alignment: left; x: 6px; }
+                                    Text { text: t.size + "  •  " + t.layers;  color: Kolory.tekst; font-size: 8px;  font-family: "Geist"; horizontal-alignment: left; x: 6px; }
+                                }
+                            }
+                        }
+                        
+                        tile_area := TouchArea {
+                            width: parent.width;
+                            height: parent.height;
+                            mouse-cursor: MouseCursor.pointer;
+                            clicked => { root.opened-thumbnail-path = t.path; root.open-thumbnail(t.path); }
+                        }
                     }
                 }
             }
         }
-         }
+
+        thumbs_bar := Rectangle {
+            x: 6px;
+            y: 6px + viewport.height + 2px;
+            width: parent.width - 12px;
+            height: thumbs_panel.thumbs_bar_height;
+            visible: scroll_view.viewport-width < thumbs_content.width;
+            background: Kolory.suwak_tlo;
+            border-radius: 4px;
+            border-width: 1px;
+            border-color: Kolory.menu_obramowanie;
+
+            hover_area := TouchArea {
+                width: parent.width;
+                height: parent.height;
+            }
+
+            handle := Rectangle {
+                property <length> content_w: max(1px, thumbs_content.width);
+                property <length> viewport_w: scroll_view.viewport-width;
+                width: max(20px, (viewport_w / content_w) * thumbs_bar.width);
+                height: hover_area.has-hover || drag.pressed ? parent.height : 4px;
+                y: (parent.height - self.height) / 2;
+                animate height { duration: 200ms; easing: ease-in-out; }
+                animate y { duration: 200ms; easing: ease-in-out; }
+
+                x: (content_w > viewport_w)
+                   ? (scroll_view.viewport-x / (content_w - viewport_w)) * (thumbs_bar.width - self.width)
+                   : 0px;
+                background: Kolory.suwak_tor;
+                border-radius: 4px;
+                Rectangle { x: 0px; y: 0px; width: parent.width; height: 1px; background: #80808040; }
+
+                drag := TouchArea {
+                    width: parent.width;
+                    height: parent.height;
+                    moved => {
+                        if (self.pressed) {
+                            scroll_view.viewport-x = ((max(0px, min(thumbs_bar.width - handle.width, handle.x + (self.mouse-x - self.pressed-x)))) / max(1px, thumbs_bar.width - handle.width)) * (content_w - viewport_w);
+                        }
+                    }
+                    clicked => {
+                        scroll_view.viewport-x = ((max(0px, min(thumbs_bar.width - handle.width, self.mouse-x - handle.width/2))) / max(1px, thumbs_bar.width - handle.width)) * (content_w - viewport_w);
+                    }
+                }
+            }
+        }
+     }
      
+     // Przyciski między panelem z miniaturkami a status barem
+     Rectangle {
+         x: 0px;
+         y: root.height - 24px - 30px; // 24px status bar + 40px button bar
+         width: root.width;
+         height: 40px; // Fixed height for the button bar
+         background: Kolory.menu_tlo; // Assuming the same background as menu/status bar
+         border-color: Kolory.obramowanie;
+         border-width: 1px;
+
+         HorizontalBox {
+             width: parent.width;
+             height: parent.height;
+              padding: 7px;
+             spacing: 4px;
+             alignment: center;
+         
+         // Nowy przycisk po LEWEJ stronie "Pokaż panel"
+         Rectangle {
+             width: 140px;
+             height: 20px;
+             background: left_extra_area.has-hover ? Kolory.hover : Kolory.suwak_tlo;
+             border-color: Kolory.suwak_tor;
+             border-width: 1px;
+             border-radius: 3px;
+
+             Text {
+                 text: root.show-left-panel ? "Hide Layers" : "Show Layers";
+                 color: Kolory.tekst;
+                 font-size: 10px;
+                 font-family: "Geist";
+                 horizontal-alignment: center;
+                 vertical-alignment: center;
+             }
+
+            left_extra_area := TouchArea {
+                 width: parent.width;
+                 height: parent.height;
+                clicked => { show-left-panel = !show-left-panel; }
+             }
+         }
+         
+         // Przycisk "Pokaż panel"
+         Rectangle {
+             width: 140px;
+             height: 20px;
+             background: toggle_panel_area.has-hover ? Kolory.hover : Kolory.suwak_tlo;
+             border-color: Kolory.suwak_tor;
+             border-width: 1px;
+             border-radius: 3px;
+
+             Text {
+                 text: bottom-panel-visible ? "Hide panel" : "Show panel";
+                 color: Kolory.tekst;
+                 font-size: 10px;
+                 font-family: "Geist";
+                 horizontal-alignment: center;
+                 vertical-alignment: center;
+             }
+
+             toggle_panel_area := TouchArea {
+                 width: parent.width;
+                 height: parent.height;
+                 clicked => { bottom-panel-visible = !bottom-panel-visible; }
+             }
+         }
+         
+         // Przycisk "Select working folder"
+         Rectangle {
+             width: 140px;
+             height: 20px;
+             background: choose_folder_area.has-hover ? Kolory.hover : Kolory.suwak_tlo;
+             border-color: Kolory.suwak_tor;
+             border-width: 1px;
+             border-radius: 3px;
+
+             Text {
+                 text: "Select working folder";
+                 color: Kolory.tekst;
+                 font-size: 10px;
+                 font-family: "Geist";
+                 horizontal-alignment: center;
+                 vertical-alignment: center;
+             }
+
+             choose_folder_area := TouchArea {
+                 width: parent.width;
+                 height: parent.height;
+                 clicked => { root.choose-working-folder(); }
+             }
+         }
+
+         // Nowy przycisk po PRAWEJ stronie "Select working folder"
+         Rectangle {
+             width: 140px;
+             height: 20px;
+             background: right_extra_area.has-hover ? Kolory.hover : Kolory.suwak_tlo;
+             border-color: Kolory.suwak_tor;
+             border-width: 1px;
+             border-radius: 3px;
+
+             Text {
+                 text: root.show-right-panel ? "Hide Controls" : "Show Controls";
+                 color: Kolory.tekst;
+                 font-size: 10px;
+                 font-family: "Geist";
+                 horizontal-alignment: center;
+                 vertical-alignment: center;
+             }
+
+            right_extra_area := TouchArea {
+                 width: parent.width;
+                 height: parent.height;
+                clicked => { show-right-panel = !show-right-panel; }
+             }
+         }
+     }
+     
+     }
+
      // Status Bar
      Rectangle {
          y: root.height - 24px;
@@ -900,7 +943,7 @@ export component AppWindow inherits Window {
              
              // Column 1 - status text (lewa strona)
              Rectangle {
-                width: root.width/3 - 12px;
+                width: root.width/2 - 12px;
 
                  Text {
                      horizontal-alignment: TextHorizontalAlignment.left;
@@ -912,15 +955,9 @@ export component AppWindow inherits Window {
                  }
              }
              
-             // Column 2
+             // Column 2 - progress (right side)
              Rectangle {
-                width: root.width/3;
-
-             }
-             
-             // Column 3 - progress (right side)
-             Rectangle {
-                width: root.width/3 - 12px;
+                width: root.width/2 - 12px;
 
                 // Progress bar anchored to the right
                 Rectangle {
@@ -960,4 +997,60 @@ export component AppWindow inherits Window {
              }
          }
      }
+     if internal-console-visible: ConsoleWindow {
+         x: root.internal-console-x; // Use new property
+         y: root.internal-console-y; // Use new property
+         width: 520px; // Preferred width from console_window.slint
+         height: 360px; // Preferred width from console_window.slint
+         console-text: root.console-text;
+         clear-console => { root.clear-console(); }
+         exit => { root.internal-console-visible = false; }
+         
+         z: 1000; // Ensure it's on top
+
+        dragged(dx, dy) => {
+             if (!root.internal-console-is-dragging) {
+                 root.internal-console-drag-start-x = root.internal-console-x;
+                 root.internal-console-drag-start-y = root.internal-console-y;
+                 root.internal-console-is-dragging = true;
+             }
+
+             root.internal-console-x = Math.max(0px, Math.min(root.width - self.width, root.internal-console-drag-start-x + dx));
+
+             root.internal-console-y = Math.max(30px, Math.min(root.height - self.height - (24px + 24px), root.internal-console-drag-start-y + dy));
+         }
+         drag-ended => {
+             root.internal-console-is-dragging = false;
+         }
+         
+     }
+
+    // Floating Meta window
+    if internal-meta-visible: MetaWindow {
+        x: root.internal-meta-x;
+        y: root.internal-meta-y;
+        width: 640px;
+        height: 480px;
+        
+        meta-table-keys: root.meta-table-keys;
+        meta-table-values: root.meta-table-values;
+        
+        exit => { root.internal-meta-visible = false; }
+        
+        z: 1000;
+
+        dragged(dx, dy) => {
+            if (!root.internal-meta-is-dragging) {
+                root.internal-meta-drag-start-x = root.internal-meta-x;
+                root.internal-meta-drag-start-y = root.internal-meta-y;
+                root.internal-meta-is-dragging = true;
+            }
+
+            root.internal-meta-x = Math.max(0px, Math.min(root.width - self.width, root.internal-meta-drag-start-x + dx));
+            root.internal-meta-y = Math.max(30px, Math.min(root.height - self.height - (24px + 24px), root.internal-meta-drag-start-y + dy));
+        }
+        drag-ended => {
+            root.internal-meta-is-dragging = false;
+        }
+    }
  }

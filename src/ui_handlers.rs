@@ -10,12 +10,15 @@ use std::rc::Rc;
 use crate::exr_metadata;
 use crate::progress::{ProgressSink, UiProgress};
 
+// Import komponentów Slint
+use crate::AppWindow;
+
 pub type ImageCacheType = Arc<Mutex<Option<ImageCache>>>;
 pub type CurrentFilePathType = Arc<Mutex<Option<PathBuf>>>;
 pub type ConsoleModel = Rc<VecModel<SharedString>>;
 
 /// Dodaje linię do modelu konsoli i aktualizuje tekst w `TextEdit` (console-text)
-fn push_console(ui: &crate::AppWindow, console: &ConsoleModel, line: String) {
+pub fn push_console(ui: &crate::AppWindow, console: &ConsoleModel, line: String) {
     console.push(line.clone().into());
     let mut joined = ui.get_console_text().to_string();
     if !joined.is_empty() { joined.push('\n'); }
@@ -58,7 +61,7 @@ fn normalize_channel_display_to_short(channel_display: &str) -> String {
 }
 
 pub fn handle_layer_tree_click(
-    ui_handle: Weak<crate::AppWindow>,
+    ui_handle: Weak<AppWindow>,
     image_cache: ImageCacheType,
     clicked_item: String,
     current_file_path: CurrentFilePathType,
@@ -271,16 +274,15 @@ impl ThrottledUpdate {
 }
 
 /// Obsługuje callback wyjścia z aplikacji
-pub fn handle_exit(ui_handle: Weak<crate::AppWindow>) {
+pub fn handle_exit(ui_handle: Weak<AppWindow>) {
     if let Some(ui) = ui_handle.upgrade() {
         let _ = ui.window().hide();
-        std::process::exit(0);
     }
 }
 
 /// Obsługuje callback otwierania pliku EXR
 pub fn handle_open_exr(
-    ui_handle: Weak<crate::AppWindow>,
+    ui_handle: Weak<AppWindow>,
     current_file_path: CurrentFilePathType,
     image_cache: ImageCacheType,
     console: ConsoleModel,
@@ -302,7 +304,7 @@ pub fn handle_open_exr(
 
 /// Identyczna procedura jak w `handle_open_exr`, ale dla już znanej ścieżki
 pub fn handle_open_exr_from_path(
-    ui_handle: Weak<crate::AppWindow>,
+    ui_handle: Weak<AppWindow>,
     current_file_path: CurrentFilePathType,
     image_cache: ImageCacheType,
     console: ConsoleModel,
@@ -396,7 +398,7 @@ pub fn handle_open_exr_from_path(
 
 // Ulepszona funkcja obsługi ekspozycji I gamma z throttling
 pub fn handle_parameter_changed_throttled(
-    ui_handle: Weak<crate::AppWindow>,
+    ui_handle: Weak<AppWindow>,
     image_cache: ImageCacheType,
     console: ConsoleModel,
     exposure: Option<f32>,
@@ -442,7 +444,7 @@ pub fn handle_parameter_changed_throttled(
 
 pub fn create_layers_model(
     layers_info: &[crate::image_cache::LayerInfo],
-    ui: &crate::AppWindow,
+    ui: &AppWindow,
 ) -> (ModelRc<slint::SharedString>, ModelRc<slint::Color>, ModelRc<i32>) {
     // UPROSZCZONE DRZEWO: Warstwa → faktyczne kanały (bez grup). RGBA tylko jeśli istnieją w pliku.
     let mut items: Vec<SharedString> = Vec::new();

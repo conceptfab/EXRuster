@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use crate::image_processing::process_pixel;
 use rayon::prelude::*;
 use std::collections::HashMap;
+use crate::utils::split_layer_and_short;
 
 /// Zwraca kanoniczny skrót kanału na podstawie aliasów/nazw przyjaznych.
 /// Np. "red"/"Red"/"RED"/"R"/"R8" → "R"; analogicznie dla G/B/A.
@@ -24,17 +25,7 @@ pub struct LayerInfo {
     pub channels: Vec<ChannelInfo>,
 }
 
-#[inline]
-fn split_layer_and_short(full: &str, base_attr: Option<&str>) -> (String, String) {
-    if let Some(base) = base_attr {
-        let short = full.rsplit('.').next().unwrap_or(full).to_string();
-        (base.to_string(), short)
-    } else if let Some(p) = full.rfind('.') {
-        (full[..p].to_string(), full[p + 1..].to_string())
-    } else {
-        ("".to_string(), full.to_string())
-    }
-}
+// split_layer_and_short przeniesione do utils
 
 #[derive(Clone, Debug)]
 pub struct ChannelInfo {
@@ -146,7 +137,7 @@ impl ImageCache {
     }
 }
 
-fn extract_layers_info(path: &PathBuf) -> anyhow::Result<Vec<LayerInfo>> {
+pub(crate) fn extract_layers_info(path: &PathBuf) -> anyhow::Result<Vec<LayerInfo>> {
         let image = exr::read_all_data_from_file(path)?;
 
         // Mapowanie: nazwa_warstwy -> kanały
@@ -192,7 +183,7 @@ fn extract_layers_info(path: &PathBuf) -> anyhow::Result<Vec<LayerInfo>> {
     Ok(layers)
 }
 
-fn find_best_layer(layers_info: &[LayerInfo]) -> String {
+pub(crate) fn find_best_layer(layers_info: &[LayerInfo]) -> String {
     // Plan A: Sprawdź czy istnieje warstwa pusta ("") z kanałami R, G, B
     // Ta warstwa zawiera główne kanały obrazu bez prefiksu
     if let Some(layer) = layers_info.iter().find(|l| l.name.is_empty()) {
@@ -242,7 +233,7 @@ fn find_best_layer(layers_info: &[LayerInfo]) -> String {
         .unwrap_or_else(|| "Layer 1".to_string())
 }
 
-fn load_specific_layer(path: &PathBuf, layer_name: &str) -> anyhow::Result<(Vec<(f32, f32, f32, f32)>, u32, u32, String)> {
+pub(crate) fn load_specific_layer(path: &PathBuf, layer_name: &str) -> anyhow::Result<(Vec<(f32, f32, f32, f32)>, u32, u32, String)> {
 
     // Załaduj płaskie warstwy (bez mip-map), aby uzyskać FlatSamples
     let any_image = exr::read_all_flat_layers_from_file(path)?;

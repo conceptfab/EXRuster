@@ -1,1 +1,0 @@
-galeria klejona do prawej krawędzi
