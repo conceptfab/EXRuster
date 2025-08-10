@@ -1,6 +1,6 @@
 [package]
-name = "exruster"
-version = "0.1.1"
+name = "EXruster"
+version = "0.1.2"
 edition = "2021"
 authors = ["Your Name <your.email@example.com>"]
 description = "EXR image processing tool"
@@ -10,7 +10,7 @@ keywords = ["exr", "image", "processing"]
 categories = ["multimedia::images"]
 
 [[bin]]
-name = "exruster"
+name = "EXruster"
 path = "src/main.rs"
 
 [dependencies]
