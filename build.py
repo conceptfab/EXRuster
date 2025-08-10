@@ -9,6 +9,7 @@ import sys
 import os
 import time
 import argparse
+import shutil
 from pathlib import Path
 
 class RustBuilder:
@@ -140,6 +141,65 @@ class RustBuilder:
                 print(f"⚠️  Nie znaleziono pliku wykonywalnego: {exe_path}")
                 
         return success
+
+    def build_final(self, bin_name: str = "exruster", out_dir: str = "dist", clean: bool = False, verbose: bool = False) -> bool:
+        """Buduje finalną wersję binarki w trybie release i kopiuje do katalogu out_dir bez uruchamiania."""
+        self.print_header("🚀 FINALNY BUILD APLIKACJI")
+        print(f"📁 Katalog projektu: {self.project_dir}")
+        print(f"🦀 Tryb kompilacji: release")
+        print(f"🔧 Binarka: {bin_name}")
+        print(f"📤 Katalog wyjściowy: {out_dir}")
+
+        if not self.check_cargo_project():
+            return False
+
+        # Zawsze spróbuj oczyścić katalog target przed finalnym buildem
+        self.print_step("0", "Czyszczenie katalogu 'target'")
+        cleaned_ok = self.clean_build(verbose=verbose)
+        if not cleaned_ok:
+            # Fallback: spróbuj ręcznie usunąć folder target (zignoruj błędy)
+            target_dir = self.project_dir / "target"
+            try:
+                if target_dir.exists():
+                    print(f"⚠️  cargo clean nie powiodło się – próba usunięcia: {target_dir}")
+                    shutil.rmtree(target_dir, ignore_errors=True)
+                    if target_dir.exists():
+                        print("⚠️  Nie udało się w pełni usunąć folderu 'target' (możliwe zablokowane pliki)")
+                    else:
+                        print("🗑️  Folder 'target' usunięty (fallback)")
+            except Exception as e:
+                print(f"⚠️  Fallback usunięcia 'target' nie powiódł się: {e}")
+
+        # Build release konkretnej binarki
+        self.print_step("1", f"Kompilacja binarki '{bin_name}' w trybie release")
+        cmd = ["cargo", "build", "--release", "--bin", bin_name]
+        ok, _ = self.run_command(cmd, f"Kompilacja '{bin_name}' (release)", live_output=True)
+        if not ok:
+            return False
+
+        # Ścieżki artefaktów
+        target_dir = self.project_dir / "target" / "release"
+        exe_name = f"{bin_name}.exe" if os.name == "nt" else bin_name
+        built_path = target_dir / exe_name
+        if not built_path.exists():
+            print(f"❌ Nie znaleziono skompilowanego pliku: {built_path}")
+            return False
+
+        # Przygotuj katalog wyjściowy
+        out_path = self.project_dir / out_dir
+        out_path.mkdir(parents=True, exist_ok=True)
+        final_path = out_path / exe_name
+
+        try:
+            shutil.copy2(built_path, final_path)
+        except Exception as e:
+            print(f"❌ Kopiowanie do {final_path} nie powiodło się: {e}")
+            return False
+
+        size_mb = final_path.stat().st_size / (1024 * 1024)
+        print(f"\n✅ Finalny plik: {final_path}")
+        print(f"   Rozmiar: {size_mb:.2f} MB")
+        return True
         
     def check_project(self):
         """Sprawdza projekt bez kompilacji"""
@@ -271,6 +331,12 @@ Przykłady użycia:
         action="store_true",
         help="Tylko wyczyść cache kompilacji"
     )
+
+    parser.add_argument(
+        "--clean",
+        action="store_true",
+        help="Wykonaj cargo clean przed finalnym buildem (domyślnie: nie)"
+    )
     
     parser.add_argument(
         "--run-tests",
@@ -289,6 +355,20 @@ Przykłady użycia:
         type=str,
         default=".",
         help="Ścieżka do katalogu projektu (domyślnie: bieżący katalog)"
+    )
+
+    parser.add_argument(
+        "--bin",
+        type=str,
+        default="exruster",
+        help="Nazwa binarki Cargo do zbudowania (domyślnie: exruster)"
+    )
+
+    parser.add_argument(
+        "--out-dir",
+        type=str,
+        default="dist",
+        help="Katalog docelowy dla finalnego pliku (domyślnie: dist)"
     )
     
     args = parser.parse_args()
@@ -315,13 +395,11 @@ Przykłady użycia:
             sys.exit(0 if success else 1)
             
         else:
-            # Pełny proces
-            success = builder.full_build_and_run(
-                release=not args.debug,  # Domyślnie release, chyba że --debug
-                run_tests=args.run_tests,
-                example=args.example,
-                verbose=args.verbose
-            )
+            # Domyślne zachowanie: zbuduj finalny artefakt bez uruchamiania
+            builder.print_header("🔨 BUDOWANIE FINALNEGO ARTEFAKTU")
+            if not builder.check_cargo_project():
+                sys.exit(1)
+            success = builder.build_final(bin_name=args.bin, out_dir=args.out_dir, clean=args.clean, verbose=args.verbose)
             sys.exit(0 if success else 1)
             
     except KeyboardInterrupt:
