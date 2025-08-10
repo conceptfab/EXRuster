@@ -133,6 +133,39 @@ fn setup_menu_callbacks(
             ui_handlers::handle_open_exr(ui_handle.clone(), current_file_path.clone(), image_cache.clone(), console.clone());
         }
     });
+
+    // Export: Convert (EXR -> TIFF)
+    ui.on_export_convert({
+        let ui_handle = ui.as_weak();
+        let current_file_path = current_file_path.clone();
+        let image_cache = image_cache.clone();
+        let console = console_model.clone();
+        move || {
+            ui_handlers::handle_export_convert(ui_handle.clone(), current_file_path.clone(), image_cache.clone(), console.clone());
+        }
+    });
+
+    // Export: Beauty (PNG16)
+    ui.on_export_beauty({
+        let ui_handle = ui.as_weak();
+        let current_file_path = current_file_path.clone();
+        let image_cache = image_cache.clone();
+        let console = console_model.clone();
+        move || {
+            ui_handlers::handle_export_beauty(ui_handle.clone(), current_file_path.clone(), image_cache.clone(), console.clone());
+        }
+    });
+
+    // Export: Channels (PNG16 grayscale)
+    ui.on_export_channels({
+        let ui_handle = ui.as_weak();
+        let current_file_path = current_file_path.clone();
+        let image_cache = image_cache.clone();
+        let console = console_model.clone();
+        move || {
+            ui_handlers::handle_export_channels(ui_handle.clone(), current_file_path.clone(), image_cache.clone(), console.clone());
+        }
+    });
 }
 
 fn setup_image_control_callbacks(

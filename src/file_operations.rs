@@ -34,3 +34,21 @@ pub fn open_folder_dialog() -> Option<PathBuf> {
         .set_title("Wybierz folder roboczy")
         .pick_folder()
 }
+
+/// Otwiera dialog zapisu pliku i zwraca wybraną ścieżkę
+/// `suggested_name` może zawierać rozszerzenie, np. "output.png"
+pub fn save_file_dialog(title: &str, suggested_name: &str, filters: &[(&str, &[&str])]) -> Option<PathBuf> {
+    let mut dlg = FileDialog::new();
+    dlg = dlg.set_title(title).set_file_name(suggested_name);
+    for (label, exts) in filters {
+        dlg = dlg.add_filter(*label, *exts);
+    }
+    dlg.save_file()
+}
+
+/// Otwiera dialog wyboru folderu docelowego dla eksportu
+pub fn choose_export_directory() -> Option<PathBuf> {
+    FileDialog::new()
+        .set_title("Wybierz folder docelowy eksportu")
+        .pick_folder()
+}

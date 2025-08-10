@@ -116,6 +116,10 @@ export component AppWindow inherits Window {
     callback open-console-window(); // otwórz okno konsoli
     callback navigate-thumbnails(int); // nawigacja miniatur: -1 wstecz, +1 dalej
     callback key-pressed-debug(string); // diagnostyka: logowanie nazwy klawisza
+     // Export callbacks
+     callback export-convert();
+     callback export-beauty();
+     callback export-channels();
 
     // Menu Bar
       Rectangle {
@@ -661,6 +665,88 @@ export component AppWindow inherits Window {
                 // Spacer
                 Rectangle {
                     height: 10px;
+                }
+
+                // Export section
+                Text {
+                    text: "Export";
+                    color: Kolory.tekst;
+                    font-size: 12px;
+                    font-family: "Geist";
+                    horizontal-alignment: left;
+                    vertical-alignment: center;
+                }
+
+                // Convert: EXR -> TIFF (32F RGBA)
+                Rectangle {
+                    height: 25px;
+                    background: convert_area.has-hover ? Kolory.hover : Kolory.suwak_tlo;
+                    border-color: Kolory.suwak_tor;
+                    border-width: 1px;
+                    border-radius: 3px;
+
+                    Text {
+                        text: "Convert (TIFF)";
+                        color: Kolory.tekst;
+                        font-size: 10px;
+                        font-family: "Geist";
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+
+                    convert_area := TouchArea {
+                        width: parent.width;
+                        height: parent.height;
+                        clicked => { export-convert(); }
+                    }
+                }
+
+                // Export Beauty: 16-bit PNG (with exposure/gamma)
+                Rectangle {
+                    height: 25px;
+                    background: beauty_area.has-hover ? Kolory.hover : Kolory.suwak_tlo;
+                    border-color: Kolory.suwak_tor;
+                    border-width: 1px;
+                    border-radius: 3px;
+
+                    Text {
+                        text: "Export Beauty (PNG16)";
+                        color: Kolory.tekst;
+                        font-size: 10px;
+                        font-family: "Geist";
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+
+                    beauty_area := TouchArea {
+                        width: parent.width;
+                        height: parent.height;
+                        clicked => { export-beauty(); }
+                    }
+                }
+
+                // Export Channels: PNG16 grayscale per channel
+                Rectangle {
+                    height: 25px;
+                    background: channels_area.has-hover ? Kolory.hover : Kolory.suwak_tlo;
+                    border-color: Kolory.suwak_tor;
+                    border-width: 1px;
+                    border-radius: 3px;
+
+                    Text {
+                        text: "Export Channels (PNG16)";
+                        color: Kolory.tekst;
+                        font-size: 10px;
+                        font-family: "Geist";
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+
+                    channels_area := TouchArea {
+                        width: parent.width;
+                        height: parent.height;
+                        clicked => { export-channels(); }
+                    }
                 }
             }
 

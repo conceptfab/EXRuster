@@ -446,7 +446,7 @@ impl ImageCache {
 // usunięto: funkcja preview warstwy Cryptomatte
 
 /// Wczytuje pojedynczy kanał wskazanej warstwy i zwraca wektor pikseli jako grayscale (R=G=B=val, A=1)
-fn load_single_channel_as_grayscale(
+pub(crate) fn load_single_channel_as_grayscale(
     path: &PathBuf,
     layer_name: &str,
     channel_short: &str,

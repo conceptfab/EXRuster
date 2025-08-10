@@ -14,6 +14,8 @@ rfd = { version = "0.15", features = ["file-handle-inner"] }
 anyhow = "1.0"
 rayon = "1.7"           # Przetwarzanie równoległe
 num_cpus = "1.17"       # Wykrywanie liczby rdzeni
+image = { version = "0.25.6", default-features = false, features = ["png", "tiff"] }
+tiff = "0.9"
 
 [build-dependencies]
 slint-build = "1.12.1"
