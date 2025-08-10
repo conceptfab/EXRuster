@@ -83,10 +83,4 @@ impl ProgressSink for UiProgress {
     }
 }
 
-pub struct NoopProgress;
-impl ProgressSink for NoopProgress {
-    fn start_indeterminate(&self, _message: Option<&str>) {}
-    fn set(&self, _progress_0_1: f32, _message: Option<&str>) {}
-    fn finish(&self, _message: Option<&str>) {}
-    fn reset(&self) {}
-}
+// NoopProgress usunięty – nieużywany

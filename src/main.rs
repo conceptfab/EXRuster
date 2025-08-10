@@ -17,6 +17,7 @@ use ui_handlers::{ImageCacheType, CurrentFilePathType};
 use slint::{ModelRc, VecModel, SharedString};
 use std::rc::Rc;
 use crate::utils::human_size;
+use crate::progress::ProgressSink;
 
 fn main() -> Result<(), slint::PlatformError> {
     // Ustaw Rayon thread pool na podstawie CPU cores
@@ -148,8 +149,10 @@ fn setup_panel_callbacks(
                     let exposure = ui.get_exposure_value();
                     let gamma = ui.get_gamma_value();
                     let t0 = std::time::Instant::now();
-                    match crate::thumbnails::generate_exr_thumbnails_in_dir(&dir, 150, exposure, gamma) {
+                     let prog = crate::progress::UiProgress::new(ui.as_weak());
+                     match crate::thumbnails::generate_exr_thumbnails_in_dir(&dir, 150, exposure, gamma, Some(&prog)) {
                         Ok(mut thumbs) => {
+                            prog.set(0.95, Some("Sorting thumbnails..."));
                             thumbs.sort_by(|a, b| a.file_name.to_lowercase().cmp(&b.file_name.to_lowercase()));
                             let items: Vec<ThumbItem> = thumbs.into_iter().map(|t| ThumbItem {
                                 img: t.image,
@@ -164,12 +167,14 @@ fn setup_panel_callbacks(
                             ui.set_thumbnails(ModelRc::new(VecModel::from(items)));
                             let ms = t0.elapsed().as_millis();
                             ui.set_status_text("Thumbnails loaded".into());
+                            prog.finish(Some("Thumbnails loaded"));
                             ui.set_bottom_panel_visible(true);
                             push_console(&ui, &console_model, format!("[folder] {} EXR files | thumbnails in {} ms", count, ms));
                         }
                         Err(e) => {
                             ui.set_status_text(format!("Error loading thumbnails: {}", e).into());
                             push_console(&ui, &console_model, format!("[error][folder] {}", e));
+                            prog.reset();
                         }
                     }
                 } else {

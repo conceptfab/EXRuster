@@ -6,6 +6,7 @@ use slint::{Image, Rgba8Pixel, SharedPixelBuffer};
 
 use crate::image_processing::process_pixel;
 use crate::image_cache::{extract_layers_info, find_best_layer, load_specific_layer};
+use crate::progress::ProgressSink;
 
 /// Zwięzła reprezentacja miniaturki EXR do wyświetlenia w UI
 pub struct ExrThumbnailInfo {
@@ -27,13 +28,17 @@ pub fn generate_exr_thumbnails_in_dir(
     thumb_height: u32,
     exposure: f32,
     gamma: f32,
+    progress: Option<&dyn ProgressSink>,
 ) -> anyhow::Result<Vec<ExrThumbnailInfo>> {
     let files = list_exr_files(directory)?;
+    let total_files = files.len();
+    if let Some(p) = progress { p.set(0.0, Some(&format!("Processing {} files...", total_files))); }
 
     // 1) Równolegle generuj dane miniaturek w typie bezpiecznym dla wątków (bez slint::Image)
     let works: Vec<ExrThumbWork> = files
         .par_iter()
-        .filter_map(|path| match generate_single_exr_thumbnail_work(path, thumb_height, exposure, gamma) {
+        .enumerate()
+        .filter_map(|(_i, path)| match generate_single_exr_thumbnail_work(path, thumb_height, exposure, gamma) {
             Ok(work) => Some(work),
             Err(_e) => None, // tu można logować błąd
         })
@@ -62,6 +67,7 @@ pub fn generate_exr_thumbnails_in_dir(
         })
         .collect();
 
+    if let Some(p) = progress { p.finish(Some("Thumbnails ready")); }
     Ok(thumbnails)
 }
 
@@ -105,7 +111,7 @@ fn generate_single_exr_thumbnail_work(
     let layers_info = extract_layers_info(&path_buf)
         .with_context(|| format!("Błąd odczytu EXR: {}", path.display()))?;
     let best_layer_name = find_best_layer(&layers_info);
-    let (raw_pixels, width, height, _current_layer) = load_specific_layer(&path_buf, &best_layer_name)
+    let (raw_pixels, width, height, _current_layer) = load_specific_layer(&path_buf, &best_layer_name, None)
         .with_context(|| format!("Błąd wczytania warstwy '{}': {}", best_layer_name, path.display()))?;
 
     // Oblicz rozmiar miniaturki - zawsze 150px wysokości, szerokość proporcjonalna

@@ -5,6 +5,7 @@ use crate::image_processing::process_pixel;
 use rayon::prelude::*;
 use std::collections::HashMap;
 use crate::utils::split_layer_and_short;
+use crate::progress::ProgressSink;
 
 /// Zwraca kanoniczny skrót kanału na podstawie aliasów/nazw przyjaznych.
 /// Np. "red"/"Red"/"RED"/"R"/"R8" → "R"; analogicznie dla G/B/A.
@@ -45,13 +46,13 @@ impl ImageCache {
         // Najpierw wyciągnij informacje o warstwach, wybierz najlepszą i wczytaj ją jako startowy podgląd
         let layers_info = extract_layers_info(path)?;
         let best_layer = find_best_layer(&layers_info);
-        let (raw_pixels, width, height, current_layer_name) = load_specific_layer(path, &best_layer)?;
+        let (raw_pixels, width, height, current_layer_name) = load_specific_layer(path, &best_layer, None)?;
 
         Ok(ImageCache { raw_pixels, width, height, layers_info, current_layer_name })
     }
     
-    pub fn load_layer(&mut self, path: &PathBuf, layer_name: &str) -> anyhow::Result<()> {
-        let (raw_pixels, width, height, current_layer_name) = load_specific_layer(path, layer_name)?;
+    pub fn load_layer(&mut self, path: &PathBuf, layer_name: &str, progress: Option<&dyn ProgressSink>) -> anyhow::Result<()> {
+        let (raw_pixels, width, height, current_layer_name) = load_specific_layer(path, layer_name, progress)?;
         
         self.raw_pixels = raw_pixels;
         self.width = width;
@@ -233,9 +234,10 @@ pub(crate) fn find_best_layer(layers_info: &[LayerInfo]) -> String {
         .unwrap_or_else(|| "Layer 1".to_string())
 }
 
-pub(crate) fn load_specific_layer(path: &PathBuf, layer_name: &str) -> anyhow::Result<(Vec<(f32, f32, f32, f32)>, u32, u32, String)> {
+pub(crate) fn load_specific_layer(path: &PathBuf, layer_name: &str, progress: Option<&dyn ProgressSink>) -> anyhow::Result<(Vec<(f32, f32, f32, f32)>, u32, u32, String)> {
 
     // Załaduj płaskie warstwy (bez mip-map), aby uzyskać FlatSamples
+    if let Some(p) = progress { p.set(0.1, Some("Reading layer data...")); }
     let any_image = exr::read_all_flat_layers_from_file(path)?;
 
     // Szukaj grupy kanałów odpowiadającej nazwie warstwy (spójne z extract_layers_info)
@@ -290,6 +292,7 @@ pub(crate) fn load_specific_layer(path: &PathBuf, layer_name: &str) -> anyhow::R
         }
 
         if group_found {
+            if let Some(p) = progress { p.set(0.4, Some("Processing pixels...")); }
             // Zapewnij 3 kanały: jeśli brakuje, uzupełnij z listy kanałów grupy lub duplikuj poprzedni
             if r_idx.is_none() {
                 r_idx = group_indices.get(0).cloned();
@@ -315,6 +318,7 @@ pub(crate) fn load_specific_layer(path: &PathBuf, layer_name: &str) -> anyhow::R
                 let a = a_idx.map(|ci| layer.channel_data.list[ci].sample_data.value_by_flat_index(i).to_f32()).unwrap_or(1.0);
                 out.push((r, g, b, a));
             }
+            if let Some(p) = progress { p.set(0.9, Some("Finalizing...")); }
             // Zwracamy żądaną nazwę jako aktualną, aby była spójna z UI
             return Ok((out, width, height, layer_name.to_string()));
         }
@@ -366,8 +370,8 @@ fn load_first_rgba_layer(path: &PathBuf) -> anyhow::Result<(Vec<(f32, f32, f32, 
 
 impl ImageCache {
     /// Wczytuje jeden wskazany kanał z danej warstwy i zapisuje go jako grayscale (R=G=B=val, A=1)
-    pub fn load_channel(&mut self, path: &PathBuf, layer_name: &str, channel_short: &str) -> anyhow::Result<()> {
-        let (pixels, width, height, current_layer_name) = load_single_channel_as_grayscale(path, layer_name, channel_short)?;
+    pub fn load_channel(&mut self, path: &PathBuf, layer_name: &str, channel_short: &str, progress: Option<&dyn ProgressSink>) -> anyhow::Result<()> {
+        let (pixels, width, height, current_layer_name) = load_single_channel_as_grayscale(path, layer_name, channel_short, progress)?;
         self.raw_pixels = pixels;
         self.width = width;
         self.height = height;
@@ -376,7 +380,8 @@ impl ImageCache {
     }
 
     /// Specjalne renderowanie głębi: auto-normalizacja percentylowa + opcjonalne odwrócenie
-    pub fn process_depth_image(&self, invert: bool) -> Image {
+    pub fn process_depth_image_with_progress(&self, invert: bool, progress: Option<&dyn ProgressSink>) -> Image {
+        if let Some(p) = progress { p.start_indeterminate(Some("Processing depth data...")); }
         let mut buffer = SharedPixelBuffer::<Rgba8Pixel>::new(self.width, self.height);
         let slice = buffer.make_mut_slice();
 
@@ -397,6 +402,7 @@ impl ImageCache {
         let mut lo = *lo_ref;
         let (_, hi_ref, _) = values.select_nth_unstable_by(p_hi_idx, |a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
         let mut hi = *hi_ref;
+        if let Some(p) = progress { p.set(0.4, Some("Computing percentiles...")); }
         if !lo.is_finite() || !hi.is_finite() || (hi - lo).abs() < 1e-20 {
             // Fallback do min/max jeśli degeneracja lub NaN/Inf
             let mut min_v = f32::INFINITY;
@@ -419,13 +425,16 @@ impl ImageCache {
             (t * 255.0).round().clamp(0.0, 255.0) as u8
         };
 
+        if let Some(p) = progress { p.set(0.8, Some("Rendering depth image...")); }
         self.raw_pixels.par_iter().zip(slice.par_iter_mut()).for_each(|(&(r, _g, _b, _a), out)| {
             let g8 = map_val(r);
             *out = Rgba8Pixel { r: g8, g: g8, b: g8, a: 255 };
         });
 
+        if let Some(p) = progress { p.finish(Some("Depth processed")); }
         Image::from_rgba8(buffer)
     }
+    // uproszczono API: używaj `process_depth_image_with_progress` bezpośrednio
 
     // usunięto: specjalny preview Cryptomatte
 }
@@ -441,7 +450,9 @@ fn load_single_channel_as_grayscale(
     path: &PathBuf,
     layer_name: &str,
     channel_short: &str,
+    progress: Option<&dyn ProgressSink>,
 ) -> anyhow::Result<(Vec<(f32, f32, f32, f32)>, u32, u32, String)> {
+    if let Some(p) = progress { p.start_indeterminate(Some("Loading channel...")); }
     let any_image = exr::read_all_flat_layers_from_file(path)?;
 
     let wanted_layer_lower = layer_name.to_lowercase();
@@ -522,5 +533,6 @@ fn load_single_channel_as_grayscale(
     }
 
     // Jeśli nie znaleziono warstwy, zwróć błąd
+    if let Some(p) = progress { p.reset(); }
     anyhow::bail!("Nie znaleziono warstwy '{}' dla kanału '{}'", layer_name, channel_short)
 }

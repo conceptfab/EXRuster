@@ -9,6 +9,7 @@ use std::rc::Rc;
 // removed unused: use exr::prelude as exr;
 use crate::exr_metadata;
 use crate::progress::{ProgressSink, UiProgress};
+use crate::utils::{get_channel_info, normalize_channel_name};
 
 // Import komponentów Slint
 use crate::AppWindow;
@@ -49,16 +50,7 @@ static DISPLAY_TO_REAL_LAYER: std::sync::LazyLock<std::sync::Mutex<HashMap<Strin
 
 // Normalizacja nazw kanałów do skrótu R/G/B/A
 #[inline]
-fn normalize_channel_display_to_short(channel_display: &str) -> String {
-    let lower = channel_display.trim().to_ascii_lowercase();
-    match lower.as_str() {
-        "r" | "red" => "R".to_string(),
-        "g" | "green" => "G".to_string(),
-        "b" | "blue" => "B".to_string(),
-        "a" | "alpha" => "A".to_string(),
-        _ => channel_display.to_string(),
-    }
-}
+fn normalize_channel_display_to_short(channel_display: &str) -> String { normalize_channel_name(channel_display) }
 
 pub fn handle_layer_tree_click(
     ui_handle: Weak<AppWindow>,
@@ -92,7 +84,9 @@ pub fn handle_layer_tree_click(
                 // Załaduj nową warstwę
                 let mut cache_guard = lock_or_recover(&image_cache);
                 if let Some(ref mut cache) = *cache_guard {
-                    match cache.load_layer(&path, &layer_name) {
+                    let prog = UiProgress::new(ui.as_weak());
+                    prog.start_indeterminate(Some("Loading layer..."));
+                    match cache.load_layer(&path, &layer_name, Some(&prog)) {
                         Ok(()) => {
                             // Pobierz aktualne wartości ekspozycji i gammy
                             let exposure = ui.get_exposure_value();
@@ -109,12 +103,14 @@ pub fn handle_layer_tree_click(
                                 .unwrap_or_else(|| "?".into());
                             status_msg = format!("Layer: {} | mode: RGB | channels: {}", layer_name, channels);
                             ui.set_status_text(status_msg.into());
+                            prog.finish(Some("Layer loaded"));
                             // Zaznacz w liście wybraną warstwę
                             ui.set_selected_layer_item(format!("📁 {}", display_layer_name).into());
                         }
                         Err(e) => {
                             ui.set_status_text(format!("Error loading layer {}: {}", layer_name, e).into());
                             push_console(&ui, &console, format!("[error] loading layer {}: {}", layer_name, e));
+                            prog.reset();
                         }
                     }
                 }
@@ -181,7 +177,9 @@ pub fn handle_layer_tree_click(
                 let path = file_path.unwrap();
                 // Brak specjalnego traktowania Cryptomatte – kanały jak w każdej warstwie
 
-                match cache.load_channel(&path, &active_layer, &channel_short) {
+                let prog = UiProgress::new(ui.as_weak());
+                prog.start_indeterminate(Some("Loading channel..."));
+                match cache.load_channel(&path, &active_layer, &channel_short, Some(&prog)) {
                     Ok(()) => {
                         let exposure = ui.get_exposure_value();
                         let gamma = ui.get_gamma_value();
@@ -189,7 +187,7 @@ pub fn handle_layer_tree_click(
                         // Specjalny przypadek Depth: jeżeli nazwa kanału to Z/Depth, użyj process_depth_image z invertem= true (near jasne)
                         let upper = channel_short.to_ascii_uppercase();
                         if upper == "Z" || upper.contains("DEPTH") {
-                            let image = cache.process_depth_image(true);
+                            let image = cache.process_depth_image_with_progress(true, Some(&prog));
                             ui.set_exr_image(image);
                             ui.set_status_text(format!("Layer: {} | Channel: {} | mode: Depth (auto-normalized, inverted)", active_layer, channel_short).into());
                             push_console(&ui, &console, format!("[channel] {}@{} → mode: Depth (auto-normalized, inverted)", channel_short, active_layer));
@@ -202,19 +200,15 @@ pub fn handle_layer_tree_click(
                             push_console(&ui, &console, format!("[channel] {}@{} → mode: Grayscale", channel_short, active_layer));
                             push_console(&ui, &console, format!("[preview] updated → mode: Grayscale, {}::{}", active_layer, channel_short));
                         }
+                        prog.finish(Some("Channel loaded"));
                         // Ustaw podświetlenie wybranego wiersza na liście
                         let display_layer = {
                             let map = lock_or_recover(&DISPLAY_TO_REAL_LAYER);
                             // Odwrotne mapowanie: znajdź klucz po wartości jeśli to możliwe
                             map.iter().find_map(|(k, v)| if v == &active_layer { Some(k.clone()) } else { None }).unwrap_or(active_layer.clone())
                         };
-                        let label = match channel_short.as_str() {
-                            "R" | "r" => "    🔴 Red",
-                            "G" | "g" => "    🟢 Green",
-                            "B" | "b" => "    🔵 Blue",
-                            "A" | "a" => "    ⚪ Alpha",
-                            _ => "    • ",
-                        };
+                        let (_, emoji, display_name) = get_channel_info(&channel_short, &ui);
+                        let label = if emoji == "•" { "    • ".to_string() } else { format!("    {} {}", emoji, display_name) };
                         let selected = if label == "    • " {
                             format!("{} @{}", channel_short, display_layer)
                         } else {
@@ -225,6 +219,7 @@ pub fn handle_layer_tree_click(
                     Err(e) => {
                         ui.set_status_text(format!("Error loading channel {}: {}", channel_short, e).into());
                         push_console(&ui, &console, format!("[error] loading channel {}@{}: {}", channel_short, active_layer, e));
+                        prog.reset();
                     }
                 }
             }
@@ -495,13 +490,7 @@ pub fn create_layers_model(
 
         for ch in ordered {
             // Emoji dla RGBA, kropka dla pozostałych, oraz sufiks @<warstwa> dla jednoznaczności
-            let (emoji, display_ch) = match ch.as_str() {
-                "R" | "r" => ("🔴", "Red".to_string()),
-                "G" | "g" => ("🟢", "Green".to_string()),
-                "B" | "b" => ("🔵", "Blue".to_string()),
-                "A" | "a" => ("⚪", "Alpha".to_string()),
-                _ => ("•", ch.clone()),
-            };
+            let (_color, emoji, display_ch) = get_channel_info(&ch, ui);
             let base = format!("    {} {}", emoji, display_ch);
             let line = format!("{} @{}", base, display_name);
             ITEM_TO_LAYER
@@ -509,17 +498,7 @@ pub fn create_layers_model(
                 .unwrap_or_else(|e| e.into_inner())
                 .insert(line.clone(), layer.name.clone());
             items.push(line.clone().into());
-            // Kolor tekstu dla WSZYSTKICH kanałów: rozpoznaj Red/Green/Blue po nazwie segmentu (case-insensitive)
-            let su = display_ch.to_ascii_uppercase();
-            let c = if su == "R" || su == "RED" || su.starts_with('R') || su.starts_with("RED") {
-                ui.get_layers_color_r()
-            } else if su == "G" || su == "GREEN" || su.starts_with('G') || su.starts_with("GREEN") {
-                ui.get_layers_color_g()
-            } else if su == "B" || su == "BLUE" || su.starts_with('B') || su.starts_with("BLUE") {
-                ui.get_layers_color_b()
-            } else {
-                ui.get_layers_color_default()
-            };
+            let (c, _emoji2, _display2) = get_channel_info(&ch, ui);
             colors.push(c);
             font_sizes.push(10);
         }
