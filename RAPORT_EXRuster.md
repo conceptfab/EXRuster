@@ -108,7 +108,7 @@ Wdrożenie powyższych zmian zamienia EXRuster z „dobrego viewer’a” w narz
 ### Lista priorytetów — największa wartość dla użytkownika
 
 1) Krytyczne (natychmiastowy, największy wpływ)
-- Chromaticities (konwersja primaries do sRGB/wyświetlacza)
+          - Chromaticities (konwersja primaries do sRGB/wyświetlacza)
 - Zoom/Pan + tryby Fit/100% + korekcja pixelAspectRatio
 - Inspektor pikseli (x,y + RGBA lin/sRGB)
 - Porządek transformacji w eksporcie = zgodny z podglądem

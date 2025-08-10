@@ -541,43 +541,64 @@ pub fn handle_export_convert(
         ) {
             push_console(&ui, &console, format!("[export] convert → {}", dst.display()));
             let prog = UiProgress::new(ui.as_weak());
-            prog.start_indeterminate(Some("Exporting TIFF..."));
-            let guard = lock_or_recover(&image_cache);
-            if let Some(ref cache) = *guard {
-                let width = cache.width as u32;
-                let height = cache.height as u32;
-                // Zbuduj płaski bufor RGBA32F
-                let mut data: Vec<f32> = Vec::with_capacity((width as usize) * (height as usize) * 4);
-                for y in 0..height {
-                    for x in 0..width {
-                        let idx = (y as usize) * (width as usize) + (x as usize);
-                        let (r, g, b, a) = cache.raw_pixels[idx];
-                        data.push(r);
-                        data.push(g);
-                        data.push(b);
-                        data.push(a);
-                    }
-                }
-
-                // Zapis przez tiff::TiffEncoder jako RGBA32F
-                let file = match File::create(&dst) {
-                    Ok(f) => f,
-                    Err(e) => { ui.set_status_text(format!("Export error: {}", e).into()); prog.reset(); return; }
-                };
-                let mut writer = BufWriter::new(file);
-                let mut encoder = match tiff::encoder::TiffEncoder::new(&mut writer) {
-                    Ok(enc) => enc,
-                    Err(e) => { ui.set_status_text(format!("Export error: {}", e).into()); prog.reset(); return; }
-                };
-                use tiff::encoder::colortype::RGBA32Float;
-                if let Err(e) = encoder.write_image::<RGBA32Float>(width, height, &data) {
-                    ui.set_status_text(format!("Export error: {}", e).into());
+            prog.start_indeterminate(Some("Preparing layers..."));
+            // Skopiuj listę warstw, aby nie trzymać blokady podczas I/O
+            let (layers, total_layers) = {
+                let guard = lock_or_recover(&image_cache);
+                if let Some(ref cache) = *guard {
+                    (cache.layers_info.clone(), cache.layers_info.len())
+                } else {
+                    ui.set_status_text("Error: No image cache".into());
                     prog.reset();
                     return;
                 }
-                ui.set_status_text("Exported TIFF (RGBA32F)".into());
-                prog.finish(Some("TIFF saved"));
+            };
+
+            // Zapisz wielostronicowy TIFF: każda warstwa jako osobna strona RGBA32F
+            let file = match File::create(&dst) {
+                Ok(f) => f,
+                Err(e) => { ui.set_status_text(format!("Export error: {}", e).into()); prog.reset(); return; }
+            };
+            let mut writer = BufWriter::new(file);
+            let mut encoder = match tiff::encoder::TiffEncoder::new(&mut writer) {
+                Ok(enc) => enc,
+                Err(e) => { ui.set_status_text(format!("Export error: {}", e).into()); prog.reset(); return; }
+            };
+            use tiff::encoder::colortype::RGBA32Float;
+
+            let total = total_layers.max(1) as f32;
+            let mut written = 0usize;
+            for (i, layer) in layers.iter().enumerate() {
+                let display_name = if layer.name.is_empty() { "Beauty".to_string() } else { layer.name.clone() };
+                prog.set((i as f32) / total, Some(&format!("Exporting {}/{}: {}", i + 1, total_layers, display_name)));
+                push_console(&ui, &console, format!("[export][tiff] writing page {}: {}", i + 1, display_name));
+
+                match crate::image_cache::load_specific_layer(&path, &layer.name, None) {
+                    Ok((pixels, w, h, _)) => {
+                        let width = w as u32;
+                        let height = h as u32;
+                        let mut data: Vec<f32> = Vec::with_capacity((width as usize) * (height as usize) * 4);
+                        for (r, g, b, a) in pixels {
+                            data.push(r);
+                            data.push(g);
+                            data.push(b);
+                            data.push(a);
+                        }
+                        if let Err(e) = encoder.write_image::<RGBA32Float>(width, height, &data) {
+                            push_console(&ui, &console, format!("[error][export][tiff] page {} ({}): {}", i + 1, display_name, e));
+                            continue;
+                        }
+                        written += 1;
+                    }
+                    Err(e) => {
+                        push_console(&ui, &console, format!("[error][export][tiff] layer '{}' load failed: {}", layer.name, e));
+                        continue;
+                    }
+                }
             }
+            prog.set(1.0, Some(&format!("TIFF pages written: {} / {}", written, total_layers)));
+            ui.set_status_text(format!("Exported TIFF with {} page(s)", written).into());
+            prog.finish(Some("TIFF saved"));
         }
     }
 }

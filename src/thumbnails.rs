@@ -3,6 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use rayon::prelude::*;
 use slint::{Image, Rgba8Pixel, SharedPixelBuffer};
+use exr::prelude as exr;
 
 use crate::image_processing::process_pixel;
 use crate::image_cache::{extract_layers_info, find_best_layer, load_specific_layer};
@@ -114,6 +115,9 @@ fn generate_single_exr_thumbnail_work(
     let (raw_pixels, width, height, _current_layer) = load_specific_layer(&path_buf, &best_layer_name, None)
         .with_context(|| format!("Błąd wczytania warstwy '{}': {}", best_layer_name, path.display()))?;
 
+    // Wylicz macierz konwersji primaries → sRGB jeśli obecne chromaticities
+    let color_matrix_rgb_to_srgb = compute_rgb_to_srgb_matrix_from_file(&path_buf).ok();
+
     // Oblicz rozmiar miniaturki - zawsze 150px wysokości, szerokość proporcjonalna
     let scale = thumb_height as f32 / height as f32;
     let thumb_h = thumb_height;
@@ -124,6 +128,7 @@ fn generate_single_exr_thumbnail_work(
 
     // Samplowanie nearest-neighbor z mapowaniem procesem jak w preview (ACES + gamma)
     let raw_width = width as usize;
+    let m = color_matrix_rgb_to_srgb;
     pixels
         .par_chunks_mut(4)
         .enumerate()
@@ -135,7 +140,13 @@ fn generate_single_exr_thumbnail_work(
             let src_y = ((y as f32 / scale) as u32).min(height.saturating_sub(1));
             let src_idx = (src_y as usize) * raw_width + (src_x as usize);
 
-            let (r, g, b, a) = raw_pixels[src_idx];
+            let (mut r, mut g, mut b, a) = raw_pixels[src_idx];
+            if let Some(mat) = m {
+                let rr = mat[0][0] * r + mat[0][1] * g + mat[0][2] * b;
+                let gg = mat[1][0] * r + mat[1][1] * g + mat[1][2] * b;
+                let bb = mat[2][0] * r + mat[2][1] * g + mat[2][2] * b;
+                r = rr; g = gg; b = bb;
+            }
             let px = process_pixel(r, g, b, a, exposure, gamma);
             out[0] = px.r; out[1] = px.g; out[2] = px.b; out[3] = px.a;
         });
@@ -152,5 +163,78 @@ fn generate_single_exr_thumbnail_work(
         num_layers: layers_info.len(),
         pixels,
     })
+}
+
+// === Chromaticities helpers (lokalne dla thumbnails) ===
+fn compute_rgb_to_srgb_matrix_from_file(path: &PathBuf) -> anyhow::Result<[[f32; 3]; 3]> {
+    let img = exr::read_all_data_from_file(path)?;
+    let mut nums: Vec<f64> = Vec::new();
+    if let Some((_k, v)) = img.attributes.other.iter().find(|(k, _)| {
+        let name_dbg = format!("{:?}", k).to_lowercase();
+        let name = name_dbg.trim_matches('"');
+        name == "chromaticities"
+    }) {
+        let mut cur = String::new();
+        for c in format!("{:?}", v).chars() {
+            if c.is_ascii_digit() || c == '.' || c == '-' { cur.push(c); }
+            else { if !cur.is_empty() { if let Ok(n) = cur.parse::<f64>() { nums.push(n); } cur.clear(); } }
+        }
+        if !cur.is_empty() { if let Ok(n) = cur.parse::<f64>() { nums.push(n); } }
+    }
+    if nums.len() < 8 { anyhow::bail!("chromaticities attribute not found or incomplete"); }
+    let rx = nums[0]; let ry = nums[1];
+    let gx = nums[2]; let gy = nums[3];
+    let bx = nums[4]; let by = nums[5];
+    let wx = nums[6]; let wy = nums[7];
+    let m_src = rgb_to_xyz_from_primaries(rx, ry, gx, gy, bx, by, wx, wy);
+    let m_xyz_to_srgb = xyz_to_srgb_matrix();
+    Ok(mul3x3(m_xyz_to_srgb, m_src))
+}
+
+fn rgb_to_xyz_from_primaries(rx: f64, ry: f64, gx: f64, gy: f64, bx: f64, by: f64, wx: f64, wy: f64) -> [[f32; 3]; 3] {
+    let rz = 1.0 - rx - ry; let gz = 1.0 - gx - gy; let bz = 1.0 - bx - by;
+    let r = [rx/ry, 1.0, rz/ry];
+    let g = [gx/gy, 1.0, gz/gy];
+    let b = [bx/by, 1.0, bz/by];
+    let m = [[r[0], g[0], b[0]], [r[1], g[1], b[1]], [r[2], g[2], b[2]]];
+    let wz = 1.0 - wx - wy; let w = [wx/wy, 1.0, wz/wy];
+    let s = solve3(m, w);
+    [
+        [ (m[0][0]*s[0]) as f32, (m[0][1]*s[1]) as f32, (m[0][2]*s[2]) as f32 ],
+        [ (m[1][0]*s[0]) as f32, (m[1][1]*s[1]) as f32, (m[1][2]*s[2]) as f32 ],
+        [ (m[2][0]*s[0]) as f32, (m[2][1]*s[1]) as f32, (m[2][2]*s[2]) as f32 ],
+    ]
+}
+
+fn xyz_to_srgb_matrix() -> [[f32; 3]; 3] {
+    [
+        [ 3.2404542, -1.5371385, -0.4985314 ],
+        [ -0.9692660, 1.8760108, 0.0415560 ],
+        [ 0.0556434, -0.2040259, 1.0572252 ],
+    ]
+}
+
+fn mul3x3(a: [[f32;3];3], b: [[f32;3];3]) -> [[f32;3];3] {
+    let mut m = [[0.0f32;3];3];
+    for i in 0..3 { for j in 0..3 { m[i][j] = a[i][0]*b[0][j] + a[i][1]*b[1][j] + a[i][2]*b[2][j]; } }
+    m
+}
+
+fn solve3(m: [[f64;3];3], w: [f64;3]) -> [f64;3] {
+    let det =
+        m[0][0]*(m[1][1]*m[2][2]-m[1][2]*m[2][1]) -
+        m[0][1]*(m[1][0]*m[2][2]-m[1][2]*m[2][0]) +
+        m[0][2]*(m[1][0]*m[2][1]-m[1][1]*m[2][0]);
+    if det.abs() < 1e-12 { return [1.0,1.0,1.0]; }
+    let inv_det = 1.0/det;
+    let inv = [
+        [ (m[1][1]*m[2][2]-m[1][2]*m[2][1])*inv_det, (m[0][2]*m[2][1]-m[0][1]*m[2][2])*inv_det, (m[0][1]*m[1][2]-m[0][2]*m[1][1])*inv_det ],
+        [ (m[1][2]*m[2][0]-m[1][0]*m[2][2])*inv_det, (m[0][0]*m[2][2]-m[0][2]*m[2][0])*inv_det, (m[0][2]*m[1][0]-m[0][0]*m[1][2])*inv_det ],
+        [ (m[1][0]*m[2][1]-m[1][1]*m[2][0])*inv_det, (m[0][1]*m[2][0]-m[0][0]*m[2][1])*inv_det, (m[0][0]*m[1][1]-m[0][1]*m[1][0])*inv_det ],
+    ];
+    let s0 = inv[0][0]*w[0] + inv[0][1]*w[1] + inv[0][2]*w[2];
+    let s1 = inv[1][0]*w[0] + inv[1][1]*w[1] + inv[1][2]*w[2];
+    let s2 = inv[2][0]*w[0] + inv[2][1]*w[1] + inv[2][2]*w[2];
+    [s0,s1,s2]
 }
 

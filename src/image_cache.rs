@@ -39,6 +39,8 @@ pub struct ImageCache {
     pub height: u32,
     pub layers_info: Vec<LayerInfo>,
     pub current_layer_name: String,
+    // Opcjonalna macierz konwersji z przestrzeni primaries pliku do sRGB (linear RGB)
+    color_matrix_rgb_to_srgb: Option<[[f32; 3]; 3]>,
 }
 
 impl ImageCache {
@@ -48,7 +50,10 @@ impl ImageCache {
         let best_layer = find_best_layer(&layers_info);
         let (raw_pixels, width, height, current_layer_name) = load_specific_layer(path, &best_layer, None)?;
 
-        Ok(ImageCache { raw_pixels, width, height, layers_info, current_layer_name })
+        // Spróbuj wyliczyć macierz konwersji primaries → sRGB na podstawie atrybutu chromaticities
+        let color_matrix_rgb_to_srgb = compute_rgb_to_srgb_matrix_from_file(path).ok();
+
+        Ok(ImageCache { raw_pixels, width, height, layers_info, current_layer_name, color_matrix_rgb_to_srgb })
     }
     
     pub fn load_layer(&mut self, path: &PathBuf, layer_name: &str, progress: Option<&dyn ProgressSink>) -> anyhow::Result<()> {
@@ -58,6 +63,8 @@ impl ImageCache {
         self.width = width;
         self.height = height;
         self.current_layer_name = current_layer_name;
+        // Reoblicz macierz primaries→sRGB na wypadek, gdyby warstwa/part zmieniały chromaticities
+        self.color_matrix_rgb_to_srgb = compute_rgb_to_srgb_matrix_from_file(path).ok();
         
         Ok(())
     }
@@ -74,11 +81,19 @@ impl ImageCache {
         };
         
         // Przetwarzanie z lepszą lokalność pamięci
-        self.raw_pixels.par_chunks(chunk_size)
+        let m = self.color_matrix_rgb_to_srgb;
+        self.raw_pixels
+            .par_chunks(chunk_size)
             .zip(slice.par_chunks_mut(chunk_size))
             .for_each(|(input_chunk, output_chunk)| {
                 for (input_pixel, output_pixel) in input_chunk.iter().zip(output_chunk.iter_mut()) {
-                    let (r, g, b, a) = *input_pixel;
+                    let (mut r, mut g, mut b, a) = *input_pixel;
+                    if let Some(mat) = m {
+                        let rr = mat[0][0] * r + mat[0][1] * g + mat[0][2] * b;
+                        let gg = mat[1][0] * r + mat[1][1] * g + mat[1][2] * b;
+                        let bb = mat[2][0] * r + mat[2][1] * g + mat[2][2] * b;
+                        r = rr; g = gg; b = bb;
+                    }
                     *output_pixel = process_pixel(r, g, b, a, exposure, gamma);
                 }
             });
@@ -92,14 +107,21 @@ impl ImageCache {
 
         // Przetwarzanie pikseli: jeśli lighting_rgb=true (lub ogólnie warstwa kolorowa), zachowujemy normalne RGB;
         // w przeciwnym razie generujemy grayscale jako sumę R+G+B (po tone map i gamma).
+        let m = self.color_matrix_rgb_to_srgb;
         self.raw_pixels
             .par_iter()
             .zip(slice.par_iter_mut())
-            .for_each(|(&(r, g, b, a), out)| {
+            .for_each(|(&(r0, g0, b0, a), out)| {
+                let (mut r, mut g, mut b) = (r0, g0, b0);
+                if let Some(mat) = m {
+                    let rr = mat[0][0] * r + mat[0][1] * g + mat[0][2] * b;
+                    let gg = mat[1][0] * r + mat[1][1] * g + mat[1][2] * b;
+                    let bb = mat[2][0] * r + mat[2][1] * g + mat[2][2] * b;
+                    r = rr; g = gg; b = bb;
+                }
                 if lighting_rgb {
                     *out = process_pixel(r, g, b, a, exposure, gamma);
                 } else {
-                    // Utrzymaj istniejące zachowanie grayscale
                     let px = process_pixel(r, g, b, a, exposure, gamma);
                     let rr = (px.r as f32) / 255.0;
                     let gg = (px.g as f32) / 255.0;
@@ -122,6 +144,7 @@ impl ImageCache {
         let slice = buffer.make_mut_slice();
         
         // Proste nearest neighbor sampling dla szybkości
+        let m = self.color_matrix_rgb_to_srgb;
         slice.par_iter_mut().enumerate().for_each(|(i, pixel)| {
             let x = (i as u32) % thumb_width;
             let y = (i as u32) / thumb_width;
@@ -130,12 +153,113 @@ impl ImageCache {
             let src_y = ((y as f32 / scale) as u32).min(self.height.saturating_sub(1));
             let src_idx = (src_y as usize) * (self.width as usize) + (src_x as usize);
 
-            let (r, g, b, a) = self.raw_pixels[src_idx];
+            let (mut r, mut g, mut b, a) = self.raw_pixels[src_idx];
+            if let Some(mat) = m {
+                let rr = mat[0][0] * r + mat[0][1] * g + mat[0][2] * b;
+                let gg = mat[1][0] * r + mat[1][1] * g + mat[1][2] * b;
+                let bb = mat[2][0] * r + mat[2][1] * g + mat[2][2] * b;
+                r = rr; g = gg; b = bb;
+            }
             *pixel = process_pixel(r, g, b, a, exposure, gamma);
         });
         
         Image::from_rgba8(buffer)
     }
+}
+
+// === Chromaticities helpers ===
+
+fn compute_rgb_to_srgb_matrix_from_file(path: &PathBuf) -> anyhow::Result<[[f32; 3]; 3]> {
+    // Spróbuj odczytać globalny atrybut "chromaticities" z pliku i zbudować macierz RGB_src→sRGB
+    let img = exr::read_all_data_from_file(path)?;
+    // Atrybut może nie istnieć — wówczas zwracamy błąd i używamy identity
+    let mut nums: Vec<f64> = Vec::new();
+    // Parsuj z Debug string jeżeli nie mamy typu — zachowaj odporność na format
+    if let Some((_k, v)) = img.attributes.other.iter().find(|(k, _)| {
+        let name_dbg = format!("{:?}", k).to_lowercase();
+        let name = name_dbg.trim_matches('"');
+        name == "chromaticities"
+    }) {
+        // Wyciągnij wszystkie liczby z tekstu (Debug)
+        let mut cur = String::new();
+        for c in format!("{:?}", v).chars() {
+            if c.is_ascii_digit() || c == '.' || c == '-' { cur.push(c); }
+            else { if !cur.is_empty() { if let Ok(n) = cur.parse::<f64>() { nums.push(n); } cur.clear(); }
+            }
+        }
+        if !cur.is_empty() { if let Ok(n) = cur.parse::<f64>() { nums.push(n); } }
+    }
+
+    if nums.len() < 8 {
+        // brak lub niepełne dane – identity
+        anyhow::bail!("chromaticities attribute not found or incomplete");
+    }
+
+    let rx = nums[0]; let ry = nums[1];
+    let gx = nums[2]; let gy = nums[3];
+    let bx = nums[4]; let by = nums[5];
+    let wx = nums[6]; let wy = nums[7];
+
+    let m_src = rgb_to_xyz_from_primaries(rx, ry, gx, gy, bx, by, wx, wy);
+    let m_xyz_to_srgb = xyz_to_srgb_matrix();
+    let m = mul3x3(m_xyz_to_srgb, m_src);
+    Ok(m)
+}
+
+fn rgb_to_xyz_from_primaries(rx: f64, ry: f64, gx: f64, gy: f64, bx: f64, by: f64, wx: f64, wy: f64) -> [[f32; 3]; 3] {
+    // Zbuduj macierz kolumnami XYZ primaries, znormalizowaną tak, by biel dawała Y=1
+    let rz = 1.0 - rx - ry; let gz = 1.0 - gx - gy; let bz = 1.0 - bx - by;
+    let r = [rx/ry, 1.0, rz/ry];
+    let g = [gx/gy, 1.0, gz/gy];
+    let b = [bx/by, 1.0, bz/by];
+    let m = [[r[0], g[0], b[0]], [r[1], g[1], b[1]], [r[2], g[2], b[2]]];
+
+    // White point XYZ (Y=1)
+    let wz = 1.0 - wx - wy;
+    let w = [wx/wy, 1.0, wz/wy];
+
+    // Solve M * s = w for s (scale factors)
+    let s = solve3(m, w);
+    let m_scaled = [
+        [ (m[0][0]*s[0]) as f32, (m[0][1]*s[1]) as f32, (m[0][2]*s[2]) as f32 ],
+        [ (m[1][0]*s[0]) as f32, (m[1][1]*s[1]) as f32, (m[1][2]*s[2]) as f32 ],
+        [ (m[2][0]*s[0]) as f32, (m[2][1]*s[1]) as f32, (m[2][2]*s[2]) as f32 ],
+    ];
+    m_scaled
+}
+
+fn xyz_to_srgb_matrix() -> [[f32; 3]; 3] {
+    // Stała macierz XYZ→sRGB (D65)
+    [
+        [ 3.2404542, -1.5371385, -0.4985314 ],
+        [ -0.9692660, 1.8760108, 0.0415560 ],
+        [ 0.0556434, -0.2040259, 1.0572252 ],
+    ]
+}
+
+fn mul3x3(a: [[f32;3];3], b: [[f32;3];3]) -> [[f32;3];3] {
+    let mut m = [[0.0f32;3];3];
+    for i in 0..3 { for j in 0..3 { m[i][j] = a[i][0]*b[0][j] + a[i][1]*b[1][j] + a[i][2]*b[2][j]; } }
+    m
+}
+
+fn solve3(m: [[f64;3];3], w: [f64;3]) -> [f64;3] {
+    // Proste rozwiązanie układu liniowego 3x3 metodą Cramera
+    let det =
+        m[0][0]*(m[1][1]*m[2][2]-m[1][2]*m[2][1]) -
+        m[0][1]*(m[1][0]*m[2][2]-m[1][2]*m[2][0]) +
+        m[0][2]*(m[1][0]*m[2][1]-m[1][1]*m[2][0]);
+    if det.abs() < 1e-12 { return [1.0,1.0,1.0]; }
+    let inv_det = 1.0/det;
+    let inv = [
+        [ (m[1][1]*m[2][2]-m[1][2]*m[2][1])*inv_det, (m[0][2]*m[2][1]-m[0][1]*m[2][2])*inv_det, (m[0][1]*m[1][2]-m[0][2]*m[1][1])*inv_det ],
+        [ (m[1][2]*m[2][0]-m[1][0]*m[2][2])*inv_det, (m[0][0]*m[2][2]-m[0][2]*m[2][0])*inv_det, (m[0][2]*m[1][0]-m[0][0]*m[1][2])*inv_det ],
+        [ (m[1][0]*m[2][1]-m[1][1]*m[2][0])*inv_det, (m[0][1]*m[2][0]-m[0][0]*m[2][1])*inv_det, (m[0][0]*m[1][1]-m[0][1]*m[1][0])*inv_det ],
+    ];
+    let s0 = inv[0][0]*w[0] + inv[0][1]*w[1] + inv[0][2]*w[2];
+    let s1 = inv[1][0]*w[0] + inv[1][1]*w[1] + inv[1][2]*w[2];
+    let s2 = inv[2][0]*w[0] + inv[2][1]*w[1] + inv[2][2]*w[2];
+    [s0,s1,s2]
 }
 
 pub(crate) fn extract_layers_info(path: &PathBuf) -> anyhow::Result<Vec<LayerInfo>> {
