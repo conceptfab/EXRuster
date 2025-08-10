@@ -114,6 +114,8 @@ export component AppWindow inherits Window {
     callback choose-working-folder();
     callback open-thumbnail(string); // otwórz plik EXR z podanej ścieżki
     callback open-console-window(); // otwórz okno konsoli
+    callback navigate-thumbnails(int); // nawigacja miniatur: -1 wstecz, +1 dalej
+    callback key-pressed-debug(string); // diagnostyka: logowanie nazwy klawisza
 
     // Menu Bar
       Rectangle {
@@ -1053,4 +1055,33 @@ export component AppWindow inherits Window {
             root.internal-meta-is-dragging = false;
         }
     }
+
+     // Global keyboard shortcuts via FocusScope
+     shortcuts := FocusScope {
+         x: 0px; y: 0px;
+         width: root.width; height: root.height;
+         key-pressed(event) => {
+             // Diagnostyka: loguj nazwę klawisza (może być pusta dla strzałek na niektórych platformach)
+             key-pressed-debug(event.text);
+             if (event.text == "l" || event.text == "L") {
+                 root.show-left-panel = !root.show-left-panel; return accept;
+             } else if (event.text == "c" || event.text == "C") {
+                 root.show-right-panel = !root.show-right-panel; return accept;
+             } else if (event.text == "m" || event.text == "M") {
+                 root.internal-meta-visible = !root.internal-meta-visible; return accept;
+             } else if (event.text == " ") {
+                 root.bottom-panel-visible = !root.bottom-panel-visible; return accept;
+             } else if (event.text == "~" || event.text == "`") {
+                 root.internal-console-visible = !root.internal-console-visible; return accept;
+             } else if (event.text == "Left" || event.text == "ArrowLeft" || event.text == "") { // U+F702
+                 root.navigate-thumbnails(-1); return accept;
+             } else if (event.text == "Right" || event.text == "ArrowRight" || event.text == "") { // U+F703
+                 root.navigate-thumbnails(1); return accept;
+             }
+             return reject;
+         }
+     }
+
+     // ensure focus on startup
+     init => { shortcuts.focus(); }
  }

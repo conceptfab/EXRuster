@@ -14,7 +14,7 @@ mod utils;
 use std::sync::{Arc, Mutex};
 use crate::ui_handlers::push_console;
 use ui_handlers::{ImageCacheType, CurrentFilePathType};
-use slint::{ModelRc, VecModel, SharedString};
+use slint::{ModelRc, VecModel, SharedString, Model};
 use std::rc::Rc;
 use crate::utils::human_size;
 use crate::progress::ProgressSink;
@@ -137,6 +137,18 @@ fn setup_panel_callbacks(
     image_cache: ImageCacheType,
     console_model: Rc<VecModel<SharedString>>,
 ) {
+    // Debug klawiszy: wypisz do statusu i konsoli
+    ui.on_key_pressed_debug({
+        let ui_handle = ui.as_weak();
+        let console_model = console_model.clone();
+        move |key: slint::SharedString| {
+            if let Some(ui) = ui_handle.upgrade() {
+                let k = if key.is_empty() { SharedString::from("<empty>") } else { key.clone() };
+                ui.set_status_text(format!("key: {}", k).into());
+                push_console(&ui, &console_model, format!("[key] {}", k));
+            }
+        }
+    });
     ui.on_choose_working_folder({
         let ui_handle = ui.as_weak();
         let console_model = console_model.clone(); // Use console_model directly
@@ -197,6 +209,53 @@ fn setup_panel_callbacks(
                     console_model.push(line.clone());
                 }
                 ui_handlers::handle_open_exr_from_path(ui_handle.clone(), current_file_path.clone(), image_cache.clone(), console_model.clone(), path);
+            }
+        }
+    });
+
+    // Nawigacja miniatur klawiszami (delta: -1 wstecz, +1 dalej)
+    ui.on_navigate_thumbnails({
+        let ui_handle = ui.as_weak();
+        let current_file_path = current_file_path.clone();
+        let image_cache = image_cache.clone();
+        let console_model = console_model.clone();
+        move |delta: i32| {
+            if delta == 0 { return; }
+            if let Some(ui) = ui_handle.upgrade() {
+                let model = ui.get_thumbnails();
+                let count = model.row_count();
+                if count == 0 { return; }
+
+                let current_path = ui.get_opened_thumbnail_path().to_string();
+                let mut idx: i32 = -1;
+                if !current_path.is_empty() {
+                    for i in 0..count {
+                        if let Some(item) = model.row_data(i) {
+                            if item.path.as_str() == current_path {
+                                idx = i as i32;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                let next_idx: i32 = if idx >= 0 {
+                    (idx + delta).rem_euclid(count as i32)
+                } else {
+                    if delta > 0 { 0 } else { (count as i32) - 1 }
+                };
+
+                if let Some(item) = model.row_data(next_idx as usize) {
+                    ui.set_opened_thumbnail_path(item.path.clone());
+                    let path = std::path::PathBuf::from(item.path.as_str());
+                    ui_handlers::handle_open_exr_from_path(
+                        ui.as_weak(),
+                        current_file_path.clone(),
+                        image_cache.clone(),
+                        console_model.clone(),
+                        path,
+                    );
+                }
             }
         }
     });
