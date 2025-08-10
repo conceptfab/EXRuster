@@ -11,8 +11,6 @@ use crate::exr_metadata;
 use crate::progress::{ProgressSink, UiProgress};
 use crate::utils::{get_channel_info, normalize_channel_name};
 use image::{ImageBuffer, Rgb};
-use std::fs::File;
-use std::io::BufWriter;
 
 // Import komponentów Slint
 use crate::AppWindow;
@@ -528,77 +526,43 @@ pub fn handle_export_convert(
     console: ConsoleModel,
 ) {
     if let Some(ui) = ui_handle.upgrade() {
-        let Some(path) = with_current_path(&current_file_path) else {
+        let Some(_path) = with_current_path(&current_file_path) else {
             ui.set_status_text("Error: No file loaded".into());
             return;
         };
-        let file_stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("export");
-        let suggested = format!("{}_convert.tiff", file_stem);
         if let Some(dst) = crate::file_operations::save_file_dialog(
             "Zapisz TIFF",
-            &suggested,
+            "export.tiff",
             &[("TIFF", &["tif", "tiff"])],
         ) {
             push_console(&ui, &console, format!("[export] convert → {}", dst.display()));
             let prog = UiProgress::new(ui.as_weak());
-            prog.start_indeterminate(Some("Preparing layers..."));
-            // Skopiuj listę warstw, aby nie trzymać blokady podczas I/O
-            let (layers, total_layers) = {
-                let guard = lock_or_recover(&image_cache);
-                if let Some(ref cache) = *guard {
-                    (cache.layers_info.clone(), cache.layers_info.len())
-                } else {
-                    ui.set_status_text("Error: No image cache".into());
+            prog.start_indeterminate(Some("Exporting TIFF..."));
+            let guard = lock_or_recover(&image_cache);
+            if let Some(ref cache) = *guard {
+                let width = cache.width;
+                let height = cache.height;
+                let mut buf = ImageBuffer::<image::Rgba<f32>, Vec<f32>>::new(width, height);
+                for (x, y, p) in buf.enumerate_pixels_mut() {
+                    let idx = (y as usize) * (width as usize) + (x as usize);
+                    if let Some(&(mut r, mut g, mut b, a)) = cache.raw_pixels.get(idx) {
+                        if let Some(mat) = cache.color_matrix() {
+                            let rr = mat[0][0] * r + mat[0][1] * g + mat[0][2] * b;
+                            let gg = mat[1][0] * r + mat[1][1] * g + mat[1][2] * b;
+                            let bb = mat[2][0] * r + mat[2][1] * g + mat[2][2] * b;
+                            r = rr; g = gg; b = bb;
+                        }
+                        *p = image::Rgba([r, g, b, a]);
+                    }
+                }
+                if let Err(e) = buf.save_with_format(&dst, image::ImageFormat::Tiff) {
+                    ui.set_status_text(format!("Export error: {}", e).into());
                     prog.reset();
                     return;
                 }
-            };
-
-            // Zapisz wielostronicowy TIFF: każda warstwa jako osobna strona RGBA32F
-            let file = match File::create(&dst) {
-                Ok(f) => f,
-                Err(e) => { ui.set_status_text(format!("Export error: {}", e).into()); prog.reset(); return; }
-            };
-            let mut writer = BufWriter::new(file);
-            let mut encoder = match tiff::encoder::TiffEncoder::new(&mut writer) {
-                Ok(enc) => enc,
-                Err(e) => { ui.set_status_text(format!("Export error: {}", e).into()); prog.reset(); return; }
-            };
-            use tiff::encoder::colortype::RGBA32Float;
-
-            let total = total_layers.max(1) as f32;
-            let mut written = 0usize;
-            for (i, layer) in layers.iter().enumerate() {
-                let display_name = if layer.name.is_empty() { "Beauty".to_string() } else { layer.name.clone() };
-                prog.set((i as f32) / total, Some(&format!("Exporting {}/{}: {}", i + 1, total_layers, display_name)));
-                push_console(&ui, &console, format!("[export][tiff] writing page {}: {}", i + 1, display_name));
-
-                match crate::image_cache::load_specific_layer(&path, &layer.name, None) {
-                    Ok((pixels, w, h, _)) => {
-                        let width = w as u32;
-                        let height = h as u32;
-                        let mut data: Vec<f32> = Vec::with_capacity((width as usize) * (height as usize) * 4);
-                        for (r, g, b, a) in pixels {
-                            data.push(r);
-                            data.push(g);
-                            data.push(b);
-                            data.push(a);
-                        }
-                        if let Err(e) = encoder.write_image::<RGBA32Float>(width, height, &data) {
-                            push_console(&ui, &console, format!("[error][export][tiff] page {} ({}): {}", i + 1, display_name, e));
-                            continue;
-                        }
-                        written += 1;
-                    }
-                    Err(e) => {
-                        push_console(&ui, &console, format!("[error][export][tiff] layer '{}' load failed: {}", layer.name, e));
-                        continue;
-                    }
-                }
+                ui.set_status_text("Exported TIFF".into());
+                prog.finish(Some("TIFF saved"));
             }
-            prog.set(1.0, Some(&format!("TIFF pages written: {} / {}", written, total_layers)));
-            ui.set_status_text(format!("Exported TIFF with {} page(s)", written).into());
-            prog.finish(Some("TIFF saved"));
         }
     }
 }
@@ -636,6 +600,12 @@ pub fn handle_export_beauty(
                 for (x, y, p) in buf.enumerate_pixels_mut() {
                     let idx = (y as usize) * (width as usize) + (x as usize);
                     if let Some(&(mut r, mut g, mut b, _a)) = cache.raw_pixels.get(idx) {
+                        if let Some(mat) = cache.color_matrix() {
+                            let rr = mat[0][0] * r + mat[0][1] * g + mat[0][2] * b;
+                            let gg = mat[1][0] * r + mat[1][1] * g + mat[1][2] * b;
+                            let bb = mat[2][0] * r + mat[2][1] * g + mat[2][2] * b;
+                            r = rr; g = gg; b = bb;
+                        }
                         r *= exp_mul; g *= exp_mul; b *= exp_mul;
                         r = r.clamp(0.0, 1.0);
                         g = g.clamp(0.0, 1.0);
@@ -676,58 +646,83 @@ pub fn handle_export_channels(
         if let Some(dst_dir) = crate::file_operations::choose_export_directory() {
             push_console(&ui, &console, format!("[export] channels → {}", dst_dir.display()));
             let prog = UiProgress::new(ui.as_weak());
+            prog.start_indeterminate(Some("Exporting channels..."));
             let mut exported = 0usize;
-            let (layers, file_stem) = {
+            {
                 let guard = lock_or_recover(&image_cache);
                 if let Some(ref cache) = *guard {
-                    (cache.layers_info.clone(), path.file_stem().and_then(|s| s.to_str()).unwrap_or("export").to_string())
-                } else {
-                    ui.set_status_text("Error: No image cache".into());
-                    return;
-                }
-            };
-
-            let total = layers.len().max(1) as f32;
-            for (i, layer) in layers.iter().enumerate() {
-                let display_name = if layer.name.is_empty() { "Beauty".to_string() } else { layer.name.clone() };
-                prog.set((i as f32) / total, Some(&format!("Exporting {}/{}: {}", i + 1, layers.len(), display_name)));
-                // Wczytaj kompozyt RGB dla warstwy
-                match crate::image_cache::load_specific_layer(&path, &layer.name, None) {
-                    Ok((pixels, w, h, _)) => {
-                        let exposure = ui.get_exposure_value();
-                        let gamma = ui.get_gamma_value();
-                        let exp_mul = 2.0_f32.powf(exposure);
-                        let inv_gamma = if gamma > 0.0 { 1.0 / gamma } else { 1.0 / 2.2 };
-                        let mut buf = ImageBuffer::<Rgb<u16>, Vec<u16>>::new(w, h);
-                        for (x, y, p) in buf.enumerate_pixels_mut() {
-                            let idx = (y as usize) * (w as usize) + (x as usize);
-                            let (mut r, mut g, mut b, _a) = pixels[idx];
-                            r *= exp_mul; g *= exp_mul; b *= exp_mul;
-                            r = r.clamp(0.0, 1.0).powf(inv_gamma);
-                            g = g.clamp(0.0, 1.0).powf(inv_gamma);
-                            b = b.clamp(0.0, 1.0).powf(inv_gamma);
-                            let r16 = (r * 65535.0).round().clamp(0.0, 65535.0) as u16;
-                            let g16 = (g * 65535.0).round().clamp(0.0, 65535.0) as u16;
-                            let b16 = (b * 65535.0).round().clamp(0.0, 65535.0) as u16;
-                            *p = image::Rgb([r16, g16, b16]);
+                    let width = cache.width;
+                    let height = cache.height;
+                    // Precompute depth normalization percentiles if needed per channel
+                    for layer in &cache.layers_info {
+                        let _layer_display = if layer.name.is_empty() { "Beauty" } else { &layer.name };
+                        for ch in &layer.channels {
+                            let ch_upper = ch.name.to_ascii_uppercase();
+                            // Wygeneruj grayscale buffer 16-bit
+                            let mut buf = ImageBuffer::<image::Luma<u16>, Vec<u16>>::new(width, height);
+                            // doczytaj pojedynczy kanał z dysku i renderuj grayscale
+                            if let Ok((pixels, _w, _h, _name)) = crate::image_cache::load_single_channel_as_grayscale(&path, &layer.name, &ch.name, None) {
+                                // Specjalny przypadek Depth (Z/DEPTH): auto-normalizacja percentylowa + odwrócenie
+                                let use_depth = ch_upper == "Z" || ch_upper.contains("DEPTH");
+                                let mut values: Vec<f32> = pixels.into_iter().map(|(r, _g, _b, _a)| r).collect();
+                                if !values.is_empty() {
+                                    if use_depth {
+                                        // percentyle 1% i 99%
+                                        use std::cmp::Ordering;
+                                        let len = values.len();
+                                        let p_lo_idx = ((len as f32) * 0.01).floor() as usize;
+                                        let mut p_hi_idx = ((len as f32) * 0.99).ceil() as isize - 1;
+                                        if p_hi_idx < 0 { p_hi_idx = 0; }
+                                        let p_hi_idx = (p_hi_idx as usize).min(len - 1);
+                                        let lo = {
+                                            let (_, lo_ref, _) = values.select_nth_unstable_by(p_lo_idx, |a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
+                                            *lo_ref
+                                        };
+                                        let mut hi = {
+                                            let (_, hi_ref, _) = values.select_nth_unstable_by(p_hi_idx, |a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
+                                            *hi_ref
+                                        };
+                                        let lo = lo;
+                                        if hi <= lo { hi = lo + 1e-6; }
+                                        for (x, y, p) in buf.enumerate_pixels_mut() {
+                                            let idx = (y as usize) * (width as usize) + (x as usize);
+                                            let v = values[idx];
+                                            let mut n = ((v - lo) / (hi - lo)).clamp(0.0, 1.0);
+                                            n = 1.0 - n; // inverted (near bright)
+                                            let v16 = (n * 65535.0).round().clamp(0.0, 65535.0) as u16;
+                                            *p = image::Luma([v16]);
+                                        }
+                                    } else {
+                                        // Standard: exposure+gamma na kanale (potem clamp i zapis)
+                                        let exposure = ui.get_exposure_value();
+                                        let gamma = ui.get_gamma_value();
+                                        let exp_mul = 2.0_f32.powf(exposure);
+                                        let inv_gamma = if gamma > 0.0 { 1.0 / gamma } else { 1.0 / 2.2 };
+                                        for (x, y, p) in buf.enumerate_pixels_mut() {
+                                            let idx = (y as usize) * (width as usize) + (x as usize);
+                                            let mut v = values[idx] * exp_mul;
+                                            v = v.clamp(0.0, 1.0).powf(inv_gamma);
+                                            let v16 = (v * 65535.0).round().clamp(0.0, 65535.0) as u16;
+                                            *p = image::Luma([v16]);
+                                        }
+                                    }
+                                }
+                                let file_stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("export");
+                                let safe_layer = if layer.name.is_empty() { "Beauty".to_string() } else { layer.name.clone() };
+                                let filename = format!("{}_{}_{}.png", file_stem, safe_layer, ch.name);
+                                let out_path = dst_dir.join(filename);
+                                if let Err(e) = buf.save_with_format(&out_path, image::ImageFormat::Png) {
+                                    ui.set_status_text(format!("Export error: {}", e).into());
+                                    prog.reset();
+                                    return;
+                                }
+                                exported += 1;
+                            }
                         }
-                        let filename = format!("{}_{}_rgb.png", file_stem, display_name);
-                        let out_path = dst_dir.join(&filename);
-                        push_console(&ui, &console, format!("[export][channels] {} → {}", display_name, out_path.display()));
-                        if let Err(e) = buf.save_with_format(&out_path, image::ImageFormat::Png) {
-                            push_console(&ui, &console, format!("[error][export][channels] {}: {}", display_name, e));
-                            continue;
-                        }
-                        exported += 1;
-                    }
-                    Err(e) => {
-                        push_console(&ui, &console, format!("[error][export][channels] {}: {}", layer.name, e));
-                        continue;
                     }
                 }
             }
-            prog.set(1.0, Some(&format!("Exported {} composite(s)", exported)));
-            ui.set_status_text(format!("Exported {} composite RGB images", exported).into());
+            ui.set_status_text(format!("Exported {} channel images", exported).into());
             prog.finish(Some("Channels saved"));
         }
     }

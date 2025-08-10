@@ -109,6 +109,16 @@ Wdrożenie powyższych zmian zamienia EXRuster z „dobrego viewer’a” w narz
 
 1) Krytyczne (natychmiastowy, największy wpływ)
           - Chromaticities (konwersja primaries do sRGB/wyświetlacza)
+            Krótko: nie w 100%.
+  • Zrobione: konwersja primaries→sRGB w podglądzie i miniaturach (przed ACES/gamma).
+  • Braki:
+    • Brak chromatic adaptation (np. D60→D65 Bradford) — przy nie‑D65 whitepoint wynik może być minimalnie off.
+    • Atrybut chromaticities parsowany z Debug (brak typowanego API) — działa, ale warto wzmocnić.
+    • Nie zastosowano w eksporcie (handle_export_beauty, handle_export_channels) — eksport może nie odtwarzać identycznie widoku.
+    • Per‑part chromaticities — bierzemy globalny nagłówek, nie z poszczególnych partów.
+    • Brak testów A/B i goldenów w CI.
+
+  Chcesz, żebym dokończył: 1) adaptację Bradford, 2) użycie macierzy w eksporcie, 3) per‑part, 4) testy A/B?
 - Zoom/Pan + tryby Fit/100% + korekcja pixelAspectRatio
 - Inspektor pikseli (x,y + RGBA lin/sRGB)
 - Porządek transformacji w eksporcie = zgodny z podglądem
