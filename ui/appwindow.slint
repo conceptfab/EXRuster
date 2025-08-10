@@ -1155,6 +1155,17 @@ export component AppWindow inherits Window {
                  root.show-right-panel = !root.show-right-panel; return accept;
              } else if (event.text == "m" || event.text == "M") {
                  root.internal-meta-visible = !root.internal-meta-visible; return accept;
+              } else if (event.text == "x" || event.text == "X") {
+                  // Pokaż/ukryj wszystkie panele (lewy, prawy, dolny)
+                  if (root.show-left-panel || root.show-right-panel || root.bottom-panel-visible) {
+                      root.show-left-panel = false;
+                      root.show-right-panel = false;
+                      root.bottom-panel-visible = false; return accept;
+                  } else {
+                      root.show-left-panel = true;
+                      root.show-right-panel = true;
+                      root.bottom-panel-visible = true; return accept;
+                  }
              } else if (event.text == " ") {
                  root.bottom-panel-visible = !root.bottom-panel-visible; return accept;
              } else if (event.text == "~" || event.text == "`") {
