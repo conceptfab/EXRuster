@@ -32,7 +32,69 @@ fn main() -> Result<(), slint::PlatformError> {
     let current_file_path: CurrentFilePathType = Arc::new(Mutex::new(None));
 
     // Setup UI callbacks...
-    setup_ui_callbacks(&ui, image_cache.clone(), current_file_path.clone());
+    let console_model = setup_ui_callbacks(&ui, image_cache.clone(), current_file_path.clone());
+
+    // Obsługa argumentów uruchomieniowych: otwórz wskazany plik EXR i ewentualnie wczytaj miniatury folderu
+    {
+        use std::ffi::OsString;
+        let args: Vec<OsString> = std::env::args_os().skip(1).collect();
+        if !args.is_empty() {
+            if let Some(first_exr) = args.iter().find_map(|a| {
+                let p = std::path::PathBuf::from(a);
+                if p.is_file() {
+                    if let Some(ext) = p.extension().and_then(|e| e.to_str()) {
+                        if ext.eq_ignore_ascii_case("exr") { return Some(p); }
+                    }
+                }
+                None
+            }) {
+                ui_handlers::handle_open_exr_from_path(
+                    ui.as_weak(),
+                    current_file_path.clone(),
+                    image_cache.clone(),
+                    console_model.clone(),
+                    first_exr.clone(),
+                );
+
+                if let Some(dir) = first_exr.parent() {
+                    if let Ok(read) = std::fs::read_dir(dir) {
+                        let exr_count = read
+                            .filter_map(|e| e.ok())
+                            .map(|e| e.path())
+                            .filter(|p| p.is_file())
+                            .filter(|p| p.extension().and_then(|e| e.to_str()).map(|s| s.eq_ignore_ascii_case("exr")).unwrap_or(false))
+                            .count();
+
+                        if exr_count > 1 {
+                            let exposure = ui.get_exposure_value();
+                            let gamma = ui.get_gamma_value();
+                            let prog = crate::progress::UiProgress::new(ui.as_weak());
+                            match crate::thumbnails::generate_exr_thumbnails_in_dir(dir, 150, exposure, gamma, Some(&prog)) {
+                                Ok(mut thumbs) => {
+                                    use crate::thumbnails::ExrThumbnailInfo; // ensure type in scope
+                                    thumbs.sort_by(|a, b| a.file_name.to_lowercase().cmp(&b.file_name.to_lowercase()));
+                                    let items: Vec<ThumbItem> = thumbs.into_iter().map(|t: ExrThumbnailInfo| ThumbItem {
+                                        img: t.image,
+                                        name: t.file_name.into(),
+                                        size: human_size(t.file_size_bytes).into(),
+                                        layers: format!("{} layers", t.num_layers).into(),
+                                        path: t.path.display().to_string().into(),
+                                        width: t.width as i32,
+                                        height: t.height as i32,
+                                    }).collect();
+                                    ui.set_thumbnails(ModelRc::new(VecModel::from(items)));
+                                    ui.set_bottom_panel_visible(true);
+                                }
+                                Err(e) => {
+                                    ui.set_status_text(format!("Error loading thumbnails: {}", e).into());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
     
     ui.run()
 }
@@ -265,11 +327,13 @@ fn setup_ui_callbacks(
     ui: &AppWindow,
     image_cache: ImageCacheType,
     current_file_path: CurrentFilePathType,
-) {
+) -> Rc<VecModel<SharedString>> {
     let console_model: Rc<VecModel<SharedString>> = Rc::new(VecModel::from(vec![]));
     ui.set_console_text(SharedString::from(""));
 
     setup_menu_callbacks(ui, current_file_path.clone(), image_cache.clone(), console_model.clone());
     setup_image_control_callbacks(ui, image_cache.clone(), current_file_path.clone(), console_model.clone());
     setup_panel_callbacks(ui, current_file_path.clone(), image_cache.clone(), console_model.clone());
+
+    console_model
 }

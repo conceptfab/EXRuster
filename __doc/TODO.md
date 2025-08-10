@@ -11,6 +11,7 @@ Oto przyciski:
 Convert: Zapisuje danych plik exr jako tiff - zachowując strukturę i głebie kolorów i wszystkie inne istotne informacje
 Export Beauty - eksportuje tylko warstwę Beauty jako 16 bit png
 Export Channels - eksportuje wszystkie kanały jako osobne pliki png
+Do exportu użyj biblioteki image
 
 
 
