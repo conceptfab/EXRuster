@@ -17,7 +17,6 @@ use crate::ui_handlers::push_console;
 use ui_handlers::{ImageCacheType, CurrentFilePathType};
 use slint::{VecModel, SharedString, Model};
 use std::rc::Rc;
-use crate::utils::human_size;
 
 fn main() -> Result<(), slint::PlatformError> {
     // Ustaw Rayon thread pool na podstawie CPU cores
