@@ -14,10 +14,12 @@ export component MetaWindow inherits Rectangle {
     in-out property <[string]> meta-table-keys: [];
     in-out property <[string]> meta-table-values: [];
     callback exit();
-    callback dragged(length, length);
-    callback drag-ended();
-    in-out property <bool> is-dragging-active: false;
     in-out property <string> window-title: "Meta";
+    // Wymiary kontenera i marginesy do ograniczenia ruchu
+    in-out property <length> container-width: 0px;
+    in-out property <length> container-height: 0px;
+    in-out property <length> top-margin: 30px;
+    in-out property <length> bottom-margin: 48px;
 
     VerticalLayout {
         padding: 4px;
@@ -26,9 +28,13 @@ export component MetaWindow inherits Rectangle {
         DraggableWindow {
             window-title: root.window-title;
             exit => { root.exit(); }
-            dragged(dx, dy) => { root.dragged(dx, dy); }
-            drag-ended => { root.drag-ended(); }
-            is-dragging-active: root.is-dragging-active;
+            dragged(dx, dy) => {
+                // Aktualizuj pozycję okna w granicach dostępnego obszaru
+                root.x = Math.max(0px, Math.min(root.container-width - root.width, root.x + dx));
+                root.y = Math.max(root.top-margin, Math.min(root.container-height - root.bottom-margin - root.height, root.y + dy));
+            }
+            // Brak dodatkowych działań po zakończeniu przeciągania
+            drag-ended => { }
         }
 
         Rectangle {

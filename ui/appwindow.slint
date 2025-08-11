@@ -61,18 +61,8 @@ export component AppWindow inherits Window {
     in-out property <[string]> meta-table-keys: [];
     in-out property <[string]> meta-table-values: [];
     in-out property <bool> internal-console-visible: false; // New property for internal console visibility
-    in-out property <length> internal-console-x: 0px;
-    in-out property <length> internal-console-y: 0px;
-    in-out property <bool> internal-console-is-dragging: false;
-    in-out property <length> internal-console-drag-start-x: 0px;
-    in-out property <length> internal-console-drag-start-y: 0px;
     // Meta floating window state
     in-out property <bool> internal-meta-visible: false;
-    in-out property <length> internal-meta-x: 0px;
-    in-out property <length> internal-meta-y: 0px;
-    in-out property <bool> internal-meta-is-dragging: false;
-    in-out property <length> internal-meta-drag-start-x: 0px;
-    in-out property <length> internal-meta-drag-start-y: 0px;
     callback clear-console();
 
     // Helper properties to mirror column layout for positioning elements in the menu bar
@@ -464,7 +454,7 @@ export component AppWindow inherits Window {
                 }
                 
                 HorizontalBox {
-                    width: parent.width;
+                    width: parent.width - 15px;
                     height: 25px;
                     spacing: 0px;
                     Rectangle { width: 6px; }
@@ -855,60 +845,30 @@ export component AppWindow inherits Window {
          }
      }
      if internal-console-visible: ConsoleWindow {
-         x: root.internal-console-x; // Use new property
-         y: root.internal-console-y; // Use new property
          width: 520px; // Preferred width from console_window.slint
          height: 360px; // Preferred width from console_window.slint
          console-text: root.console-text;
          clear-console => { root.clear-console(); }
          exit => { root.internal-console-visible = false; }
-         
          z: 1000; // Ensure it's on top
-
-        dragged(dx, dy) => {
-             if (!root.internal-console-is-dragging) {
-                 root.internal-console-drag-start-x = root.internal-console-x;
-                 root.internal-console-drag-start-y = root.internal-console-y;
-                 root.internal-console-is-dragging = true;
-             }
-
-             root.internal-console-x = Math.max(0px, Math.min(root.width - self.width, root.internal-console-drag-start-x + dx));
-
-             root.internal-console-y = Math.max(30px, Math.min(root.height - self.height - (24px + 24px), root.internal-console-drag-start-y + dy));
-         }
-         drag-ended => {
-             root.internal-console-is-dragging = false;
-         }
-         
+         container-width: root.width;
+         container-height: root.height;
+         top-margin: 30px;
+         bottom-margin: 24px + 24px; // pasek przycisków + status bar
      }
 
     // Floating Meta window
     if internal-meta-visible: MetaWindow {
-        x: root.internal-meta-x;
-        y: root.internal-meta-y;
         width: 640px;
         height: 480px;
-        
         meta-table-keys: root.meta-table-keys;
         meta-table-values: root.meta-table-values;
-        
         exit => { root.internal-meta-visible = false; }
-        
         z: 1000;
-
-        dragged(dx, dy) => {
-            if (!root.internal-meta-is-dragging) {
-                root.internal-meta-drag-start-x = root.internal-meta-x;
-                root.internal-meta-drag-start-y = root.internal-meta-y;
-                root.internal-meta-is-dragging = true;
-            }
-
-            root.internal-meta-x = Math.max(0px, Math.min(root.width - self.width, root.internal-meta-drag-start-x + dx));
-            root.internal-meta-y = Math.max(30px, Math.min(root.height - self.height - (24px + 24px), root.internal-meta-drag-start-y + dy));
-        }
-        drag-ended => {
-            root.internal-meta-is-dragging = false;
-        }
+        container-width: root.width;
+        container-height: root.height;
+        top-margin: 30px;
+        bottom-margin: 24px + 24px; // pasek przycisków + status bar
     }
 
      // Global keyboard shortcuts via FocusScope
