@@ -34,6 +34,15 @@ pub struct ChannelInfo {
     pub name: String,           // krótka nazwa (po ostatniej kropce)
 }
 
+#[derive(Clone, Debug)]
+pub struct LayerChannels {
+    pub layer_name: String,
+    pub width: u32,
+    pub height: u32,
+    // Klucze: krótkie nazwy kanałów z pliku (np. "R", "G", "B", "A", "Z", itp.)
+    pub channels: HashMap<String, Vec<f32>>,
+}
+
 pub struct ImageCache {
     pub raw_pixels: Vec<(f32, f32, f32, f32)>,
     pub width: u32,
@@ -42,6 +51,8 @@ pub struct ImageCache {
     pub current_layer_name: String,
     // Opcjonalna macierz konwersji z przestrzeni primaries pliku do sRGB (linear RGB)
     color_matrix_rgb_to_srgb: Option<[[f32; 3]; 3]>,
+    // Cache wszystkich kanałów dla bieżącej warstwy aby uniknąć I/O przy przełączaniu
+    pub current_layer_channels: Option<LayerChannels>,
 }
 
 impl ImageCache {
@@ -49,24 +60,39 @@ impl ImageCache {
         // Najpierw wyciągnij informacje o warstwach, wybierz najlepszą i wczytaj ją jako startowy podgląd
         let layers_info = extract_layers_info(path)?;
         let best_layer = find_best_layer(&layers_info);
-        let (raw_pixels, width, height, current_layer_name) = load_specific_layer(path, &best_layer, None)?;
+        let layer_channels = load_all_channels_for_layer(path, &best_layer, None)?;
+
+        let raw_pixels = compose_composite_from_channels(&layer_channels);
+        let width = layer_channels.width;
+        let height = layer_channels.height;
+        let current_layer_name = layer_channels.layer_name.clone();
 
         // Spróbuj wyliczyć macierz konwersji primaries → sRGB na podstawie atrybutu chromaticities (dla wybranej warstwy/partu)
         let color_matrix_rgb_to_srgb = compute_rgb_to_srgb_matrix_from_file_for_layer(path, &best_layer).ok();
 
-        Ok(ImageCache { raw_pixels, width, height, layers_info, current_layer_name, color_matrix_rgb_to_srgb })
+        Ok(ImageCache {
+            raw_pixels,
+            width,
+            height,
+            layers_info,
+            current_layer_name,
+            color_matrix_rgb_to_srgb,
+            current_layer_channels: Some(layer_channels),
+        })
     }
     
     pub fn load_layer(&mut self, path: &PathBuf, layer_name: &str, progress: Option<&dyn ProgressSink>) -> anyhow::Result<()> {
-        let (raw_pixels, width, height, current_layer_name) = load_specific_layer(path, layer_name, progress)?;
-        
-        self.raw_pixels = raw_pixels;
-        self.width = width;
-        self.height = height;
-        self.current_layer_name = current_layer_name;
+        // Jednorazowo wczytaj wszystkie kanały wybranej warstwy i zbuduj kompozyt
+        let layer_channels = load_all_channels_for_layer(path, layer_name, progress)?;
+
+        self.width = layer_channels.width;
+        self.height = layer_channels.height;
+        self.current_layer_name = layer_channels.layer_name.clone();
+        self.raw_pixels = compose_composite_from_channels(&layer_channels);
+        self.current_layer_channels = Some(layer_channels);
         // Reoblicz macierz primaries→sRGB na wypadek, gdyby warstwa/part zmieniały chromaticities
         self.color_matrix_rgb_to_srgb = compute_rgb_to_srgb_matrix_from_file_for_layer(path, layer_name).ok();
-        
+
         Ok(())
     }
 
@@ -419,11 +445,54 @@ fn load_first_rgba_layer(path: &PathBuf) -> anyhow::Result<(Vec<(f32, f32, f32, 
 impl ImageCache {
     /// Wczytuje jeden wskazany kanał z danej warstwy i zapisuje go jako grayscale (R=G=B=val, A=1)
     pub fn load_channel(&mut self, path: &PathBuf, layer_name: &str, channel_short: &str, progress: Option<&dyn ProgressSink>) -> anyhow::Result<()> {
-        let (pixels, width, height, current_layer_name) = load_single_channel_as_grayscale(path, layer_name, channel_short, progress)?;
-        self.raw_pixels = pixels;
-        self.width = width;
-        self.height = height;
-        self.current_layer_name = current_layer_name;
+        // Zapewnij, że cache kanałów dla żądanej warstwy jest dostępny
+        let need_reload = self.current_layer_channels.as_ref().map(|lc| lc.layer_name.to_lowercase() != layer_name.to_lowercase()).unwrap_or(true);
+        if need_reload {
+            // Załaduj wskazaną warstwę (zapełni current_layer_channels oraz ustawi kompozyt)
+            self.load_layer(path, layer_name, progress)?;
+        }
+
+        // Teraz mamy current_layer_channels dla właściwej warstwy
+        let layer_cache = self.current_layer_channels.as_ref().ok_or_else(|| anyhow::anyhow!("Brak cache kanałów dla warstwy"))?;
+
+        let find_channel_vec = |wanted: &str| -> Option<&Vec<f32>> {
+            // 1) dokładne dopasowanie (case-sensitive)
+            if let Some(v) = layer_cache.channels.get(wanted) { return Some(v); }
+            // 2) case-insensitive
+            let wanted_lower = wanted.to_lowercase();
+            if let Some((_, v)) = layer_cache.channels.iter().find(|(k, _)| k.to_lowercase() == wanted_lower) { return Some(v); }
+            // 3) według kanonicznego skrótu R/G/B/A
+            let wanted_canon = channel_alias_to_short(wanted).to_ascii_uppercase();
+            if let Some((_, v)) = layer_cache.channels.iter().find(|(k, _)| channel_alias_to_short(k).to_ascii_uppercase() == wanted_canon) { return Some(v); }
+            None
+        };
+
+        // Specjalne traktowanie Depth
+        let wanted_upper = channel_short.to_ascii_uppercase();
+        let is_depth = wanted_upper == "Z" || wanted_upper.contains("DEPTH");
+
+        let channel_vec = if is_depth {
+            // Preferuj dokładnie "Z"; w razie braku wybierz kanał zawierający "DEPTH" albo "DISTANCE"
+            find_channel_vec("Z")
+                .or_else(|| layer_cache.channels.iter().find(|(k, _)| k.to_ascii_uppercase().contains("DEPTH") || k.to_ascii_uppercase() == "DISTANCE").map(|(_, v)| v))
+        } else {
+            find_channel_vec(channel_short)
+        };
+
+        let channel_vec = channel_vec.ok_or_else(|| anyhow::anyhow!(format!("Nie znaleziono kanału '{}' w warstwie '{}'", channel_short, layer_cache.layer_name)))?;
+
+        let pixel_count = (layer_cache.width as usize) * (layer_cache.height as usize);
+        debug_assert_eq!(channel_vec.len(), pixel_count, "Długość kanału nie zgadza się z rozmiarem obrazu");
+
+        let mut out: Vec<(f32, f32, f32, f32)> = Vec::with_capacity(pixel_count);
+        for &v in channel_vec.iter() {
+            out.push((v, v, v, 1.0));
+        }
+
+        self.raw_pixels = out;
+        self.width = layer_cache.width;
+        self.height = layer_cache.height;
+        self.current_layer_name = layer_cache.layer_name.clone();
         Ok(())
     }
 
@@ -493,94 +562,93 @@ impl ImageCache {
 /// Buduje kolorowy preview dla warstwy Cryptomatte, łącząc pary (id, coverage)
 // usunięto: funkcja preview warstwy Cryptomatte
 
-/// Wczytuje pojedynczy kanał wskazanej warstwy i zwraca wektor pikseli jako grayscale (R=G=B=val, A=1)
-pub(crate) fn load_single_channel_as_grayscale(
+// (usunięto) stary loader pojedynczego kanału – zastąpiony cachingiem wszystkich kanałów warstwy
+
+// Pomocnicze: wczytuje wszystkie kanały dla wybranej warstwy do pamięci (bez dalszego I/O przy przełączaniu)
+pub(crate) fn load_all_channels_for_layer(
     path: &PathBuf,
     layer_name: &str,
-    channel_short: &str,
     progress: Option<&dyn ProgressSink>,
-) -> anyhow::Result<(Vec<(f32, f32, f32, f32)>, u32, u32, String)> {
-    if let Some(p) = progress { p.start_indeterminate(Some("Loading channel...")); }
+) -> anyhow::Result<LayerChannels> {
+    if let Some(p) = progress { p.start_indeterminate(Some("Reading layer channels...")); }
     let any_image = exr::read_all_flat_layers_from_file(path)?;
 
-    let wanted_layer_lower = layer_name.to_lowercase();
-    let wanted_channel = channel_short.to_string();
-    let wanted_canon = channel_alias_to_short(&wanted_channel);
+    let wanted_lower = layer_name.to_lowercase();
 
-    // Aliasowanie realizowane wspólnym helperem channel_alias_to_short
-
-    // Przejdź po fizycznych warstwach i szukaj grupy odpowiadającej nazwie
     for layer in any_image.layer_data.iter() {
         let width = layer.size.width() as u32;
         let height = layer.size.height() as u32;
         let pixel_count = (width as usize) * (height as usize);
 
         let base_attr: Option<String> = layer.attributes.layer_name.as_ref().map(|s| s.to_string());
-        let group_matches = |lname: &str| -> bool {
+        let name_matches = |lname: &str| -> bool {
             let lname_lower = lname.to_lowercase();
-            if wanted_layer_lower.is_empty() && lname_lower.is_empty() {
+            if wanted_lower.is_empty() && lname_lower.is_empty() {
                 true
-            } else if wanted_layer_lower.is_empty() || lname_lower.is_empty() {
+            } else if wanted_lower.is_empty() || lname_lower.is_empty() {
                 false
-            } else if lname_lower == wanted_layer_lower {
-                true
-            } else if lname_lower.starts_with(&wanted_layer_lower) || wanted_layer_lower.starts_with(&lname_lower) {
-                true
             } else {
-                lname_lower.contains(&wanted_layer_lower)
+                lname_lower == wanted_lower || lname_lower.contains(&wanted_lower) || wanted_lower.contains(&lname_lower)
             }
         };
 
-        // Znajdź kanał w obrębie dopasowanej grupy
-        let mut channel_index: Option<usize> = None;
+        // Sprawdź czy warstwa pasuje nazwą
+        let mut matched_indices: Vec<(usize, String)> = Vec::new();
         for (idx, ch) in layer.channel_data.list.iter().enumerate() {
             let full = ch.name.to_string();
             let (lname, short) = split_layer_and_short(&full, base_attr.as_deref());
-
-            if group_matches(&lname) {
-                let short_canon = channel_alias_to_short(&short);
-                if short == wanted_channel || full == wanted_channel || short_canon == wanted_canon {
-                    channel_index = Some(idx);
-                    break;
-                }
+            if name_matches(&lname) {
+                matched_indices.push((idx, short));
             }
         }
 
-        // Jeżeli nie znaleziono dokładnej nazwy, spróbuj wariantów typu Z/DEPTH w tej samej grupie
-        if channel_index.is_none() {
-            for (idx, ch) in layer.channel_data.list.iter().enumerate() {
-                let full = ch.name.to_string();
-                let (lname, short) = split_layer_and_short(&full, base_attr.as_deref());
-                if !group_matches(&lname) { continue; }
-
-                let su = short.to_ascii_uppercase();
-                let wu = wanted_channel.to_ascii_uppercase();
-                let is_depth = wu == "Z" && (su == "Z" || su.contains("DEPTH") || su == "DISTANCE");
-                let short_canon = channel_alias_to_short(&short);
-                if is_depth || short == wanted_channel || full == wanted_channel || short_canon == wanted_canon {
-                    channel_index = Some(idx);
-                    break;
+        if !matched_indices.is_empty() {
+            if let Some(p) = progress { p.set(0.35, Some("Copying channel data...")); }
+            let mut map: HashMap<String, Vec<f32>> = HashMap::new();
+            for (ci, short_name) in matched_indices {
+                let mut v: Vec<f32> = Vec::with_capacity(pixel_count);
+                for i in 0..pixel_count {
+                    v.push(layer.channel_data.list[ci].sample_data.value_by_flat_index(i).to_f32());
                 }
+                map.insert(short_name, v);
             }
-        }
-
-        // Zbuduj grayscale, wykrywając specjalne typy: Z/Depth i Cryptomatte
-        if let Some(ci) = channel_index {
-            let mut out: Vec<(f32, f32, f32, f32)> = Vec::with_capacity(pixel_count);
-            let short_upper = channel_short.to_ascii_uppercase();
-            let _is_depth = short_upper == "Z" || short_upper.contains("DEPTH");
-
-            for i in 0..pixel_count {
-                let v = layer.channel_data.list[ci].sample_data.value_by_flat_index(i).to_f32();
-                out.push((v, v, v, 1.0));
-            }
-
-            // Zwróć żądaną nazwę jako bieżącą (spójnie z UI)
-            return Ok((out, width, height, layer_name.to_string()));
+            if let Some(p) = progress { p.finish(Some("Layer channels loaded")); }
+            return Ok(LayerChannels { layer_name: layer_name.to_string(), width, height, channels: map });
         }
     }
 
-    // Jeśli nie znaleziono warstwy, zwróć błąd
     if let Some(p) = progress { p.reset(); }
-    anyhow::bail!("Nie znaleziono warstwy '{}' dla kanału '{}'", layer_name, channel_short)
+    anyhow::bail!(format!("Nie znaleziono warstwy '{}'", layer_name))
+}
+
+// Pomocnicze: buduje kompozyt RGB z mapy kanałów
+fn compose_composite_from_channels(layer_channels: &LayerChannels) -> Vec<(f32, f32, f32, f32)> {
+    let pixel_count = (layer_channels.width as usize) * (layer_channels.height as usize);
+    let mut out: Vec<(f32, f32, f32, f32)> = Vec::with_capacity(pixel_count);
+
+    // Heurystyki: najpierw dokładne R/G/B/A, potem nazwy zaczynające się od R/G/B, a na końcu pierwszy dostępny kanał
+    let pick_exact = |name: &str| -> Option<&Vec<f32>> { layer_channels.channels.get(name) };
+    let pick_prefix = |prefix: char| -> Option<&Vec<f32>> {
+        let prefix = prefix.to_ascii_uppercase();
+        layer_channels.channels.iter().find(|(k, _)| k.to_ascii_uppercase().starts_with(prefix)).map(|(_, v)| v)
+    };
+
+    let r = pick_exact("R").or_else(|| pick_prefix('R')).or_else(|| layer_channels.channels.values().next());
+    let g = pick_exact("G").or_else(|| pick_prefix('G')).or(r);
+    let b = pick_exact("B").or_else(|| pick_prefix('B')).or(g).or(r);
+    let a = pick_exact("A").or_else(|| pick_prefix('A'));
+
+    let r = r.expect("Brak kanału R do kompozytu");
+    let g = g.expect("Brak kanału G do kompozytu");
+    let b = b.expect("Brak kanału B do kompozytu");
+
+    for i in 0..pixel_count {
+        let rr = r[i];
+        let gg = g[i];
+        let bb = b[i];
+        let aa = a.map(|av| av[i]).unwrap_or(1.0);
+        out.push((rr, gg, bb, aa));
+    }
+
+    out
 }
