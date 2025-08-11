@@ -121,7 +121,8 @@ fn generate_single_exr_thumbnail_work(
     exposure: f32,
     gamma: f32,
 ) -> anyhow::Result<ExrThumbWork> {
-    // Scentralizowany wybór i wczytanie warstwy
+    // Scentralizowany wybór i wczytanie warstwy – w trybie szybkim
+    // 1) Szybka próba: pierwsza RGBA dla typowych nazw
     let path_buf = path.to_path_buf();
     let layers_info = extract_layers_info(&path_buf)
         .with_context(|| format!("Błąd odczytu EXR: {}", path.display()))?;

@@ -270,8 +270,25 @@ pub(crate) fn find_best_layer(layers_info: &[LayerInfo]) -> String {
 }
 
 pub(crate) fn load_specific_layer(path: &PathBuf, layer_name: &str, progress: Option<&dyn ProgressSink>) -> anyhow::Result<(Vec<(f32, f32, f32, f32)>, u32, u32, String)> {
+    // Szybka ścieżka: jeżeli prosimy o bazową/typową warstwę RGBA, użyj gotowej funkcji czytającej pierwszą RGBA
+    // Dotyczy częstych nazw: "", "beauty", "rgba", "default", "combined"
+    let lname = layer_name.trim();
+    let lname_lower = lname.to_ascii_lowercase();
+    let is_typical_rgba = lname.is_empty()
+        || lname_lower == "beauty"
+        || lname_lower == "rgba"
+        || lname_lower == "default"
+        || lname_lower == "combined";
 
-    // Załaduj płaskie warstwy (bez mip-map), aby uzyskać FlatSamples
+    if is_typical_rgba {
+        if let Some(p) = progress { p.set(0.08, Some("Fast path: RGBA layer")); }
+        if let Ok((pixels, w, h, _)) = load_first_rgba_layer(path) {
+            if let Some(p) = progress { p.set(0.92, Some("Fast path done")); }
+            return Ok((pixels, w, h, layer_name.to_string()));
+        }
+    }
+
+    // Standardowa ścieżka: wczytaj płaskie warstwy (bez mip-map), aby uzyskać FlatSamples
     if let Some(p) = progress { p.set(0.1, Some("Reading layer data...")); }
     let any_image = exr::read_all_flat_layers_from_file(path)?;
 

@@ -45,7 +45,7 @@ pub fn read_and_group_metadata(path: &Path) -> anyhow::Result<ExrMetadata> {
         .with_context(|| format!("Nie można pobrać metadata pliku: {}", path.display()))?;
     let file_size_bytes = meta.len();
 
-    // Pełne dane o warstwach i kanałach (bez potrzeby czytania pikseli)
+    // Stabilny odczyt nagłówków i danych warstw (bez dekodowania pikseli do UI)
     let image = exr::read_all_data_from_file(path)
         .with_context(|| format!("Błąd odczytu EXR (nagłówki): {}", path.display()))?;
 
