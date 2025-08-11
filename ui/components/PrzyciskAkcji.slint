@@ -1,0 +1,37 @@
+import { Kolory } from "../colors.slint";
+
+export component PrzyciskAkcji inherits Rectangle {
+    in-out property <string> text: "";
+    in-out property <bool> enabled: true;
+    callback clicked();
+
+    // Domyślne wymiary – rodzic może je nadpisać
+    width: 100px;
+    height: 25px;
+
+    background: enabled ? (area.has-hover ? Kolory.hover : Kolory.suwak_tlo) : Kolory.suwak_tlo;
+    border-color: Kolory.suwak_tor;
+    border-width: 1px;
+    border-radius: 3px;
+    opacity: enabled ? 1.0 : 0.5;
+
+    Text {
+        text: root.text;
+        color: Kolory.tekst;
+        font-size: 10px;
+        font-family: "Geist";
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    area := TouchArea {
+        width: parent.width;
+        height: parent.height;
+        mouse-cursor: enabled ? MouseCursor.pointer : MouseCursor.default;
+        clicked => {
+            if (enabled) { root.clicked(); }
+        }
+    }
+}
+
+

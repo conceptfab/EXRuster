@@ -1,5 +1,7 @@
 import { HorizontalBox, VerticalBox, Button, ScrollView, TextEdit } from "std-widgets.slint";
 import { Kolory } from "colors.slint";
+import { PrzyciskAkcji } from "components/PrzyciskAkcji.slint";
+import { PozycjaMenu } from "components/PozycjaMenu.slint";
 
 import "../resources/fonts/Geist-Regular.otf";
 import "../resources/fonts/Geist-Bold.otf";
@@ -211,56 +213,8 @@ export component AppWindow inherits Window {
             padding: 0px;
             spacing: 0px;
             
-            // Open EXR option
-            Rectangle {
-                height: 26px;
-                background: open-exr-area.has-hover ? Kolory.hover : Kolory.menu_tlo;
-                
-                Text {
-                    text: "Open EXR";
-                    color: Kolory.tekst;
-                    font-size: 12px;
-                    font-family: "Geist";
-                    horizontal-alignment: left;
-                    vertical-alignment: center;
-                    x: 15px;
-                }
-                
-                open-exr-area := TouchArea {
-                    width: parent.width;
-                    height: 46px;
-                    mouse-cursor: MouseCursor.default;
-                    clicked => {
-                        file-menu-open = false;
-                        open-exr();
-                    }
-                }
-            }
-            
-            // Exit option
-            Rectangle {
-                height: 26px;
-                background: exit-area.has-hover ? Kolory.hover : Kolory.menu_tlo;
-                
-                Text {
-                    text: "Exit";
-                    color: Kolory.tekst;
-                    font-size: 12px;
-                    font-family: "Geist";
-                    horizontal-alignment: left;
-                    vertical-alignment: center;
-                    x: 15px;
-                }
-                
-                exit-area := TouchArea {
-                    width: parent.width;
-                    height: parent.height;
-                    clicked => {
-                        file-menu-open = false;
-                        exit();
-                    }
-                }
-            }
+            PozycjaMenu { width: 100px; text: "Open EXR"; clicked => { file-menu-open = false; open-exr(); } }
+            PozycjaMenu { width: 100px; text: "Exit"; clicked => { file-menu-open = false; exit(); } }
         }
     }
     
@@ -279,136 +233,11 @@ export component AppWindow inherits Window {
             padding: 0px;
             spacing: 0px;
             
-            // Toggle Left Panel
-            Rectangle {
-                height: 26px;
-                background: left-panel-area.has-hover ? Kolory.hover : Kolory.menu_tlo;
-                
-                Text {
-                    text: root.show-left-panel ? "Hide Left Panel" : "Show Left Panel";
-                    color: Kolory.tekst;
-                    font-size: 12px;
-                    font-family: "Geist";
-                    horizontal-alignment: left;
-                    vertical-alignment: center;
-                    x: 15px;
-                }
-                
-                left-panel-area := TouchArea {
-                    width: parent.width;
-                    height: parent.height;
-                    mouse-cursor: MouseCursor.default;
-                    clicked => {
-                        show-left-panel = !show-left-panel;
-                        view-menu-open = false;
-                    }
-                }
-            }
-            
-            // Toggle Right Panel
-            Rectangle {
-                height: 26px;
-                background: right-panel-area.has-hover ? Kolory.hover : Kolory.menu_tlo;
-                
-                Text {
-                    text: root.show-right-panel ? "Hide Right Panel" : "Show Right Panel";
-                    color: Kolory.tekst;
-                    font-size: 12px;
-                    font-family: "Geist";
-                    horizontal-alignment: left;
-                    vertical-alignment: center;
-                    x: 15px;
-                }
-                
-                right-panel-area := TouchArea {
-                    width: parent.width;
-                    height: parent.height;
-                    mouse-cursor: MouseCursor.default;
-                    clicked => {
-                        show-right-panel = !show-right-panel;
-                        view-menu-open = false;
-                    }
-                }
-            }
-            
-            // Reset View
-            Rectangle {
-                height: 26px;
-                background: reset-view-area.has-hover ? Kolory.hover : Kolory.menu_tlo;
-                
-                Text {
-                    text: "Reset View";
-                    color: Kolory.tekst;
-                    font-size: 12px;
-                    font-family: "Geist";
-                    horizontal-alignment: left;
-                    vertical-alignment: center;
-                    x: 15px;
-                }
-                
-                reset-view-area := TouchArea {
-                    width: parent.width;
-                    height: parent.height;
-                    mouse-cursor: MouseCursor.default;
-                    clicked => {
-                        show-left-panel = true;
-                        show-right-panel = true;
-                        view-menu-open = false;
-                    }
-                }
-            }
-
-            // Open Console
-            Rectangle {
-                height: 26px;
-                background: open-console-area.has-hover ? Kolory.hover : Kolory.menu_tlo;
-                
-                Text {
-                    text: "Open Console";
-                    color: Kolory.tekst;
-                    font-size: 12px;
-                    font-family: "Geist";
-                    horizontal-alignment: left;
-                    vertical-alignment: center;
-                    x: 15px;
-                }
-                
-                open-console-area := TouchArea {
-                    width: parent.width;
-                    height: parent.height;
-                    mouse-cursor: MouseCursor.default;
-                    clicked => {
-                        internal-console-visible = true;
-                        view-menu-open = false;
-                    }
-                }
-            }
-
-            // Open Meta
-            Rectangle {
-                height: 26px;
-                background: open-meta-area.has-hover ? Kolory.hover : Kolory.menu_tlo;
-                
-                Text {
-                    text: "Open Meta";
-                    color: Kolory.tekst;
-                    font-size: 12px;
-                    font-family: "Geist";
-                    horizontal-alignment: left;
-                    vertical-alignment: center;
-                    x: 15px;
-                }
-                
-                open-meta-area := TouchArea {
-                    width: parent.width;
-                    height: parent.height;
-                    mouse-cursor: MouseCursor.default;
-                    clicked => {
-                        internal-meta-visible = true;
-                        view-menu-open = false;
-                    }
-                }
-            }
+            PozycjaMenu { text: root.show-left-panel ? "Hide Left Panel" : "Show Left Panel"; clicked => { show-left-panel = !show-left-panel; view-menu-open = false; } }
+            PozycjaMenu { text: root.show-right-panel ? "Hide Right Panel" : "Show Right Panel"; clicked => { show-right-panel = !show-right-panel; view-menu-open = false; } }
+            PozycjaMenu { text: "Reset View"; clicked => { show-left-panel = true; show-right-panel = true; view-menu-open = false; } }
+            PozycjaMenu { text: "Open Console"; clicked => { internal-console-visible = true; view-menu-open = false; } }
+            PozycjaMenu { text: "Open Meta"; clicked => { internal-meta-visible = true; view-menu-open = false; } }
         }
     }
         
@@ -606,8 +435,8 @@ export component AppWindow inherits Window {
             
             // Prawa kolumna: funkcje Exposure na górze
             VerticalBox {
-                padding: 3px;
-                spacing: 8px;
+                padding: 1px;
+                spacing: 12px;
                 alignment: start;
 
                 ParameterSlider {
@@ -634,26 +463,15 @@ export component AppWindow inherits Window {
                     }
                 }
                 
-                // Reset button
-                Rectangle {
+                HorizontalBox {
+                    width: parent.width;
                     height: 25px;
-                    background: reset_area_right.has-hover ? Kolory.hover : Kolory.suwak_tlo;
-                    border-color: Kolory.suwak_tor;
-                    border-width: 1px;
-                    border-radius: 3px;
-                    
-                    Text {
+                    spacing: 0px;
+                    Rectangle { width: 6px; }
+                    PrzyciskAkcji {
                         text: "Reset";
-                        color: Kolory.tekst;
-                        font-size: 10px;
-                        font-family: "Geist";
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                    }
-                    
-                    reset_area_right := TouchArea {
-                        width: parent.width;
-                        height: parent.height;
+                        height: 25px;
+                        width: parent.width - 12px;
                         clicked => {
                             exposure-value = 0.0;
                             gamma-value = 2.2;
@@ -661,6 +479,7 @@ export component AppWindow inherits Window {
                             gamma-changed(gamma-value);
                         }
                     }
+                    Rectangle { width: 6px; }
                 }
                 
                 // Spacer
@@ -679,75 +498,24 @@ export component AppWindow inherits Window {
                 }
 
                 // Convert: EXR -> TIFF (32F RGBA)
-                Rectangle {
-                    height: 25px;
-                    background: convert_area.has-hover ? Kolory.hover : Kolory.suwak_tlo;
-                    border-color: Kolory.suwak_tor;
-                    border-width: 1px;
-                    border-radius: 3px;
-
-                    Text {
-                        text: "Convert (TIFF)";
-                        color: Kolory.tekst;
-                        font-size: 10px;
-                        font-family: "Geist";
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                    }
-
-                    convert_area := TouchArea {
-                        width: parent.width;
-                        height: parent.height;
-                        clicked => { export-convert(); }
-                    }
+                HorizontalBox { width: parent.width; height: 25px; spacing: 0px;
+                    Rectangle { width: 6px; }
+                    PrzyciskAkcji { text: "Convert (TIFF)"; height: 25px; width: parent.width - 26px; clicked => { export-convert(); } }
+                    Rectangle { width: 6px; }
                 }
 
                 // Export Beauty: 16-bit PNG (with exposure/gamma)
-                Rectangle {
-                    height: 25px;
-                    background: beauty_area.has-hover ? Kolory.hover : Kolory.suwak_tlo;
-                    border-color: Kolory.suwak_tor;
-                    border-width: 1px;
-                    border-radius: 3px;
-
-                    Text {
-                        text: "Export Beauty (PNG16)";
-                        color: Kolory.tekst;
-                        font-size: 10px;
-                        font-family: "Geist";
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                    }
-
-                    beauty_area := TouchArea {
-                        width: parent.width;
-                        height: parent.height;
-                        clicked => { export-beauty(); }
-                    }
+                HorizontalBox { width: parent.width; height: 25px; spacing: 0px;
+                    Rectangle { width: 6px; }
+                    PrzyciskAkcji { text: "Export Beauty (PNG16)"; height: 25px; width: parent.width - 26px; clicked => { export-beauty(); } }
+                    Rectangle { width: 6px; }
                 }
 
                 // Export Channels: PNG16 grayscale per channel
-                Rectangle {
-                    height: 25px;
-                    background: channels_area.has-hover ? Kolory.hover : Kolory.suwak_tlo;
-                    border-color: Kolory.suwak_tor;
-                    border-width: 1px;
-                    border-radius: 3px;
-
-                    Text {
-                        text: "Export Channels (PNG16)";
-                        color: Kolory.tekst;
-                        font-size: 10px;
-                        font-family: "Geist";
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                    }
-
-                    channels_area := TouchArea {
-                        width: parent.width;
-                        height: parent.height;
-                        clicked => { export-channels(); }
-                    }
+                HorizontalBox { width: parent.width; height: 25px; spacing: 0px;
+                    Rectangle { width: 6px; }
+                    PrzyciskAkcji { text: "Export Channels (PNG16)"; height: 25px; width: parent.width - 26px; clicked => { export-channels(); } }
+                    Rectangle { width: 6px; }
                 }
             }
 

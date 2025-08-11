@@ -1,0 +1,31 @@
+import { Kolory } from "../colors.slint";
+
+export component PozycjaMenu inherits Rectangle {
+    in-out property <string> text: "";
+    callback clicked();
+
+    width: 160px;
+    height: 26px;
+    background: area.has-hover ? Kolory.hover : Kolory.menu_tlo;
+    border-color: Kolory.menu_tlo; // brak dodatkowego borderu w środku listy
+    border-width: 0px;
+
+    Text {
+        text: root.text;
+        color: Kolory.tekst;
+        font-size: 12px;
+        font-family: "Geist";
+        horizontal-alignment: left;
+        vertical-alignment: center;
+        x: 15px;
+    }
+
+    area := TouchArea {
+        width: parent.width;
+        height: parent.height;
+        mouse-cursor: MouseCursor.default;
+        clicked => { root.clicked(); }
+    }
+}
+
+

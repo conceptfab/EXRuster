@@ -8,6 +8,11 @@
 2.  **Stwórz reużywalne komponenty UI.**
     W `appwindow.slint` i innych plikach powtarza się kod tworzący elementy takie jak przyciski czy pozycje w menu. Stwórz generyczne komponenty (np. `PrzyciskAkcji`, `PozycjaMenu`), aby zredukować duplikację kodu i poprawić czytelność głównego pliku UI.
 
+
+
+
+    
+
 3.  **Przenieś logikę przeciągania okien.**
     Logika przeciągania dla pływających okien "Console" i "Meta" powinna zostać przeniesiona z `appwindow.slint` do wnętrza komponentów `ConsoleWindow` i `MetaWindow`. Pozwoli to na lepszą enkapsulację i uprości główny komponent aplikacji.
 
