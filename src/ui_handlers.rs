@@ -1,6 +1,6 @@
 use slint::{Weak, ComponentHandle, Timer, TimerMode, ModelRc, VecModel, SharedString, Color};
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use std::collections::HashMap;
 use crate::image_cache::ImageCache;
@@ -9,7 +9,7 @@ use std::rc::Rc;
 // removed unused: use exr::prelude as exr;
 use crate::exr_metadata;
 use crate::progress::{ProgressSink, UiProgress};
-use crate::utils::{get_channel_info, normalize_channel_name};
+use crate::utils::{get_channel_info, normalize_channel_name, human_size};
 use std::fs::File;
 use tiff::encoder::{TiffEncoder, colortype::{RGBA32Float, RGB32Float, Gray32Float}};
 use tiff::tags::Tag;
@@ -17,6 +17,7 @@ use image::{ImageBuffer, Rgb};
 
 // Import komponentów Slint
 use crate::AppWindow;
+use crate::ThumbItem;
 
 pub type ImageCacheType = Arc<Mutex<Option<ImageCache>>>;
 pub type CurrentFilePathType = Arc<Mutex<Option<PathBuf>>>;
@@ -276,6 +277,53 @@ impl ThrottledUpdate {
 pub fn handle_exit(ui_handle: Weak<AppWindow>) {
     if let Some(ui) = ui_handle.upgrade() {
         let _ = ui.window().hide();
+    }
+}
+
+/// Wspólna funkcja do wczytywania miniatur dla wskazanego katalogu i aktualizacji UI.
+/// Używana zarówno przy starcie aplikacji (po argumencie pliku), jak i po wyborze folderu z UI.
+pub fn load_thumbnails_for_directory(
+    ui_handle: Weak<AppWindow>,
+    directory: &Path,
+    console: ConsoleModel,
+) {
+    if let Some(ui) = ui_handle.upgrade() {
+        push_console(&ui, &console, format!("[folder] loading thumbnails: {}", directory.display()));
+        ui.set_status_text(format!("Loading thumbnails: {}", directory.display()).into());
+        let exposure = ui.get_exposure_value();
+        let gamma = ui.get_gamma_value();
+        let t0 = Instant::now();
+        let prog = UiProgress::new(ui.as_weak());
+        match crate::thumbnails::generate_exr_thumbnails_in_dir(directory, 150, exposure, gamma, Some(&prog)) {
+            Ok(mut thumbs) => {
+                prog.set(0.95, Some("Sorting thumbnails..."));
+                thumbs.sort_by(|a, b| a.file_name.to_lowercase().cmp(&b.file_name.to_lowercase()));
+                let items: Vec<ThumbItem> = thumbs
+                    .into_iter()
+                    .map(|t| ThumbItem {
+                        img: t.image,
+                        name: t.file_name.into(),
+                        size: human_size(t.file_size_bytes).into(),
+                        layers: format!("{} layers", t.num_layers).into(),
+                        path: t.path.display().to_string().into(),
+                        width: t.width as i32,
+                        height: t.height as i32,
+                    })
+                    .collect();
+                let count = items.len();
+                ui.set_thumbnails(ModelRc::new(VecModel::from(items)));
+                ui.set_bottom_panel_visible(true);
+                let ms = t0.elapsed().as_millis();
+                ui.set_status_text("Thumbnails loaded".into());
+                prog.finish(Some("Thumbnails loaded"));
+                push_console(&ui, &console, format!("[folder] {} EXR files | thumbnails in {} ms", count, ms));
+            }
+            Err(e) => {
+                ui.set_status_text(format!("Error loading thumbnails: {}", e).into());
+                push_console(&ui, &console, format!("[error][folder] {}", e));
+                prog.reset();
+            }
+        }
     }
 }
 

@@ -15,10 +15,9 @@ mod color_processing;
 use std::sync::{Arc, Mutex};
 use crate::ui_handlers::push_console;
 use ui_handlers::{ImageCacheType, CurrentFilePathType};
-use slint::{ModelRc, VecModel, SharedString, Model};
+use slint::{VecModel, SharedString, Model};
 use std::rc::Rc;
 use crate::utils::human_size;
-use crate::progress::ProgressSink;
 
 fn main() -> Result<(), slint::PlatformError> {
     // Ustaw Rayon thread pool na podstawie CPU cores
@@ -89,29 +88,8 @@ fn main() -> Result<(), slint::PlatformError> {
                             .count();
 
                         if exr_count > 1 {
-                            let exposure = ui.get_exposure_value();
-                            let gamma = ui.get_gamma_value();
-                            let prog = crate::progress::UiProgress::new(ui.as_weak());
-                            match crate::thumbnails::generate_exr_thumbnails_in_dir(dir, 150, exposure, gamma, Some(&prog)) {
-                                Ok(mut thumbs) => {
-                                    use crate::thumbnails::ExrThumbnailInfo; // ensure type in scope
-                                    thumbs.sort_by(|a, b| a.file_name.to_lowercase().cmp(&b.file_name.to_lowercase()));
-                                    let items: Vec<ThumbItem> = thumbs.into_iter().map(|t: ExrThumbnailInfo| ThumbItem {
-                                        img: t.image,
-                                        name: t.file_name.into(),
-                                        size: human_size(t.file_size_bytes).into(),
-                                        layers: format!("{} layers", t.num_layers).into(),
-                                        path: t.path.display().to_string().into(),
-                                        width: t.width as i32,
-                                        height: t.height as i32,
-                                    }).collect();
-                                    ui.set_thumbnails(ModelRc::new(VecModel::from(items)));
-                                    ui.set_bottom_panel_visible(true);
-                                }
-                                Err(e) => {
-                                    ui.set_status_text(format!("Error loading thumbnails: {}", e).into());
-                                }
-                            }
+                            // Użyj ujednoliconej funkcji wczytywania miniatur
+                            ui_handlers::load_thumbnails_for_directory(ui.as_weak(), dir, console_model.clone());
                         }
                     }
                 }
@@ -355,38 +333,7 @@ fn setup_panel_callbacks(
                 push_console(&ui, &console_model, "[folder] choosing working folder...".to_string());
 
                 if let Some(dir) = crate::file_operations::open_folder_dialog() {
-                    ui.set_status_text(format!("Loading thumbnails: {}", dir.display()).into());
-                    let exposure = ui.get_exposure_value();
-                    let gamma = ui.get_gamma_value();
-                    let t0 = std::time::Instant::now();
-                     let prog = crate::progress::UiProgress::new(ui.as_weak());
-                     match crate::thumbnails::generate_exr_thumbnails_in_dir(&dir, 150, exposure, gamma, Some(&prog)) {
-                        Ok(mut thumbs) => {
-                            prog.set(0.95, Some("Sorting thumbnails..."));
-                            thumbs.sort_by(|a, b| a.file_name.to_lowercase().cmp(&b.file_name.to_lowercase()));
-                            let items: Vec<ThumbItem> = thumbs.into_iter().map(|t| ThumbItem {
-                                img: t.image,
-                                name: t.file_name.into(),
-                                size: human_size(t.file_size_bytes).into(),
-                                layers: format!("{} layers", t.num_layers).into(),
-                                path: t.path.display().to_string().into(),
-                                width: t.width as i32,
-                                height: t.height as i32,
-                            }).collect();
-                            let count = items.len();
-                            ui.set_thumbnails(ModelRc::new(VecModel::from(items)));
-                            let ms = t0.elapsed().as_millis();
-                            ui.set_status_text("Thumbnails loaded".into());
-                            prog.finish(Some("Thumbnails loaded"));
-                            ui.set_bottom_panel_visible(true);
-                            push_console(&ui, &console_model, format!("[folder] {} EXR files | thumbnails in {} ms", count, ms));
-                        }
-                        Err(e) => {
-                            ui.set_status_text(format!("Error loading thumbnails: {}", e).into());
-                            push_console(&ui, &console_model, format!("[error][folder] {}", e));
-                            prog.reset();
-                        }
-                    }
+                    ui_handlers::load_thumbnails_for_directory(ui.as_weak(), &dir, console_model.clone());
                 } else {
                     push_console(&ui, &console_model, "[folder] selection canceled".to_string());
                 }
