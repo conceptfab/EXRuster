@@ -1,4 +1,5 @@
 use std::path::Path;
+use ::exr::meta::attribute::AttributeValue;
 
 // Make the main function public
 pub fn compute_rgb_to_srgb_matrix_from_file_for_layer(path: &Path, layer_name: &str) -> anyhow::Result<[[f32; 3]; 3]> {
@@ -6,7 +7,7 @@ pub fn compute_rgb_to_srgb_matrix_from_file_for_layer(path: &Path, layer_name: &
     // Wczytaj tylko meta-dane (nagłówki) bez pikseli
     let meta = ::exr::meta::MetaData::read_from_file(path, /*pedantic=*/false)?;
     let wanted_lower = layer_name.to_lowercase();
-    let mut nums: Option<Vec<f64>> = None;
+    let mut primaries: Option<(f64, f64, f64, f64, f64, f64, f64, f64)> = None;
 
     // Najpierw spróbuj z warstwy/partu
     'outer: for header in meta.headers.iter() {
@@ -15,49 +16,44 @@ pub fn compute_rgb_to_srgb_matrix_from_file_for_layer(path: &Path, layer_name: &
         let lname_lower = lname.to_lowercase();
         let matches = (wanted_lower.is_empty() && lname_lower.is_empty()) || (!wanted_lower.is_empty() && lname_lower.contains(&wanted_lower));
         if matches {
-            if let Some((_k, v)) = header.own_attributes.other.iter().find(|(k, _)| {
-                let name_dbg = format!("{:?}", k).to_lowercase();
-                let name = name_dbg.trim_matches('"');
-                name == "chromaticities"
-            }) {
-                let mut out: Vec<f64> = Vec::new();
-                let mut cur = String::new();
-                for c in format!("{:?}", v).chars() {
-                    if c.is_ascii_digit() || c == '.' || c == '-' { cur.push(c); }
-                    else { if !cur.is_empty() { if let Ok(n) = cur.parse::<f64>() { out.push(n); } cur.clear(); }
-                    }
-                }
-                if !cur.is_empty() { if let Ok(n) = cur.parse::<f64>() { out.push(n); } }
-                if out.len() >= 8 { nums = Some(out); break 'outer; }
+            if let Some((_, AttributeValue::Chromaticities(ch))) = header
+                .own_attributes
+                .other
+                .iter()
+                .find(|(k, _)| k.to_string().eq_ignore_ascii_case("chromaticities"))
+            {
+                primaries = Some((
+                    ch.red.x() as f64, ch.red.y() as f64,
+                    ch.green.x() as f64, ch.green.y() as f64,
+                    ch.blue.x() as f64, ch.blue.y() as f64,
+                    ch.white.x() as f64, ch.white.y() as f64,
+                ));
+                break 'outer;
             }
         }
     }
 
     // Fallback: globalny nagłówek
-    let nums = if let Some(n) = nums { n } else {
-        let mut out: Vec<f64> = Vec::new();
-        if let Some((_k, v)) = meta.headers.first().and_then(|h| h.shared_attributes.other.iter().find(|(k, _)| {
-            let name_dbg = format!("{:?}", k).to_lowercase();
-            let name = name_dbg.trim_matches('"');
-            name == "chromaticities"
-        })).map(|(_k, v)| ((), v)) {
-            let mut cur = String::new();
-            for c in format!("{:?}", v).chars() {
-                if c.is_ascii_digit() || c == '.' || c == '-' { cur.push(c); }
-                else { if !cur.is_empty() { if let Ok(n) = cur.parse::<f64>() { out.push(n); } cur.clear(); }
-                }
+    if primaries.is_none() {
+        if let Some(first_header) = meta.headers.first() {
+            if let Some((_, AttributeValue::Chromaticities(ch))) = first_header
+                .shared_attributes
+                .other
+                .iter()
+                .find(|(k, _)| k.to_string().eq_ignore_ascii_case("chromaticities"))
+            {
+                primaries = Some((
+                    ch.red.x() as f64, ch.red.y() as f64,
+                    ch.green.x() as f64, ch.green.y() as f64,
+                    ch.blue.x() as f64, ch.blue.y() as f64,
+                    ch.white.x() as f64, ch.white.y() as f64,
+                ));
             }
-            if !cur.is_empty() { if let Ok(n) = cur.parse::<f64>() { out.push(n); } }
         }
-        out
-    };
+    }
 
-    if nums.len() < 8 { anyhow::bail!("chromaticities attribute not found or incomplete"); }
-
-    let rx = nums[0]; let ry = nums[1];
-    let gx = nums[2]; let gy = nums[3];
-    let bx = nums[4]; let by = nums[5];
-    let wx = nums[6]; let wy = nums[7];
+    let (rx, ry, gx, gy, bx, by, wx, wy) = primaries
+        .ok_or_else(|| anyhow::anyhow!("chromaticities attribute not found or incomplete"))?;
 
     let m_src = rgb_to_xyz_from_primaries(rx, ry, gx, gy, bx, by, wx, wy);
     // Adaptacja Bradford do D65
