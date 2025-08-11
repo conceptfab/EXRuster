@@ -8,6 +8,7 @@ use crate::file_operations::{open_file_dialog, get_file_name};
 use std::rc::Rc;
 // removed unused: use exr::prelude as exr;
 use crate::exr_metadata;
+use exr::prelude as exr;
 use crate::progress::{ProgressSink, UiProgress};
 use crate::utils::{get_channel_info, normalize_channel_name, human_size};
 use std::fs::File;
@@ -641,6 +642,16 @@ pub fn handle_export_convert(
                     }
                 };
 
+                // Jednorazowy odczyt wszystkich płaskich warstw EXR
+                let any_image = match exr::read_all_flat_layers_from_file(&path) {
+                    Ok(img) => img,
+                    Err(e) => {
+                        ui.set_status_text(format!("Export error (read EXR): {}", e).into());
+                        prog.reset();
+                        return;
+                    }
+                };
+
                 let mut pages_written: u16 = 0;
                 for layer in &cache.layers_info {
                     // Ustal dostępność kanałów w tej warstwie (po krótkich nazwach R/G/B/A)
@@ -661,117 +672,185 @@ pub fn handle_export_convert(
 
                     let display_name = if layer.name.is_empty() { "Beauty".to_string() } else { layer.name.clone() };
 
-                    // Przypadek: pełny RGB(A)
-                    if has_r && has_g && has_b {
-                        match crate::image_cache::load_specific_layer(&path, &layer.name, None) {
-                            Ok((pixels, width, height, _)) => {
-                                let pixel_count = (width as usize) * (height as usize);
-                                if has_a {
-                                    // RGBA f32
-                                    let mut buf: Vec<f32> = vec![0.0; pixel_count * 4];
-                                    for i in 0..pixel_count {
-                                        let (r, g, b, a) = pixels[i];
-                                        let base = i * 4;
-                                        buf[base + 0] = r;
-                                        buf[base + 1] = g;
-                                        buf[base + 2] = b;
-                                        buf[base + 3] = a;
-                                    }
-                                    if let Err(e) = write_tiff_page_rgba_f32(&mut tiff_encoder, width, height, &display_name, &buf) {
-                                        ui.set_status_text(format!("Export error (TIFF RGBA): {}", e).into());
-                                        prog.reset();
-                                        return;
-                                    }
-                                } else {
-                                    // RGB f32
-                                    let mut buf: Vec<f32> = vec![0.0; pixel_count * 3];
-                                    for i in 0..pixel_count {
-                                        let (r, g, b, _a) = pixels[i];
-                                        let base = i * 3;
-                                        buf[base + 0] = r;
-                                        buf[base + 1] = g;
-                                        buf[base + 2] = b;
-                                    }
-                                    if let Err(e) = write_tiff_page_rgb_f32(&mut tiff_encoder, width, height, &display_name, &buf) {
-                                        ui.set_status_text(format!("Export error (TIFF RGB): {}", e).into());
-                                        prog.reset();
-                                        return;
-                                    }
-                                }
-                                pages_written += 1;
-                                push_console(&ui, &console, format!("[export] page: {} ({}x{}, {})", display_name, width, height, if has_a { "RGBAf32" } else { "RGBf32" }));
-                                completed_pages += 1;
-                                prog.set(
-                                    (completed_pages as f32) / (total_pages as f32),
-                                    Some(&format!("Exporting TIFF ({}/{}) — {}", completed_pages, total_pages, display_name))
-                                );
-                            }
-                            Err(e) => {
-                                push_console(&ui, &console, format!("[export] skip '{}' (read error): {}", display_name, e));
-                                continue;
+                    // Znajdź dopasowaną grupę w jednorazowo odczytanym obrazie
+                    let wanted_lower = layer.name.to_lowercase();
+                    let mut found_group: Option<usize> = None;
+                    for (li, phys_layer) in any_image.layer_data.iter().enumerate() {
+                        let base_attr: Option<String> = phys_layer.attributes.layer_name.as_ref().map(|s| s.to_string());
+                        let lname = base_attr.unwrap_or_else(|| "".to_string());
+                        let lname_lower = lname.to_lowercase();
+                        let matches = if wanted_lower.is_empty() && lname_lower.is_empty() {
+                            true
+                        } else if wanted_lower.is_empty() || lname_lower.is_empty() {
+                            false
+                        } else {
+                            lname_lower == wanted_lower || lname_lower.contains(&wanted_lower) || wanted_lower.contains(&lname_lower)
+                        };
+                        if matches {
+                            found_group = Some(li);
+                            break;
+                        }
+                    }
+
+                    let Some(group_index) = found_group else {
+                        push_console(&ui, &console, format!("[export] skip '{}' (group not found)", display_name));
+                        continue;
+                    };
+                    let phys_layer = &any_image.layer_data[group_index];
+                    let width = phys_layer.size.width() as u32;
+                    let height = phys_layer.size.height() as u32;
+                    let pixel_count = (width as usize) * (height as usize);
+
+                    // Zmapuj indeksy kanałów
+                    let mut r_idx: Option<usize> = None;
+                    let mut g_idx: Option<usize> = None;
+                    let mut b_idx: Option<usize> = None;
+                    let mut a_idx: Option<usize> = None;
+                    let mut group_indices: Vec<usize> = Vec::with_capacity(phys_layer.channel_data.list.len());
+                    for (idx, ch) in phys_layer.channel_data.list.iter().enumerate() {
+                        let full = ch.name.to_string();
+                        let base_attr: Option<String> = phys_layer.attributes.layer_name.as_ref().map(|s| s.to_string());
+                        let (_lname, short) = crate::utils::split_layer_and_short(&full, base_attr.as_deref());
+                        group_indices.push(idx);
+                        let su = short.to_ascii_uppercase();
+                        match su.as_str() {
+                            "R" | "RED" => r_idx = Some(idx),
+                            "G" | "GREEN" => g_idx = Some(idx),
+                            "B" | "BLUE" => b_idx = Some(idx),
+                            "A" | "ALPHA" => a_idx = Some(idx),
+                            _ => {
+                                if r_idx.is_none() && su.starts_with('R') { r_idx = Some(idx); }
+                                else if g_idx.is_none() && su.starts_with('G') { g_idx = Some(idx); }
+                                else if b_idx.is_none() && su.starts_with('B') { b_idx = Some(idx); }
                             }
                         }
+                    }
+
+                    // Przypadek: pełny RGB(A)
+                    if has_r && has_g && has_b {
+                        if r_idx.is_none() { r_idx = group_indices.get(0).cloned(); }
+                        if g_idx.is_none() { g_idx = group_indices.get(1).cloned().or(r_idx); }
+                        if b_idx.is_none() { b_idx = group_indices.get(2).cloned().or(g_idx).or(r_idx); }
+
+                        let (Some(ri), Some(gi), Some(bi)) = (r_idx, g_idx, b_idx) else {
+                            push_console(&ui, &console, format!("[export] skip '{}' (missing RGB)", display_name));
+                            continue;
+                        };
+
+                        if has_a {
+                            let mut buf: Vec<f32> = vec![0.0; pixel_count * 4];
+                            for i in 0..pixel_count {
+                                let r = phys_layer.channel_data.list[ri].sample_data.value_by_flat_index(i).to_f32();
+                                let g = phys_layer.channel_data.list[gi].sample_data.value_by_flat_index(i).to_f32();
+                                let b = phys_layer.channel_data.list[bi].sample_data.value_by_flat_index(i).to_f32();
+                                let a = a_idx.map(|ci| phys_layer.channel_data.list[ci].sample_data.value_by_flat_index(i).to_f32()).unwrap_or(1.0);
+                                let base = i * 4;
+                                buf[base + 0] = r;
+                                buf[base + 1] = g;
+                                buf[base + 2] = b;
+                                buf[base + 3] = a;
+                            }
+                            if let Err(e) = write_tiff_page_rgba_f32(&mut tiff_encoder, width, height, &display_name, &buf) {
+                                ui.set_status_text(format!("Export error (TIFF RGBA): {}", e).into());
+                                prog.reset();
+                                return;
+                            }
+                        } else {
+                            let mut buf: Vec<f32> = vec![0.0; pixel_count * 3];
+                            for i in 0..pixel_count {
+                                let r = phys_layer.channel_data.list[ri].sample_data.value_by_flat_index(i).to_f32();
+                                let g = phys_layer.channel_data.list[gi].sample_data.value_by_flat_index(i).to_f32();
+                                let b = phys_layer.channel_data.list[bi].sample_data.value_by_flat_index(i).to_f32();
+                                let base = i * 3;
+                                buf[base + 0] = r;
+                                buf[base + 1] = g;
+                                buf[base + 2] = b;
+                            }
+                            if let Err(e) = write_tiff_page_rgb_f32(&mut tiff_encoder, width, height, &display_name, &buf) {
+                                ui.set_status_text(format!("Export error (TIFF RGB): {}", e).into());
+                                prog.reset();
+                                return;
+                            }
+                        }
+                        pages_written += 1;
+                        push_console(&ui, &console, format!("[export] page: {} ({}x{}, {})", display_name, width, height, if has_a { "RGBAf32" } else { "RGBf32" }));
+                        completed_pages += 1;
+                        prog.set(
+                            (completed_pages as f32) / (total_pages as f32),
+                            Some(&format!("Exporting TIFF ({}/{}) — {}", completed_pages, total_pages, display_name))
+                        );
                     }
                     // Przypadek: pojedynczy kanał RGB (np. tylko R) → Gray f32
                     else if (has_r as u8 + has_g as u8 + has_b as u8) == 1 && !has_a {
                         let wanted = if has_r { "R" } else if has_g { "G" } else { "B" };
-                        match crate::image_cache::load_single_channel_as_grayscale(&path, &layer.name, wanted, None) {
-                            Ok((pixels, width, height, _)) => {
-                                let pixel_count = (width as usize) * (height as usize);
-                                let mut buf: Vec<f32> = vec![0.0; pixel_count];
-                                for i in 0..pixel_count {
-                                    let (v, _vg, _vb, _a) = pixels[i];
-                                    buf[i] = v;
-                                }
-                                if let Err(e) = write_tiff_page_gray_f32(&mut tiff_encoder, width, height, &display_name, &buf) {
-                                    ui.set_status_text(format!("Export error (TIFF Gray): {}", e).into());
-                                    prog.reset();
-                                    return;
-                                }
-                                pages_written += 1;
-                                push_console(&ui, &console, format!("[export] page: {} ({}x{}, Grayf32)", display_name, width, height));
-                                completed_pages += 1;
-                                prog.set(
-                                    (completed_pages as f32) / (total_pages as f32),
-                                    Some(&format!("Exporting TIFF ({}/{}) — {}", completed_pages, total_pages, display_name))
-                                );
-                            }
-                            Err(e) => {
-                                push_console(&ui, &console, format!("[export] skip '{}' (read error): {}", display_name, e));
-                                continue;
+                        // znajdź indeks kanału
+                        let mut ci: Option<usize> = None;
+                        for (idx, ch) in phys_layer.channel_data.list.iter().enumerate() {
+                            let full = ch.name.to_string();
+                            let base_attr: Option<String> = phys_layer.attributes.layer_name.as_ref().map(|s| s.to_string());
+                            let (_lname, short) = crate::utils::split_layer_and_short(&full, base_attr.as_deref());
+                            if short.eq_ignore_ascii_case(wanted) || short.to_ascii_uppercase().starts_with(&wanted.to_ascii_uppercase()) {
+                                ci = Some(idx);
+                                break;
                             }
                         }
+                        let Some(ci) = ci else {
+                            push_console(&ui, &console, format!("[export] skip '{}' (channel not found)", display_name));
+                            continue;
+                        };
+                        let mut buf: Vec<f32> = vec![0.0; pixel_count];
+                        for i in 0..pixel_count {
+                            let v = phys_layer.channel_data.list[ci].sample_data.value_by_flat_index(i).to_f32();
+                            buf[i] = v;
+                        }
+                        if let Err(e) = write_tiff_page_gray_f32(&mut tiff_encoder, width, height, &display_name, &buf) {
+                            ui.set_status_text(format!("Export error (TIFF Gray): {}", e).into());
+                            prog.reset();
+                            return;
+                        }
+                        pages_written += 1;
+                        push_console(&ui, &console, format!("[export] page: {} ({}x{}, Grayf32)", display_name, width, height));
+                        completed_pages += 1;
+                        prog.set(
+                            (completed_pages as f32) / (total_pages as f32),
+                            Some(&format!("Exporting TIFF ({}/{}) — {}", completed_pages, total_pages, display_name))
+                        );
                     }
                     // Przypadek: dokładnie jeden kanał o innej nazwie (np. Z/Depth/Mask) → Gray f32
                     else if layer.channels.len() == 1 {
                         let ch_name = &layer.channels[0].name;
-                        let wanted_short = ch_name.split('.').last().unwrap_or(ch_name);
-                        match crate::image_cache::load_single_channel_as_grayscale(&path, &layer.name, wanted_short, None) {
-                            Ok((pixels, width, height, _)) => {
-                                let pixel_count = (width as usize) * (height as usize);
-                                let mut buf: Vec<f32> = vec![0.0; pixel_count];
-                                for i in 0..pixel_count {
-                                    let (v, _vg, _vb, _a) = pixels[i];
-                                    buf[i] = v;
-                                }
-                                if let Err(e) = write_tiff_page_gray_f32(&mut tiff_encoder, width, height, &display_name, &buf) {
-                                    ui.set_status_text(format!("Export error (TIFF Gray): {}", e).into());
-                                    prog.reset();
-                                    return;
-                                }
-                                pages_written += 1;
-                                push_console(&ui, &console, format!("[export] page: {} ({}x{}, Grayf32)", display_name, width, height));
-                                completed_pages += 1;
-                                prog.set(
-                                    (completed_pages as f32) / (total_pages as f32),
-                                    Some(&format!("Exporting TIFF ({}/{}) — {}", completed_pages, total_pages, display_name))
-                                );
-                            }
-                            Err(e) => {
-                                push_console(&ui, &console, format!("[export] skip '{}' (read error): {}", display_name, e));
-                                continue;
+                        // znajdź indeks kanału po krótkiej nazwie
+                        let mut ci: Option<usize> = None;
+                        for (idx, ch) in phys_layer.channel_data.list.iter().enumerate() {
+                            let full = ch.name.to_string();
+                            let base_attr: Option<String> = phys_layer.attributes.layer_name.as_ref().map(|s| s.to_string());
+                            let (_lname, short) = crate::utils::split_layer_and_short(&full, base_attr.as_deref());
+                            if short == *ch_name {
+                                ci = Some(idx);
+                                break;
                             }
                         }
+                        let Some(ci) = ci else {
+                            push_console(&ui, &console, format!("[export] skip '{}' (channel not found)", display_name));
+                            continue;
+                        };
+                        let mut buf: Vec<f32> = vec![0.0; pixel_count];
+                        for i in 0..pixel_count {
+                            let v = phys_layer.channel_data.list[ci].sample_data.value_by_flat_index(i).to_f32();
+                            buf[i] = v;
+                        }
+                        if let Err(e) = write_tiff_page_gray_f32(&mut tiff_encoder, width, height, &display_name, &buf) {
+                            ui.set_status_text(format!("Export error (TIFF Gray): {}", e).into());
+                            prog.reset();
+                            return;
+                        }
+                        pages_written += 1;
+                        push_console(&ui, &console, format!("[export] page: {} ({}x{}, Grayf32)", display_name, width, height));
+                        completed_pages += 1;
+                        prog.set(
+                            (completed_pages as f32) / (total_pages as f32),
+                            Some(&format!("Exporting TIFF ({}/{}) — {}", completed_pages, total_pages, display_name))
+                        );
                     }
                     // Inne/niestandardowe układy kanałów – pomiń
                     else {
@@ -929,8 +1008,16 @@ pub fn handle_export_channels(
             {
                 let guard = lock_or_recover(&image_cache);
                 if let Some(ref cache) = *guard {
-                    let width = cache.width;
-                    let height = cache.height;
+                    // Jednorazowy odczyt wszystkich płaskich warstw EXR
+                    let any_image = match exr::read_all_flat_layers_from_file(&path) {
+                        Ok(img) => img,
+                        Err(e) => {
+                            ui.set_status_text(format!("Export error (read EXR): {}", e).into());
+                            prog.reset();
+                            return;
+                        }
+                    };
+
                     // Zlicz łączną liczbę kanałów do przetworzenia
                     let total_channels: usize = cache.layers_info.iter().map(|l| l.channels.len()).sum();
                     if total_channels == 0 {
@@ -938,75 +1025,122 @@ pub fn handle_export_channels(
                         return;
                     }
                     prog.set(0.0, Some("Exporting channels..."));
-                    // Precompute depth normalization percentiles if needed per channel
+
                     for layer in &cache.layers_info {
-                        let _layer_display = if layer.name.is_empty() { "Beauty" } else { &layer.name };
+                        let display_layer = if layer.name.is_empty() { "Beauty".to_string() } else { layer.name.clone() };
+                        // Znajdź odpowiadającą fizyczną warstwę
+                        let wanted_lower = layer.name.to_lowercase();
+                        let mut found_group: Option<usize> = None;
+                        for (li, phys_layer) in any_image.layer_data.iter().enumerate() {
+                            let base_attr: Option<String> = phys_layer.attributes.layer_name.as_ref().map(|s| s.to_string());
+                            let lname = base_attr.unwrap_or_else(|| "".to_string());
+                            let lname_lower = lname.to_lowercase();
+                            let matches = if wanted_lower.is_empty() && lname_lower.is_empty() {
+                                true
+                            } else if wanted_lower.is_empty() || lname_lower.is_empty() {
+                                false
+                            } else {
+                                lname_lower == wanted_lower || lname_lower.contains(&wanted_lower) || wanted_lower.contains(&lname_lower)
+                            };
+                            if matches { found_group = Some(li); break; }
+                        }
+                        let Some(group_index) = found_group else {
+                            push_console(&ui, &console, format!("[export] skip layer '{}' (group not found)", display_layer));
+                            continue;
+                        };
+                        let phys_layer = &any_image.layer_data[group_index];
+                        let width = phys_layer.size.width() as u32;
+                        let height = phys_layer.size.height() as u32;
+                        let pixel_count = (width as usize) * (height as usize);
+
                         for ch in &layer.channels {
                             let ch_upper = ch.name.to_ascii_uppercase();
-                            // Wygeneruj grayscale buffer 16-bit
+                            // znajdź indeks kanału w tej grupie po krótkiej nazwie
+                            let mut channel_index: Option<usize> = None;
+                            for (idx, chd) in phys_layer.channel_data.list.iter().enumerate() {
+                                let full = chd.name.to_string();
+                                let base_attr: Option<String> = phys_layer.attributes.layer_name.as_ref().map(|s| s.to_string());
+                                let (_lname, short) = crate::utils::split_layer_and_short(&full, base_attr.as_deref());
+                                let short_upper = short.to_ascii_uppercase();
+                                if short_upper == ch_upper || short_upper.starts_with(&ch_upper) {
+                                    channel_index = Some(idx);
+                                    break;
+                                }
+                                // Dodatkowe dopasowanie dla Depth
+                                if ch_upper == "Z" && (short_upper == "Z" || short_upper.contains("DEPTH") || short_upper == "DISTANCE") {
+                                    channel_index = Some(idx);
+                                    break;
+                                }
+                            }
+                            let Some(ci) = channel_index else {
+                                push_console(&ui, &console, format!("[export] skip channel '{}::{}' (not found)", display_layer, ch.name));
+                                continue;
+                            };
+
+                            // Zbierz wartości kanału
+                            let mut values: Vec<f32> = Vec::with_capacity(pixel_count);
+                            for i in 0..pixel_count {
+                                let v = phys_layer.channel_data.list[ci].sample_data.value_by_flat_index(i).to_f32();
+                                values.push(v);
+                            }
+
+                            // Renderuj do 16-bit grayscale
                             let mut buf = ImageBuffer::<image::Luma<u16>, Vec<u16>>::new(width, height);
-                            // doczytaj pojedynczy kanał z dysku i renderuj grayscale
-                            if let Ok((pixels, _w, _h, _name)) = crate::image_cache::load_single_channel_as_grayscale(&path, &layer.name, &ch.name, None) {
-                                // Specjalny przypadek Depth (Z/DEPTH): auto-normalizacja percentylowa + odwrócenie
-                                let use_depth = ch_upper == "Z" || ch_upper.contains("DEPTH");
-                                let mut values: Vec<f32> = pixels.into_iter().map(|(r, _g, _b, _a)| r).collect();
-                                if !values.is_empty() {
-                                    if use_depth {
-                                        // percentyle 1% i 99%
-                                        use std::cmp::Ordering;
-                                        let len = values.len();
-                                        let p_lo_idx = ((len as f32) * 0.01).floor() as usize;
-                                        let mut p_hi_idx = ((len as f32) * 0.99).ceil() as isize - 1;
-                                        if p_hi_idx < 0 { p_hi_idx = 0; }
-                                        let p_hi_idx = (p_hi_idx as usize).min(len - 1);
-                                        let lo = {
-                                            let (_, lo_ref, _) = values.select_nth_unstable_by(p_lo_idx, |a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
-                                            *lo_ref
-                                        };
-                                        let mut hi = {
-                                            let (_, hi_ref, _) = values.select_nth_unstable_by(p_hi_idx, |a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
-                                            *hi_ref
-                                        };
-                                        let lo = lo;
-                                        if hi <= lo { hi = lo + 1e-6; }
-                                        for (x, y, p) in buf.enumerate_pixels_mut() {
-                                            let idx = (y as usize) * (width as usize) + (x as usize);
-                                            let v = values[idx];
-                                            let mut n = ((v - lo) / (hi - lo)).clamp(0.0, 1.0);
-                                            n = 1.0 - n; // inverted (near bright)
-                                            let v16 = (n * 65535.0).round().clamp(0.0, 65535.0) as u16;
-                                            *p = image::Luma([v16]);
-                                        }
-                                    } else {
-                                        // Standard: exposure+gamma na kanale (potem clamp i zapis)
-                                        let exposure = ui.get_exposure_value();
-                                        let gamma = ui.get_gamma_value();
-                                        let exp_mul = 2.0_f32.powf(exposure);
-                                        let inv_gamma = if gamma > 0.0 { 1.0 / gamma } else { 1.0 / 2.2 };
-                                        for (x, y, p) in buf.enumerate_pixels_mut() {
-                                            let idx = (y as usize) * (width as usize) + (x as usize);
-                                            let mut v = values[idx] * exp_mul;
-                                            v = v.clamp(0.0, 1.0).powf(inv_gamma);
-                                            let v16 = (v * 65535.0).round().clamp(0.0, 65535.0) as u16;
-                                            *p = image::Luma([v16]);
-                                        }
+                            if !values.is_empty() {
+                                let use_depth = ch_upper == "Z" || ch_upper.contains("DEPTH") || ch_upper == "DISTANCE";
+                                if use_depth {
+                                    use std::cmp::Ordering;
+                                    let len = values.len();
+                                    let p_lo_idx = ((len as f32) * 0.01).floor() as usize;
+                                    let mut p_hi_idx = ((len as f32) * 0.99).ceil() as isize - 1;
+                                    if p_hi_idx < 0 { p_hi_idx = 0; }
+                                    let p_hi_idx = (p_hi_idx as usize).min(len - 1);
+                                    let lo = {
+                                        let (_, lo_ref, _) = values.select_nth_unstable_by(p_lo_idx, |a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
+                                        *lo_ref
+                                    };
+                                    let mut hi = {
+                                        let (_, hi_ref, _) = values.select_nth_unstable_by(p_hi_idx, |a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
+                                        *hi_ref
+                                    };
+                                    let lo = lo;
+                                    if hi <= lo { hi = lo + 1e-6; }
+                                    for (x, y, p) in buf.enumerate_pixels_mut() {
+                                        let idx = (y as usize) * (width as usize) + (x as usize);
+                                        let v = values[idx];
+                                        let mut n = ((v - lo) / (hi - lo)).clamp(0.0, 1.0);
+                                        n = 1.0 - n; // inverted (near bright)
+                                        let v16 = (n * 65535.0).round().clamp(0.0, 65535.0) as u16;
+                                        *p = image::Luma([v16]);
+                                    }
+                                } else {
+                                    let exposure = ui.get_exposure_value();
+                                    let gamma = ui.get_gamma_value();
+                                    let exp_mul = 2.0_f32.powf(exposure);
+                                    let inv_gamma = if gamma > 0.0 { 1.0 / gamma } else { 1.0 / 2.2 };
+                                    for (x, y, p) in buf.enumerate_pixels_mut() {
+                                        let idx = (y as usize) * (width as usize) + (x as usize);
+                                        let mut v = values[idx] * exp_mul;
+                                        v = v.clamp(0.0, 1.0).powf(inv_gamma);
+                                        let v16 = (v * 65535.0).round().clamp(0.0, 65535.0) as u16;
+                                        *p = image::Luma([v16]);
                                     }
                                 }
-                                let file_stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("export");
-                                let safe_layer = if layer.name.is_empty() { "Beauty".to_string() } else { layer.name.clone() };
-                                let filename = format!("{}_{}_{}.png", file_stem, safe_layer, ch.name);
-                                let out_path = dst_dir.join(filename);
-                                if let Err(e) = buf.save_with_format(&out_path, image::ImageFormat::Png) {
-                                    ui.set_status_text(format!("Export error: {}", e).into());
-                                    prog.reset();
-                                    return;
-                                }
-                                exported += 1;
-                                prog.set(
-                                    (exported as f32) / (total_channels as f32),
-                                    Some(&format!("Exporting channels ({}/{}) — {}::{}", exported, total_channels, safe_layer, ch.name))
-                                );
                             }
+
+                            let file_stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("export");
+                            let filename = format!("{}_{}_{}.png", file_stem, display_layer, ch.name);
+                            let out_path = dst_dir.join(filename);
+                            if let Err(e) = buf.save_with_format(&out_path, image::ImageFormat::Png) {
+                                ui.set_status_text(format!("Export error: {}", e).into());
+                                prog.reset();
+                                return;
+                            }
+                            exported += 1;
+                            prog.set(
+                                (exported as f32) / (total_channels as f32),
+                                Some(&format!("Exporting channels ({}/{}) — {}::{}", exported, total_channels, display_layer, ch.name))
+                            );
                         }
                     }
                 }
