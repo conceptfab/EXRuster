@@ -2,6 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use anyhow::Context;
 use exr::prelude as exr;
+use ::exr::meta::attribute::AttributeValue;
 use crate::utils::{split_layer_and_short, human_size};
 
 #[derive(Debug, Clone)]
@@ -54,10 +55,71 @@ pub fn read_and_group_metadata(path: &Path) -> anyhow::Result<ExrMetadata> {
     general_items.push(("Rozmiar pliku".into(), human_size(file_size_bytes)));
     general_items.push(("Warstwy".into(), image.layer_data.len().to_string()));
 
-    // Zbierz nagłówek pliku jako key→value (bezpośrednia iteracja po atrybutach)
-    let header_items: Vec<(String, String)> = image.attributes.other.iter()
-        .map(|(name, value)| (name.to_string(), format!("{:?}", value)))
-        .collect();
+    // Zbierz nagłówek pliku jako key→value. Preferuj typowane atrybuty
+    let mut header_items: Vec<(String, String)> = Vec::new();
+
+    // Dodaj podstawowe, typowane pola nagłówka jeśli są dostępne
+    // display_window: pozostawiamy format Debug (nie parsujemy dalej w UI)
+    header_items.push(("display_window".into(), format!("{:?}", image.attributes.display_window)));
+
+    // pixel_aspect: spróbuj z pola typowanego; jeżeli 0 (brak), nadpisze go atrybutem z listy 'other' poniżej
+    // (nie wszystkie pliki muszą mieć wpisane to pole wprost w strukturze)
+    let pixel_aspect_value = format!("{:.3}", image.attributes.pixel_aspect as f64);
+    header_items.push(("pixel_aspect".into(), pixel_aspect_value));
+
+    // Pozostałe atrybuty z listy `other` — spróbuj sformatować znane typy, reszta fallback do Debug
+    for (raw_name, value) in image.attributes.other.iter() {
+        let name_lower = raw_name.to_string().to_ascii_lowercase();
+
+        // Znormalizuj niektóre często spotykane nazwy
+        let normalized_key = if name_lower == "pixel_aspect_ratio" || name_lower == "pixel_aspect" {
+            "pixel_aspect".to_string()
+        } else if name_lower == "chromaticities" {
+            "chromaticities".to_string()
+        } else if name_lower == "time_code" || name_lower == "timecode" {
+            "time_code".to_string()
+        } else {
+            raw_name.to_string()
+        };
+
+        // Sformatuj wartość bazując na typie
+        let pretty_value: String = match value {
+            AttributeValue::Chromaticities(ch) => {
+                // Bezpieczne formatowanie z precyzją, bez parsowania tekstu
+                let r = (ch.red.x() as f64, ch.red.y() as f64);
+                let g = (ch.green.x() as f64, ch.green.y() as f64);
+                let b = (ch.blue.x() as f64, ch.blue.y() as f64);
+                let w = (ch.white.x() as f64, ch.white.y() as f64);
+                format!(
+                    "R: ({:.3},{:.3})  G: ({:.3},{:.3})  B: ({:.3},{:.3})  W: ({:.3},{:.3})",
+                    r.0, r.1, g.0, g.1, b.0, b.1, w.0, w.1
+                )
+            }
+            AttributeValue::F32(v) => {
+                if normalized_key.eq_ignore_ascii_case("pixel_aspect") {
+                    format!("{:.3}", *v as f64)
+                } else {
+                    format!("{:.3}", *v as f64)
+                }
+            }
+            AttributeValue::F64(v) => {
+                if normalized_key.eq_ignore_ascii_case("pixel_aspect") {
+                    format!("{:.3}", *v)
+                } else {
+                    format!("{:.3}", *v)
+                }
+            }
+            // Dla innych typów użyj czytelnego Debug bez dalszego parsowania w UI
+            other => format!("{:?}", other),
+        };
+
+        // Jeśli już dodaliśmy wpis o tym samym kluczu (np. pixel_aspect z pola), nadpiszemy go informacją z `other`
+        if let Some(existing) = header_items.iter_mut().find(|(k, _)| k.eq_ignore_ascii_case(&normalized_key)) {
+            existing.1 = pretty_value;
+        } else {
+            header_items.push((normalized_key, pretty_value));
+        }
+    }
     let mut groups: Vec<MetadataGroup> = Vec::new();
     groups.push(MetadataGroup { name: "Ogólne".into(), items: general_items });
     groups.push(MetadataGroup { name: "Nagłówek".into(), items: header_items });
@@ -87,10 +149,49 @@ pub fn read_and_group_metadata(path: &Path) -> anyhow::Result<ExrMetadata> {
 
         // Nazwa warstwy (pusta dla warstwy bazowej)
         let layer_name = base_layer_name.unwrap_or_else(|| "".to_string());
-        // Atrybuty warstwy (bezpośrednia iteracja po atrybutach)
-        let layer_items: Vec<(String, String)> = layer.attributes.other.iter()
-            .map(|(name, value)| (name.to_string(), format!("{:?}", value)))
-            .collect();
+        // Atrybuty warstwy: preferuj typowane wartości, fallback do Debug
+        let mut layer_items: Vec<(String, String)> = Vec::new();
+        for (raw_name, value) in layer.attributes.other.iter() {
+            let name_lower = raw_name.to_string().to_ascii_lowercase();
+            let normalized_key = if name_lower == "pixel_aspect_ratio" || name_lower == "pixel_aspect" {
+                "pixel_aspect".to_string()
+            } else if name_lower == "chromaticities" {
+                "chromaticities".to_string()
+            } else if name_lower == "time_code" || name_lower == "timecode" {
+                "time_code".to_string()
+            } else {
+                raw_name.to_string()
+            };
+
+            let pretty_value: String = match value {
+                AttributeValue::Chromaticities(ch) => {
+                    let r = (ch.red.x() as f64, ch.red.y() as f64);
+                    let g = (ch.green.x() as f64, ch.green.y() as f64);
+                    let b = (ch.blue.x() as f64, ch.blue.y() as f64);
+                    let w = (ch.white.x() as f64, ch.white.y() as f64);
+                    format!(
+                        "R: ({:.3},{:.3})  G: ({:.3},{:.3})  B: ({:.3},{:.3})  W: ({:.3},{:.3})",
+                        r.0, r.1, g.0, g.1, b.0, b.1, w.0, w.1
+                    )
+                }
+                AttributeValue::F32(v) => {
+                    if normalized_key.eq_ignore_ascii_case("pixel_aspect") {
+                        format!("{:.3}", *v as f64)
+                    } else {
+                        format!("{:.3}", *v as f64)
+                    }
+                }
+                AttributeValue::F64(v) => {
+                    if normalized_key.eq_ignore_ascii_case("pixel_aspect") {
+                        format!("{:.3}", *v)
+                    } else {
+                        format!("{:.3}", *v)
+                    }
+                }
+                other => format!("{:?}", other),
+            };
+            layer_items.push((normalized_key, pretty_value));
+        }
         layers.push(LayerMetadata { name: layer_name, width: w, height: h, channel_groups, attributes: layer_items });
     }
 
@@ -143,25 +244,12 @@ pub fn build_ui_rows(meta: &ExrMetadata) -> Vec<(String, String)> {
         }
     }
 
-    // Sekcja: Nagłówek (wybrane i sformatowane klucze)
+    // Sekcja: Nagłówek (wartości już są przygotowane typowo w read_and_group_metadata)
     rows.push(("Nagłówek".into(), "".into()));
     for g in &meta.groups {
         if g.name == "Nagłówek" {
             for (k, v) in &g.items {
-                let key = k.trim();
-                // Normalizacje popularnych pól, resztę przepuszczamy jak jest
-                let (out_k, out_v) = if key.eq_ignore_ascii_case("display_window") {
-                    ("display_window".to_string(), pretty_display_window(v))
-                } else if key.eq_ignore_ascii_case("pixel_aspect") || key.eq_ignore_ascii_case("pixel_aspect_ratio") {
-                    ("pixel_aspect".to_string(), pretty_number(v, 3))
-                } else if key.eq_ignore_ascii_case("chromaticities") {
-                    ("chromaticities".to_string(), pretty_chromaticities(v))
-                } else if key.eq_ignore_ascii_case("time_code") {
-                    ("time_code".to_string(), v.replace('{', "").replace('}', "").replace(',', " "))
-                } else {
-                    (key.to_string(), v.clone())
-                };
-                rows.push((out_k, out_v));
+                rows.push((k.clone(), v.clone()));
             }
         }
     }
@@ -273,66 +361,4 @@ fn classify_channel_group(upper_short: &str) -> ChannelGroup {
 // w przeciwnym razie rozcina po ostatniej kropce.
 // split_layer_and_short oraz human_size przeniesione do utils
 
-
-
-// --- Proste formatery wartości dla UI ---
-
-fn pretty_number(s: &str, decimals: usize) -> String {
-    let x: Option<f64> = s.trim().parse().ok();
-    match (x, decimals) {
-        (Some(v), 0) => format!("{:.0}", v),
-        (Some(v), 1) => format!("{:.1}", v),
-        (Some(v), 2) => format!("{:.2}", v),
-        (Some(v), 3) => format!("{:.3}", v),
-        (Some(v), _) => format!("{:.3}", v),
-        _ => s.to_string(),
-    }
-}
-
-fn pretty_vec2_tuple(s: &str) -> Option<(i64, i64)> {
-    // próba wyłuskania dwóch liczb z tekstu typu "Vec2( 0 0 size: Vec2( 2200 1237)"
-    let mut nums: Vec<i64> = Vec::new();
-    let mut cur = String::new();
-    for c in s.chars() {
-        if c.is_ascii_digit() || c == '-' { cur.push(c); }
-        else {
-            if !cur.is_empty() { if let Ok(v) = cur.parse() { nums.push(v); } cur.clear(); }
-        }
-    }
-    if !cur.is_empty() { if let Ok(v) = cur.parse() { nums.push(v); } }
-    if nums.len() >= 2 { Some((nums[0], nums[1])) } else { None }
-}
-
-fn pretty_display_window(v: &str) -> String {
-    // Oczekiwany wzorzec: pozycja (x,y) i rozmiar (w,h) gdzie w/h zwykle pojawiają się dalej w ciągu
-    let pos = pretty_vec2_tuple(v).unwrap_or((0, 0));
-    // spróbuj też wyłuskać kolejne dwie liczby jako rozmiar
-    let mut nums: Vec<i64> = Vec::new();
-    let mut cur = String::new();
-    for c in v.chars() {
-        if c.is_ascii_digit() || c == '-' { cur.push(c); }
-        else { if !cur.is_empty() { if let Ok(n) = cur.parse() { nums.push(n); } cur.clear(); }
-        }
-    }
-    if !cur.is_empty() { if let Ok(n) = cur.parse() { nums.push(n); } }
-    let size = if nums.len() >= 4 { (nums[2], nums[3]) } else { (0, 0) };
-    format!("position: ({}, {}); size: {}x{}", pos.0, pos.1, size.0, size.1)
-}
-
-fn pretty_chromaticities(v: &str) -> String {
-    // heurystyczny parser: wyciągnij pary (x,y) w kolejności R,G,B,W
-    let mut nums: Vec<f64> = Vec::new();
-    let mut cur = String::new();
-    for c in v.chars() {
-        if c.is_ascii_digit() || c == '.' || c == '-' { cur.push(c); }
-        else { if !cur.is_empty() { if let Ok(n) = cur.parse() { nums.push(n); } cur.clear(); }
-        }
-    }
-    if !cur.is_empty() { if let Ok(n) = cur.parse() { nums.push(n); } }
-    let mut xy = vec![(0.0,0.0); 4];
-    for i in 0..4 { if nums.len() >= (i*2+2) { xy[i] = (nums[i*2], nums[i*2+1]); } }
-    format!(
-        "R: ({:.3},{:.3})  G: ({:.3},{:.3})  B: ({:.3},{:.3})  W: ({:.3},{:.3})",
-        xy[0].0, xy[0].1, xy[1].0, xy[1].1, xy[2].0, xy[2].1, xy[3].0, xy[3].1
-    )
-}
+// (usunięto nieużywane formatery wartości dla UI)
