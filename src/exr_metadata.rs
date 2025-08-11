@@ -1,7 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use anyhow::Context;
-use exr::prelude as exr;
 use ::exr::meta::attribute::AttributeValue;
 use crate::utils::{split_layer_and_short, human_size};
 
@@ -45,30 +44,32 @@ pub fn read_and_group_metadata(path: &Path) -> anyhow::Result<ExrMetadata> {
         .with_context(|| format!("Nie można pobrać metadata pliku: {}", path.display()))?;
     let file_size_bytes = meta.len();
 
-    // Stabilny odczyt nagłówków i danych warstw (bez dekodowania pikseli do UI)
-    let image = exr::read_all_data_from_file(path)
+    // Odczytaj wyłącznie meta-dane (nagłówki) bez pikseli
+    let meta = ::exr::meta::MetaData::read_from_file(path, /*pedantic=*/false)
         .with_context(|| format!("Błąd odczytu EXR (nagłówki): {}", path.display()))?;
 
     // Grupa ogólna (do UI): podstawowe informacje o pliku i obrazie
     let mut general_items: Vec<(String, String)> = Vec::new();
     general_items.push(("Ścieżka".into(), path.display().to_string()));
     general_items.push(("Rozmiar pliku".into(), human_size(file_size_bytes)));
-    general_items.push(("Warstwy".into(), image.layer_data.len().to_string()));
+    general_items.push(("Warstwy".into(), meta.headers.len().to_string()));
 
     // Zbierz nagłówek pliku jako key→value. Preferuj typowane atrybuty
     let mut header_items: Vec<(String, String)> = Vec::new();
 
     // Dodaj podstawowe, typowane pola nagłówka jeśli są dostępne
     // display_window: pozostawiamy format Debug (nie parsujemy dalej w UI)
-    header_items.push(("display_window".into(), format!("{:?}", image.attributes.display_window)));
+    // Użyj atrybutów wspólnych z pierwszego nagłówka (w EXR są wspólne dla wszystkich headerów)
+    let shared = &meta.headers.first().ok_or_else(|| anyhow::anyhow!("Brak nagłówków w pliku EXR"))?.shared_attributes;
+    header_items.push(("display_window".into(), format!("{:?}", shared.display_window)));
 
     // pixel_aspect: spróbuj z pola typowanego; jeżeli 0 (brak), nadpisze go atrybutem z listy 'other' poniżej
     // (nie wszystkie pliki muszą mieć wpisane to pole wprost w strukturze)
-    let pixel_aspect_value = format!("{:.3}", image.attributes.pixel_aspect as f64);
+    let pixel_aspect_value = format!("{:.3}", shared.pixel_aspect as f64);
     header_items.push(("pixel_aspect".into(), pixel_aspect_value));
 
     // Pozostałe atrybuty z listy `other` — spróbuj sformatować znane typy, reszta fallback do Debug
-    for (raw_name, value) in image.attributes.other.iter() {
+    for (raw_name, value) in shared.other.iter() {
         let name_lower = raw_name.to_string().to_ascii_lowercase();
 
         // Znormalizuj niektóre często spotykane nazwy
@@ -104,9 +105,9 @@ pub fn read_and_group_metadata(path: &Path) -> anyhow::Result<ExrMetadata> {
             }
             AttributeValue::F64(v) => {
                 if normalized_key.eq_ignore_ascii_case("pixel_aspect") {
-                    format!("{:.3}", *v)
+                    format!("{:.3}", v)
                 } else {
-                    format!("{:.3}", *v)
+                    format!("{:.3}", v)
                 }
             }
             // Dla innych typów użyj czytelnego Debug bez dalszego parsowania w UI
@@ -125,20 +126,16 @@ pub fn read_and_group_metadata(path: &Path) -> anyhow::Result<ExrMetadata> {
     groups.push(MetadataGroup { name: "Nagłówek".into(), items: header_items });
 
     // Buduj warstwy i ich grupy kanałów
-    let mut layers: Vec<LayerMetadata> = Vec::with_capacity(image.layer_data.len());
-    for layer in image.layer_data.iter() {
-        let base_layer_name: Option<String> = layer
-            .attributes
-            .layer_name
-            .as_ref()
-            .map(|s| s.to_string());
+    let mut layers: Vec<LayerMetadata> = Vec::with_capacity(meta.headers.len());
+    for header in meta.headers.iter() {
+        let base_layer_name: Option<String> = header.own_attributes.layer_name.as_ref().map(|t| t.to_string());
 
-        let w = layer.size.width() as u32;
-        let h = layer.size.height() as u32;
+        let w = header.layer_size.width() as u32;
+        let h = header.layer_size.height() as u32;
 
         // Grupowanie kanałów według logiki do UI
         let mut groups: GroupBuckets = GroupBuckets::new();
-        for ch in &layer.channel_data.list {
+        for ch in &header.channels.list {
             let full = ch.name.to_string();
             let (lname, short) = split_layer_and_short(&full, base_layer_name.as_deref());
             let _ = lname; // lname nieużywane dalej, ale poprawne dla dopasowania
@@ -151,7 +148,7 @@ pub fn read_and_group_metadata(path: &Path) -> anyhow::Result<ExrMetadata> {
         let layer_name = base_layer_name.unwrap_or_else(|| "".to_string());
         // Atrybuty warstwy: preferuj typowane wartości, fallback do Debug
         let mut layer_items: Vec<(String, String)> = Vec::new();
-        for (raw_name, value) in layer.attributes.other.iter() {
+        for (raw_name, value) in header.own_attributes.other.iter() {
             let name_lower = raw_name.to_string().to_ascii_lowercase();
             let normalized_key = if name_lower == "pixel_aspect_ratio" || name_lower == "pixel_aspect" {
                 "pixel_aspect".to_string()
@@ -183,9 +180,9 @@ pub fn read_and_group_metadata(path: &Path) -> anyhow::Result<ExrMetadata> {
                 }
                 AttributeValue::F64(v) => {
                     if normalized_key.eq_ignore_ascii_case("pixel_aspect") {
-                        format!("{:.3}", *v)
+                        format!("{:.3}", v)
                     } else {
-                        format!("{:.3}", *v)
+                        format!("{:.3}", v)
                     }
                 }
                 other => format!("{:?}", other),

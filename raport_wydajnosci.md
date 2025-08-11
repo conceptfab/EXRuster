@@ -1,8 +1,8 @@
-# Raport optymalizacji wydajności
+# Raport optymalizacji i sugestii
 
-Poniższa lista przedstawia zadania dla modelu AI w celu poprawy szybkości działania aplikacji. Zmiany koncentrują się na redukcji operacji wejścia-wyjścia (I/O) oraz optymalizacji przetwarzania danych, unikając jednocześnie nadmiernej inżynierii.
+Poniższa lista przedstawia zadania dla modelu AI w celu poprawy szybkości działania aplikacji oraz jakości kodu interfejsu użytkownika. Zmiany koncentrują się na kluczowych optymalizacjach oraz zwiększeniu czytelności i łatwości utrzymania kodu, unikając jednocześnie nadmiernej inżynierii.
 
-### Zadania do wykonania:
+### Zadania do wykonania (Wydajność):
 
 1.  **Zoptymalizuj odczyt metadanych EXR.**
     W wielu miejscach (`color_processing.rs`, `exr_metadata.rs`, `image_cache.rs`) kod wczytuje całe pliki EXR wraz z danymi pikseli tylko po to, by odczytać metadane (atrybuty, nazwy warstw). Należy zmodyfikować te funkcje, aby używały dedykowanych metod z biblioteki `exr` do wczytywania wyłącznie nagłówków, co drastycznie zredukuje operacje I/O i zużycie pamięci.
@@ -18,3 +18,20 @@ Poniższa lista przedstawia zadania dla modelu AI w celu poprawy szybkości dzia
 
 5.  **Wyeliminuj zbędne operacje I/O przy zmianie kanału.**
     W `ui_handlers.rs` przełączanie widoku na pojedynczy kanał w `handle_layer_tree_click` powoduje ponowne wczytanie danych z dysku. Zmodyfikuj `ImageCache`, aby po wczytaniu warstwy przechowywał w pamięci wszystkie jej kanały. Dzięki temu przełączanie widoków (np. z kompozytu RGB na widok pojedynczego kanału w skali szarości) będzie odbywać się wyłącznie na danych w pamięci, bez zbędnych operacji I/O.
+
+### Sugestie dotyczące interfejsu użytkownika (UI):
+
+1.  **Uprość paletę kolorów (`colors.slint`).**
+    Wiele zdefiniowanych kolorów ma tę samą wartość. Zdefiniuj podstawowe, bazowe kolory (np. `tlo-glowne`) i odwołuj się do nich w innych właściwościach, aby uprościć zarządzanie motywem i ułatwić jego modyfikacje.
+
+2.  **Stwórz reużywalne komponenty UI.**
+    W `appwindow.slint` i innych plikach powtarza się kod tworzący elementy takie jak przyciski czy pozycje w menu. Stwórz generyczne komponenty (np. `PrzyciskAkcji`, `PozycjaMenu`), aby zredukować duplikację kodu i poprawić czytelność głównego pliku UI.
+
+3.  **Przenieś logikę przeciągania okien.**
+    Logika przeciągania dla pływających okien "Console" i "Meta" powinna zostać przeniesiona z `appwindow.slint` do wnętrza komponentów `ConsoleWindow` i `MetaWindow`. Pozwoli to na lepszą enkapsulację i uprości główny komponent aplikacji.
+
+4.  **Zrefaktoryzuj logikę komponentu `ParameterSlider.slint`.**
+    Kod obliczający nową wartość suwaka jest zduplikowany w callbackach `moved` i `clicked`. Można go wydzielić do jednej, prywatnej właściwości, aby uniknąć powtórzeń i zwiększyć czytelność.
+
+5.  **Popraw czytelność obliczeń layoutu.**
+    W `appwindow.slint` skomplikowane obliczenia szerokości kolumn są trudne do zrozumienia. Dodaj komentarze w kodzie `.slint`, które wyjaśnią działanie tych właściwości, co ułatwi przyszłe modyfikacje.

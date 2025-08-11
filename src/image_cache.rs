@@ -174,49 +174,45 @@ impl ImageCache {
 
 
 pub(crate) fn extract_layers_info(path: &PathBuf) -> anyhow::Result<Vec<LayerInfo>> {
-        let image = exr::read_all_data_from_file(path)?;
+        // Odczytaj jedynie meta-dane (nagłówki) bez pikseli
+        let meta = ::exr::meta::MetaData::read_from_file(path, /*pedantic=*/false)?;
 
         // Mapowanie: nazwa_warstwy -> kanały
         let mut layer_map: HashMap<String, Vec<ChannelInfo>> = HashMap::new();
-    // Kolejność pierwszego wystąpienia nazw warstw do stabilnego porządku w UI
-    let mut layer_order: Vec<String> = Vec::new();
+        // Kolejność pierwszego wystąpienia nazw warstw do stabilnego porządku w UI
+        let mut layer_order: Vec<String> = Vec::new();
 
-    for layer in image.layer_data.iter() {
-        let base_layer_name: Option<String> = layer
-            .attributes
-            .layer_name
-            .as_ref()
-            .map(|s| s.to_string());
+        for header in meta.headers.iter() {
+            // Preferuj nazwę z atrybutu warstwy; jeśli brak, kanały mogą być w formacie "warstwa.kanał"
+            let base_layer_name: Option<String> = header
+                .own_attributes
+                .layer_name
+                .as_ref()
+                .map(|t| t.to_string());
 
-        let _width = layer.size.width() as u32;
-        let _height = layer.size.height() as u32;
+            for ch in header.channels.list.iter() {
+                let full_channel_name = ch.name.to_string();
+                let (layer_name_effective, short_channel_name) =
+                    split_layer_and_short(&full_channel_name, base_layer_name.as_deref());
 
-        for channel in &layer.channel_data.list {
-            let full_channel_name = channel.name.to_string();
-            let (layer_name_effective, short_channel_name) =
-                split_layer_and_short(&full_channel_name, base_layer_name.as_deref());
+                let entry = layer_map.entry(layer_name_effective.clone()).or_insert_with(|| {
+                    layer_order.push(layer_name_effective.clone());
+                    Vec::new()
+                });
 
-            // Wstaw do mapy, zachowując kolejność pierwszego wystąpienia
-            let entry = layer_map.entry(layer_name_effective.clone()).or_insert_with(|| {
-                layer_order.push(layer_name_effective.clone());
-                Vec::new()
-            });
-
-            entry.push(ChannelInfo {
-                name: short_channel_name,
-            });
+                entry.push(ChannelInfo { name: short_channel_name });
+            }
         }
-    }
 
-    // Zbuduj listę warstw w kolejności pierwszego wystąpienia
-    let mut layers: Vec<LayerInfo> = Vec::with_capacity(layer_map.len());
-    for name in layer_order {
-        if let Some(channels) = layer_map.remove(&name) {
-            layers.push(LayerInfo { name, channels });
+        // Zbuduj listę warstw w kolejności pierwszego wystąpienia
+        let mut layers: Vec<LayerInfo> = Vec::with_capacity(layer_map.len());
+        for name in layer_order {
+            if let Some(channels) = layer_map.remove(&name) {
+                layers.push(LayerInfo { name, channels });
+            }
         }
-    }
 
-    Ok(layers)
+        Ok(layers)
 }
 
 pub(crate) fn find_best_layer(layers_info: &[LayerInfo]) -> String {

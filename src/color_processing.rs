@@ -1,21 +1,21 @@
 use std::path::Path;
-use exr::prelude as exr;
 
 // Make the main function public
 pub fn compute_rgb_to_srgb_matrix_from_file_for_layer(path: &Path, layer_name: &str) -> anyhow::Result<[[f32; 3]; 3]> {
-    // Odczytaj plik i wybierz chromaticities z nagłówka partu odpowiadającego warstwie; fallback do globalnych
-    let img = exr::read_all_data_from_file(path)?;
+    // Odczytaj wyłącznie nagłówki/atrybuty (bez danych pikseli)
+    // Wczytaj tylko meta-dane (nagłówki) bez pikseli
+    let meta = ::exr::meta::MetaData::read_from_file(path, /*pedantic=*/false)?;
     let wanted_lower = layer_name.to_lowercase();
     let mut nums: Option<Vec<f64>> = None;
 
     // Najpierw spróbuj z warstwy/partu
-    'outer: for layer in img.layer_data.iter() {
-        let base_name: Option<String> = layer.attributes.layer_name.as_ref().map(|s| s.to_string());
+    'outer: for header in meta.headers.iter() {
+        let base_name: Option<String> = header.own_attributes.layer_name.as_ref().map(|t| t.to_string());
         let lname = base_name.unwrap_or_else(|| "".to_string());
         let lname_lower = lname.to_lowercase();
         let matches = (wanted_lower.is_empty() && lname_lower.is_empty()) || (!wanted_lower.is_empty() && lname_lower.contains(&wanted_lower));
         if matches {
-            if let Some((_k, v)) = layer.attributes.other.iter().find(|(k, _)| {
+            if let Some((_k, v)) = header.own_attributes.other.iter().find(|(k, _)| {
                 let name_dbg = format!("{:?}", k).to_lowercase();
                 let name = name_dbg.trim_matches('"');
                 name == "chromaticities"
@@ -36,11 +36,11 @@ pub fn compute_rgb_to_srgb_matrix_from_file_for_layer(path: &Path, layer_name: &
     // Fallback: globalny nagłówek
     let nums = if let Some(n) = nums { n } else {
         let mut out: Vec<f64> = Vec::new();
-        if let Some((_k, v)) = img.attributes.other.iter().find(|(k, _)| {
+        if let Some((_k, v)) = meta.headers.first().and_then(|h| h.shared_attributes.other.iter().find(|(k, _)| {
             let name_dbg = format!("{:?}", k).to_lowercase();
             let name = name_dbg.trim_matches('"');
             name == "chromaticities"
-        }) {
+        })).map(|(_k, v)| ((), v)) {
             let mut cur = String::new();
             for c in format!("{:?}", v).chars() {
                 if c.is_ascii_digit() || c == '.' || c == '-' { cur.push(c); }

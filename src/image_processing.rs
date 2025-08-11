@@ -49,11 +49,8 @@ fn aces_tonemap(x: f32) -> f32 {
 #[inline]
 fn apply_gamma_fast(value: f32, gamma_inv: f32) -> f32 {
     match gamma_inv {
-        x if (x - 0.45454545).abs() < 0.001 => {
-            // sRGB gamma (1/2.2) - najczęstsza
-            let sqrt_val = value.sqrt();
-            sqrt_val * sqrt_val.sqrt()
-        },
+        // Usunięto błędną optymalizację dla sRGB (1/2.2).
+        // Teraz jest to obsługiwane przez poprawny, ogólny przypadek `powf`.
         x if (x - 0.5).abs() < 0.001 => {
             // Gamma 2.0
             value.sqrt()
