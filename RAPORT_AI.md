@@ -1,4 +1,4 @@
-# Raport z analizy kodu i planowane poprawki
+ca# Raport z analizy kodu i planowane poprawki
 
 Na podstawie analizy kodu w folderach `src/` i `ui/` zidentyfikowano następujące obszary do poprawy, z naciskiem na unikanie over-engineeringu i poprawę wizualizacji procesów.
 

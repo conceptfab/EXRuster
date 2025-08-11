@@ -3,6 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use rayon::prelude::*;
 use slint::{Image, Rgba8Pixel, SharedPixelBuffer};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::image_processing::process_pixel;
 use crate::image_cache::{extract_layers_info, find_best_layer, load_specific_layer};
@@ -35,13 +36,26 @@ pub fn generate_exr_thumbnails_in_dir(
     let total_files = files.len();
     if let Some(p) = progress { p.set(0.0, Some(&format!("Processing {} files...", total_files))); }
 
+    if total_files == 0 {
+        if let Some(p) = progress { p.finish(Some("No EXR files")); }
+        return Ok(Vec::new());
+    }
+
     // 1) Równolegle generuj dane miniaturek w typie bezpiecznym dla wątków (bez slint::Image)
+    let completed = AtomicUsize::new(0);
     let works: Vec<ExrThumbWork> = files
         .par_iter()
-        .enumerate()
-        .filter_map(|(_i, path)| match generate_single_exr_thumbnail_work(path, thumb_height, exposure, gamma) {
-            Ok(work) => Some(work),
-            Err(_e) => None, // tu można logować błąd
+        .filter_map(|path| {
+            let res = generate_single_exr_thumbnail_work(path, thumb_height, exposure, gamma);
+            let n = completed.fetch_add(1, Ordering::Relaxed) + 1;
+            if let Some(p) = progress {
+                let frac = (n as f32) / (total_files as f32);
+                p.set(frac, Some(&format!("{} / {}", n, total_files)));
+            }
+            match res {
+                Ok(work) => Some(work),
+                Err(_e) => None, // tu można logować błąd
+            }
         })
         .collect();
 
