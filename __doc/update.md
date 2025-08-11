@@ -5,9 +5,4 @@ Bezpieczny (tylko najnowsze zgodne z Cargo.toml):
 
 Pełny (podbijanie także MAJOR w Cargo.toml):
 
-cargo install cargo-edit --force --locked && cargo update && ( cargo upgrade --workspace --incompatible || cargo upgrade --workspace || cargo upgrade --incompatible || cargo upgrade ) && cargo update && cargo build --release && cargo test && cargo outdated
-
-
-Jeśli flaga --incompatible też byłaby niedostępna u Ciebie, użyj po prostu:
-
-cargo upgrade --all
+( cargo outdated -V >NUL 2>&1 || cargo install cargo-outdated --locked ) && ( cargo upgrade -V >NUL 2>&1 || cargo install cargo-edit --locked --force ) && cargo update && cargo outdated && ( cargo upgrade --incompatible || cargo upgrade --workspace || cargo upgrade --incompatible || cargo upgrade ) && cargo update && cargo build --release && cargo test && cargo outdated

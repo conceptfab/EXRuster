@@ -18,15 +18,15 @@ slint = "1.12.1"
 exr = "1.73.0"
 rfd = { version = "0.15", features = ["file-handle-inner"] }
 anyhow = "1.0"
-rayon = "1.7"
+rayon = "1.10"
 num_cpus = "1.17"
 image = { version = "0.25.6", default-features = false, features = ["png", "tiff", "jpeg"] }
-tiff = "0.9.1"
+tiff = "0.10.0"
 cfg-if = "1.0"
 
 # Windows-only: ustawianie ikony okna w runtime (WM_SETICON)
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.61.2", features = [
+windows = { version = "0.61.3", features = [
     "Win32_Foundation",
     "Win32_UI_WindowsAndMessaging",
     "Win32_System_LibraryLoader"
