@@ -10,6 +10,7 @@ mod thumbnails;
 mod exr_metadata;
 mod progress;
 mod utils;
+mod color_processing;
 
 use std::sync::{Arc, Mutex};
 use crate::ui_handlers::push_console;
