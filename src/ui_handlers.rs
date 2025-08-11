@@ -540,9 +540,41 @@ pub fn handle_export_convert(
         ) {
             push_console(&ui, &console, format!("[export] convert → {}", dst.display()));
             let prog = UiProgress::new(ui.as_weak());
-            prog.start_indeterminate(Some("Exporting TIFF..."));
             let guard = lock_or_recover(&image_cache);
             if let Some(ref cache) = *guard {
+                // Zlicz liczbę stron do zapisania, aby móc raportować postęp
+                let mut total_pages: usize = 0;
+                for layer in &cache.layers_info {
+                    let mut has_r = false;
+                    let mut has_g = false;
+                    let mut has_b = false;
+                    let mut has_a = false;
+                    for ch in &layer.channels {
+                        let short = ch.name.split('.').last().unwrap_or(&ch.name).to_ascii_uppercase();
+                        match short.as_str() {
+                            "R" | "RED" => has_r = true,
+                            "G" | "GREEN" => has_g = true,
+                            "B" | "BLUE" => has_b = true,
+                            "A" | "ALPHA" => has_a = true,
+                            _ => {}
+                        }
+                    }
+                    if has_r && has_g && has_b {
+                        total_pages += 1; // RGB lub RGBA
+                    } else if (has_r as u8 + has_g as u8 + has_b as u8) == 1 && !has_a {
+                        total_pages += 1; // pojedynczy kanał R/G/B
+                    } else if layer.channels.len() == 1 {
+                        total_pages += 1; // dokładnie jeden kanał o innej nazwie
+                    }
+                }
+
+                if total_pages == 0 {
+                    ui.set_status_text("Export error: no pages to export".into());
+                    return;
+                }
+
+                let mut completed_pages: usize = 0;
+                prog.set(0.0, Some("Exporting TIFF..."));
                 // Utwórz encoder TIFF
                 let mut output_file = match File::create(&dst) {
                     Ok(f) => f,
@@ -620,6 +652,11 @@ pub fn handle_export_convert(
                                 }
                                 pages_written += 1;
                                 push_console(&ui, &console, format!("[export] page: {} ({}x{}, {})", display_name, width, height, if has_a { "RGBAf32" } else { "RGBf32" }));
+                                completed_pages += 1;
+                                prog.set(
+                                    (completed_pages as f32) / (total_pages as f32),
+                                    Some(&format!("Exporting TIFF ({}/{}) — {}", completed_pages, total_pages, display_name))
+                                );
                             }
                             Err(e) => {
                                 push_console(&ui, &console, format!("[export] skip '{}' (read error): {}", display_name, e));
@@ -645,6 +682,11 @@ pub fn handle_export_convert(
                                 }
                                 pages_written += 1;
                                 push_console(&ui, &console, format!("[export] page: {} ({}x{}, Grayf32)", display_name, width, height));
+                                completed_pages += 1;
+                                prog.set(
+                                    (completed_pages as f32) / (total_pages as f32),
+                                    Some(&format!("Exporting TIFF ({}/{}) — {}", completed_pages, total_pages, display_name))
+                                );
                             }
                             Err(e) => {
                                 push_console(&ui, &console, format!("[export] skip '{}' (read error): {}", display_name, e));
@@ -671,6 +713,11 @@ pub fn handle_export_convert(
                                 }
                                 pages_written += 1;
                                 push_console(&ui, &console, format!("[export] page: {} ({}x{}, Grayf32)", display_name, width, height));
+                                completed_pages += 1;
+                                prog.set(
+                                    (completed_pages as f32) / (total_pages as f32),
+                                    Some(&format!("Exporting TIFF ({}/{}) — {}", completed_pages, total_pages, display_name))
+                                );
                             }
                             Err(e) => {
                                 push_console(&ui, &console, format!("[export] skip '{}' (read error): {}", display_name, e));
@@ -830,13 +877,19 @@ pub fn handle_export_channels(
         if let Some(dst_dir) = crate::file_operations::choose_export_directory() {
             push_console(&ui, &console, format!("[export] channels → {}", dst_dir.display()));
             let prog = UiProgress::new(ui.as_weak());
-            prog.start_indeterminate(Some("Exporting channels..."));
             let mut exported = 0usize;
             {
                 let guard = lock_or_recover(&image_cache);
                 if let Some(ref cache) = *guard {
                     let width = cache.width;
                     let height = cache.height;
+                    // Zlicz łączną liczbę kanałów do przetworzenia
+                    let total_channels: usize = cache.layers_info.iter().map(|l| l.channels.len()).sum();
+                    if total_channels == 0 {
+                        ui.set_status_text("Export error: no channels to export".into());
+                        return;
+                    }
+                    prog.set(0.0, Some("Exporting channels..."));
                     // Precompute depth normalization percentiles if needed per channel
                     for layer in &cache.layers_info {
                         let _layer_display = if layer.name.is_empty() { "Beauty" } else { &layer.name };
@@ -901,6 +954,10 @@ pub fn handle_export_channels(
                                     return;
                                 }
                                 exported += 1;
+                                prog.set(
+                                    (exported as f32) / (total_channels as f32),
+                                    Some(&format!("Exporting channels ({}/{}) — {}::{}", exported, total_channels, safe_layer, ch.name))
+                                );
                             }
                         }
                     }
