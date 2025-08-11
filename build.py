@@ -142,7 +142,7 @@ class RustBuilder:
                 
         return success
 
-    def build_final(self, bin_name: str = "exruster", out_dir: str = "dist", clean: bool = False, verbose: bool = False) -> bool:
+    def build_final(self, bin_name: str = "EXruster", out_dir: str = "dist", clean: bool = False, verbose: bool = False) -> bool:
         """Buduje finalną wersję binarki w trybie release i kopiuje do katalogu out_dir bez uruchamiania."""
         self.print_header("🚀 FINALNY BUILD APLIKACJI")
         print(f"📁 Katalog projektu: {self.project_dir}")
@@ -360,8 +360,8 @@ Przykłady użycia:
     parser.add_argument(
         "--bin",
         type=str,
-        default="exruster",
-        help="Nazwa binarki Cargo do zbudowania (domyślnie: exruster)"
+        default="EXruster",
+        help="Nazwa binarki Cargo do zbudowania (domyślnie: EXruster)"
     )
 
     parser.add_argument(

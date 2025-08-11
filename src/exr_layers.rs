@@ -1,4 +1,4 @@
-use std::path::Path;
+cuse std::path::Path;
 
 pub struct PsdLayer {
     pub name: String,

@@ -22,6 +22,15 @@ rayon = "1.7"
 num_cpus = "1.17"
 image = { version = "0.25.6", default-features = false, features = ["png", "tiff", "jpeg"] }
 tiff = "0.9.1"
+cfg-if = "1.0"
+
+# Windows-only: ustawianie ikony okna w runtime (WM_SETICON)
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_System_LibraryLoader"
+] }
 
 [build-dependencies]
 slint-build = "1.12.1"
