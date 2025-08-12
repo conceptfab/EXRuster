@@ -222,7 +222,7 @@ fn generate_single_exr_thumbnail_work(
     let writes = *write_count.borrow();
     let need_fallback = stream_result.is_err() || writes < expected;
     if need_fallback {
-        // Heurystycznie wybierz najlepszą warstwę i wczytaj ją (pełna rozdzielczość), potem przeskaluj
+        // Fallback: wczytaj warstwę w pełnej rozdzielczości, potem przeskaluj (stabilne API)
         let best_layer_name = find_best_layer(&layers_info);
         let (raw_pixels, width, height, _current_layer) = load_specific_layer(&path_buf, &best_layer_name, None)
             .with_context(|| format!("Błąd wczytania warstwy '{}': {}", best_layer_name, path.display()))?;

@@ -68,9 +68,10 @@ export component MetaWindow inherits Rectangle {
                             Rectangle { width: (parent.width - 8px) * 0.70; height: parent.height;
                                 v_text := Text {
                                     text: root.meta-table-values[i];
+                                    padding: 4px; // test
                                     color: Kolory.tekst;
                                     wrap: word-wrap;
-                                    font-size: 10px;
+                                    font-size: 12px;
                                     horizontal-alignment: left;
                                     vertical-alignment: center;
                                     width: parent.width; height: parent.height;
@@ -79,7 +80,7 @@ export component MetaWindow inherits Rectangle {
                         }
 
                         // Bottom separator line 3px
-                        Rectangle { y: parent.height - 1px; x: 0px; width: parent.width; height: 3px; background: Kolory.zakladka_obramowanie; }
+                        Rectangle { y: parent.height - 1px; x: 0px; width: parent.width; height: 1px; background: Kolory.zakladka_obramowanie; }
                     }
                 }
             }

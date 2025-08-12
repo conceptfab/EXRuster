@@ -173,3 +173,4 @@ pub fn tone_map_and_gamma(
         )
     }
 }
+

@@ -108,30 +108,21 @@ impl ImageCache {
     pub fn process_to_image(&self, exposure: f32, gamma: f32, tonemap_mode: i32) -> Image {
         let mut buffer = SharedPixelBuffer::<Rgba8Pixel>::new(self.width, self.height);
         let slice = buffer.make_mut_slice();
-        
-        // Użycie większych chunków dla lepszej wydajności
-        let chunk_size = if self.raw_pixels.len() > 1_000_000 { 
-            4096 
-        } else { 
-            2048 
-        };
-        
-        // Przetwarzanie z lepszą lokalność pamięci
+
         let m = self.color_matrix_rgb_to_srgb;
+
         self.raw_pixels
-            .par_chunks(chunk_size)
-            .zip(slice.par_chunks_mut(chunk_size))
-            .for_each(|(input_chunk, output_chunk)| {
-                for (input_pixel, output_pixel) in input_chunk.iter().zip(output_chunk.iter_mut()) {
-                    let (mut r, mut g, mut b, a) = *input_pixel;
-                    if let Some(mat) = m {
-                        let v = mat * Vec3::new(r, g, b);
-                        r = v.x; g = v.y; b = v.z;
-                    }
-                    *output_pixel = process_pixel(r, g, b, a, exposure, gamma, tonemap_mode);
+            .par_iter()
+            .zip(slice.par_iter_mut())
+            .for_each(|(&(r0, g0, b0, a), out)| {
+                let (mut r, mut g, mut b) = (r0, g0, b0);
+                if let Some(mat) = m {
+                    let v = mat * Vec3::new(r, g, b);
+                    r = v.x; g = v.y; b = v.z;
                 }
+                *out = process_pixel(r, g, b, a, exposure, gamma, tonemap_mode);
             });
-        
+
         Image::from_rgba8(buffer)
     }
 
@@ -139,9 +130,8 @@ impl ImageCache {
         let mut buffer = SharedPixelBuffer::<Rgba8Pixel>::new(self.width, self.height);
         let slice = buffer.make_mut_slice();
 
-        // Przetwarzanie pikseli: jeśli lighting_rgb=true (lub ogólnie warstwa kolorowa), zachowujemy normalne RGB;
-        // w przeciwnym razie generujemy grayscale jako sumę R+G+B (po tone map i gamma).
         let m = self.color_matrix_rgb_to_srgb;
+
         self.raw_pixels
             .par_iter()
             .zip(slice.par_iter_mut())
@@ -175,23 +165,29 @@ impl ImageCache {
         let mut buffer = SharedPixelBuffer::<Rgba8Pixel>::new(thumb_width, thumb_height);
         let slice = buffer.make_mut_slice();
         
-        // Proste nearest neighbor sampling dla szybkości
+        // Proste nearest neighbor sampling dla szybkości, ale przetwarzanie blokami 4 pikseli
         let m = self.color_matrix_rgb_to_srgb;
-        slice.par_iter_mut().enumerate().for_each(|(i, pixel)| {
-            let x = (i as u32) % thumb_width;
-            let y = (i as u32) / thumb_width;
-            
-            let src_x = ((x as f32 / scale) as u32).min(self.width.saturating_sub(1));
-            let src_y = ((y as f32 / scale) as u32).min(self.height.saturating_sub(1));
-            let src_idx = (src_y as usize) * (self.width as usize) + (src_x as usize);
+        slice
+            .par_chunks_mut(4)
+            .enumerate()
+            .for_each(|(block_idx, out_rgba)| {
+                // Każdy chunk w buforze służy pojedynczemu pikselowi RGBA8
+                let base_i = block_idx; // jeden piksel
+                let x = (base_i as u32) % thumb_width;
+                let y = (base_i as u32) / thumb_width;
 
-            let (mut r, mut g, mut b, a) = self.raw_pixels[src_idx];
-            if let Some(mat) = m {
-                let v = mat * Vec3::new(r, g, b);
-                r = v.x; g = v.y; b = v.z;
-            }
-            *pixel = process_pixel(r, g, b, a, exposure, gamma, tonemap_mode);
-        });
+                let src_x = ((x as f32 / scale) as u32).min(self.width.saturating_sub(1));
+                let src_y = ((y as f32 / scale) as u32).min(self.height.saturating_sub(1));
+                let src_idx = (src_y as usize) * (self.width as usize) + (src_x as usize);
+
+                let (mut r, mut g, mut b, a) = self.raw_pixels[src_idx];
+                if let Some(mat) = m {
+                    let v = mat * Vec3::new(r, g, b);
+                    r = v.x; g = v.y; b = v.z;
+                }
+                let px = process_pixel(r, g, b, a, exposure, gamma, tonemap_mode);
+                out_rgba[0] = px;
+            });
         
         Image::from_rgba8(buffer)
     }
