@@ -329,7 +329,7 @@ fn setup_image_control_callbacks(
         let ui_handle = ui.as_weak();
         let image_cache = image_cache.clone();
         let console = console_model.clone();
-        move |_w: slint::Length, _h: slint::Length| {
+        move |_w, _h| {
             if let Some(ui) = ui_handle.upgrade() {
                 let cache_guard = ui_handlers::lock_or_recover(&image_cache);
                 if let Some(ref cache) = *cache_guard {
