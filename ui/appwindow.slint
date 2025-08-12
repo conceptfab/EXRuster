@@ -435,9 +435,9 @@ export component AppWindow inherits Window {
 
                 // Unified left padding for labels and controls
                 HorizontalBox {
+                    alignment: start;
                     width: parent.width;
                     spacing: 0px;
-                    Rectangle { width: controls_inset; }
                     ParameterSlider {
                         label-text: "Exposure:";
                         value: root.exposure-value;
@@ -454,7 +454,6 @@ export component AppWindow inherits Window {
                 HorizontalBox {
                     width: parent.width;
                     spacing: 0px;
-                    Rectangle { width: controls_inset; }
                     ParameterSlider {
                         label-text: "Gamma:";
                         value: root.gamma-value;
@@ -472,7 +471,6 @@ export component AppWindow inherits Window {
                  HorizontalBox {
                      width: parent.width;
                      spacing: 0px;
-                     Rectangle { width: controls_inset; }
                      Text {
                          text: "Tonemap:";
                          color: Kolory.tekst;
@@ -482,13 +480,11 @@ export component AppWindow inherits Window {
                          horizontal-alignment: left;
                          vertical-alignment: center;
                      }
-                     Rectangle { width: controls_inset; }
                  }
                  tm_row := HorizontalBox {
                      width: parent.width;
                      height: 25px;
                      spacing: 6px;
-                     Rectangle { width: controls_inset; }
                      // ACES
                      PrzyciskAkcji {
                          text: "ACES";
@@ -513,14 +509,12 @@ export component AppWindow inherits Window {
                          highlighted: root.tonemap-mode == 2;
                          clicked => { root.tonemap-mode = 2; root.tonemap-mode-changed(2); }
                      }
-                     Rectangle { width: controls_inset; }
                  }
                 
                 HorizontalBox {
                     width: parent.width;
                     height: 25px;
                     spacing: 0px;
-                    Rectangle { width: controls_inset; }
                     PrzyciskAkcji {
                         text: "Reset";
                         height: 25px;
@@ -535,19 +529,13 @@ export component AppWindow inherits Window {
                             gamma-changed(gamma-value);
                         }
                     }
-                    Rectangle { width: controls_inset; }
                 }
                 
                 // Spacer
-                Rectangle {
-                    height: 10px;
-                }
-
                 // Export section
                 HorizontalBox {
                     width: parent.width;
                     spacing: 0px;
-                    Rectangle { width: controls_inset; }
                     Text {
                         text: "Export";
                         color: Kolory.tekst;
@@ -557,28 +545,21 @@ export component AppWindow inherits Window {
                         horizontal-alignment: left;
                         vertical-alignment: center;
                     }
-                    Rectangle { width: controls_inset; }
                 }
 
                 // Convert: EXR -> TIFF (32F RGBA)
                 HorizontalBox { width: parent.width; height: 25px; spacing: 0px;
-                    Rectangle { width: controls_inset; }
                     PrzyciskAkcji { text: "Convert (TIFF)"; height: 25px; width: parent.width - controls_inset*2; clicked => { export-convert(); } }
-                    Rectangle { width: controls_inset; }
                 }
 
                 // Export Beauty: 16-bit PNG (with exposure/gamma)
                 HorizontalBox { width: parent.width; height: 25px; spacing: 0px;
-                    Rectangle { width: controls_inset; }
                     PrzyciskAkcji { text: "Export Beauty (PNG16)"; height: 25px; width: parent.width - controls_inset*2; clicked => { export-beauty(); } }
-                    Rectangle { width: controls_inset; }
                 }
 
                 // Export Channels: PNG16 grayscale per channel
                 HorizontalBox { width: parent.width; height: 25px; spacing: 0px;
-                    Rectangle { width: controls_inset; }
                     PrzyciskAkcji { text: "Export Channels (PNG16)"; height: 25px; width: parent.width - controls_inset*2; clicked => { export-channels(); } }
-                    Rectangle { width: controls_inset; }
                 }
             }
 
