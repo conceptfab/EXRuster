@@ -2,6 +2,10 @@
 
 
 
+
+@src Ten kod działa poprawnie, ale chce go maksymalnie przyśpieszyć/zoptymalizować. Przeanalizuj go pod tym kątem i przygotuj zwarty raport z numerowanymu punktami co model AI ma zrobić by poprawić kod. Chce uniknąć over-engineeringu. Pokaż tylko pliki które potrzebuja poprawek. Raport ma być w formacie markdown, podzielony na logiczne etapy.
+
+
 Ten kod działa poprawnie, ale sprawdz w @src, @ui czy w tym kodzie sa duplikaty, nieuzywane funkcje, pliki, błedy, elementy do optymalizacji, refaktoryzacji. Zalezy mi na tym, możliwie dużo procesow ma być wizualizowanych szczegółowo przy pomocy progress baru w status barze. Przygotuj zwarty raport z numerowanymu punktami co model AI ma zrobić by poprawić kod. Chce uniknąć over-engineeringu. Pokaż tylko pliki które potrzebuja poprawek. Raport ma być w formacie markdown, zapisz go w folderze projektu.
 
 sprawdz czy w tym kodzie sa duplikaty, nieuzywane funkcje,s pliki, błedy. Przygotuj zwarty raport z numerowanymu punktami co model AI ma zrobić by poprawić kod. Pokaż tylko pliki które potrzebuja poprawek. Raport ma być w formacie markdown.

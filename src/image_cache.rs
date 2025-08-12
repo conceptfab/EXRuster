@@ -47,7 +47,7 @@ pub struct LayerChannels {
     // Stabilna lista krótkich nazw kanałów (np. "R", "G", "B", "A", "Z", itp.)
     pub channel_names: Vec<String>,
     // Dane w układzie planarnym: [ch0(0..N), ch1(0..N), ...]
-    pub channel_data: Vec<f32>,
+    pub channel_data: Arc<[f32]>, // Zmieniono z Vec<f32> na Arc<[f32]>
 }
 
 pub struct ImageCache {
@@ -183,31 +183,97 @@ impl ImageCache {
 
     pub fn process_to_composite(&self, exposure: f32, gamma: f32, tonemap_mode: i32, lighting_rgb: bool) -> Image {
         let mut buffer = SharedPixelBuffer::<Rgba8Pixel>::new(self.width, self.height);
-        let slice = buffer.make_mut_slice();
+        let out_slice = buffer.make_mut_slice();
 
-        let m = self.color_matrix_rgb_to_srgb;
+        let color_m = self.color_matrix_rgb_to_srgb;
 
-        self.raw_pixels
-            .par_iter()
-            .zip(slice.par_iter_mut())
-            .for_each(|(&(r0, g0, b0, a), out)| {
+        // SIMD: przetwarzaj paczki po 4 piksele
+        let in_chunks = self.raw_pixels.par_chunks_exact(4);
+        let out_chunks = out_slice.par_chunks_mut(4);
+        in_chunks.zip(out_chunks).for_each(|(in4, out4)| {
+            // Zbierz do rejestrów SIMD
+            let (mut r, mut g, mut b, a) = {
+                let r = f32x4::from_array([in4[0].0, in4[1].0, in4[2].0, in4[3].0]);
+                let g = f32x4::from_array([in4[0].1, in4[1].1, in4[2].1, in4[3].1]);
+                let b = f32x4::from_array([in4[0].2, in4[1].2, in4[2].2, in4[3].2]);
+                let a = f32x4::from_array([in4[0].3, in4[1].3, in4[2].3, in4[3].3]);
+                (r, g, b, a)
+            };
+
+            // Macierz kolorów (primaries → sRGB) jeśli dostępna
+            if let Some(mat) = color_m {
+                let m00 = Simd::splat(mat.x_axis.x);
+                let m01 = Simd::splat(mat.y_axis.x);
+                let m02 = Simd::splat(mat.z_axis.x);
+                let m10 = Simd::splat(mat.x_axis.y);
+                let m11 = Simd::splat(mat.y_axis.y);
+                let m12 = Simd::splat(mat.z_axis.y);
+                let m20 = Simd::splat(mat.x_axis.z);
+                let m21 = Simd::splat(mat.y_axis.z);
+                let m22 = Simd::splat(mat.z_axis.z);
+                let rr = m00 * r + m01 * g + m02 * b;
+                let gg = m10 * r + m11 * g + m12 * b;
+                let bb = m20 * r + m21 * g + m22 * b;
+                r = rr; g = gg; b = bb;
+            }
+
+            if lighting_rgb {
+                let (r8, g8, b8) = crate::image_processing::tone_map_and_gamma_simd(r, g, b, exposure, gamma, tonemap_mode);
+                let a8 = a.simd_clamp(Simd::splat(0.0), Simd::splat(1.0));
+
+                let ra: [f32; 4] = r8.into();
+                let ga: [f32; 4] = g8.into();
+                let ba: [f32; 4] = b8.into();
+                let aa: [f32; 4] = a8.into();
+                for i in 0..4 {
+                    out4[i] = Rgba8Pixel {
+                        r: (ra[i] * 255.0).round().clamp(0.0, 255.0) as u8,
+                        g: (ga[i] * 255.0).round().clamp(0.0, 255.0) as u8,
+                        b: (ba[i] * 255.0).round().clamp(0.0, 255.0) as u8,
+                        a: (aa[i] * 255.0).round().clamp(0.0, 255.0) as u8,
+                    };
+                }
+            } else {
+                // Grayscale processing
+                let (r_linear, g_linear, b_linear) = (r, g, b); // Keep linear for grayscale conversion
+                let (r_tm, g_tm, b_tm) = crate::image_processing::tone_map_and_gamma_simd(r_linear, g_linear, b_linear, exposure, gamma, tonemap_mode);
+
+                let gray = r_tm.simd_max(g_tm).simd_max(b_tm).simd_clamp(Simd::splat(0.0), Simd::splat(1.0));
+                let a8 = a.simd_clamp(Simd::splat(0.0), Simd::splat(1.0));
+
+                let ga: [f32; 4] = gray.into();
+                let aa: [f32; 4] = a8.into();
+                for i in 0..4 {
+                    let g8 = (ga[i] * 255.0).round().clamp(0.0, 255.0) as u8;
+                    out4[i] = Rgba8Pixel { r: g8, g: g8, b: g8, a: aa[i] as u8 }; // Alpha should be 255 if not explicitly set
+                }
+            }
+        });
+
+        // Remainder (0..3 piksele)
+        let rem = self.raw_pixels.len() % 4;
+        if rem > 0 {
+            let start = self.raw_pixels.len() - rem;
+            for i in 0..rem {
+                let (r0, g0, b0, a0) = self.raw_pixels[start + i];
                 let (mut r, mut g, mut b) = (r0, g0, b0);
-                if let Some(mat) = m {
+                if let Some(mat) = color_m {
                     let v = mat * Vec3::new(r, g, b);
                     r = v.x; g = v.y; b = v.z;
                 }
                 if lighting_rgb {
-                    *out = process_pixel(r, g, b, a, exposure, gamma, tonemap_mode);
+                    out_slice[start + i] = process_pixel(r, g, b, a0, exposure, gamma, tonemap_mode);
                 } else {
-                    let px = process_pixel(r, g, b, a, exposure, gamma, tonemap_mode);
+                    let px = process_pixel(r, g, b, a0, exposure, gamma, tonemap_mode);
                     let rr = (px.r as f32) / 255.0;
                     let gg = (px.g as f32) / 255.0;
                     let bb = (px.b as f32) / 255.0;
                     let gray = (rr.max(gg).max(bb)).clamp(0.0, 1.0);
                     let g8 = (gray * 255.0).round().clamp(0.0, 255.0) as u8;
-                    *out = Rgba8Pixel { r: g8, g: g8, b: g8, a: px.a };
+                    out_slice[start + i] = Rgba8Pixel { r: g8, g: g8, b: g8, a: px.a };
                 }
-            });
+            }
+        }
 
         Image::from_rgba8(buffer)
     }
@@ -669,7 +735,8 @@ pub(crate) fn load_all_channels_for_layer_from_full(
         if matches {
             if let Some(p) = _progress { p.set(0.35, Some("Copying channel data...")); }
             let channel_names = layer.channel_names.clone();
-            let channel_data = layer.channel_data.clone();
+            // Zmieniono: Utwórz Arc<[f32]> z istniejących danych
+            let channel_data = Arc::from(layer.channel_data.as_slice());
             if let Some(p) = _progress { p.finish(Some("Layer channels loaded")); }
             return Ok(LayerChannels { layer_name: layer_name.to_string(), width: layer.width, height: layer.height, channel_names, channel_data });
         }
@@ -704,13 +771,14 @@ pub(crate) fn load_all_channels_for_layer(
         if matches {
             let num_channels = layer.channel_data.list.len();
             let mut channel_names: Vec<String> = Vec::with_capacity(num_channels);
-            let mut channel_data: Vec<f32> = Vec::with_capacity(pixel_count * num_channels);
+            let mut channel_data_vec: Vec<f32> = Vec::with_capacity(pixel_count * num_channels); // Temporary Vec
             for (ci, ch) in layer.channel_data.list.iter().enumerate() {
                 let full = ch.name.to_string();
                 let (_lname, short) = split_layer_and_short(&full, base_attr.as_deref());
                 channel_names.push(short);
-                for i in 0..pixel_count { channel_data.push(layer.channel_data.list[ci].sample_data.value_by_flat_index(i).to_f32()); }
+                for i in 0..pixel_count { channel_data_vec.push(layer.channel_data.list[ci].sample_data.value_by_flat_index(i).to_f32()); }
             }
+            let channel_data = Arc::from(channel_data_vec.into_boxed_slice()); // Convert Vec to Arc<[f32]>
             return Ok(LayerChannels { layer_name: layer_name.to_string(), width, height, channel_names, channel_data });
         }
     }
