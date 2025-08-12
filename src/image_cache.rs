@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use crate::utils::split_layer_and_short;
 use crate::progress::ProgressSink;
 use crate::color_processing::compute_rgb_to_srgb_matrix_from_file_for_layer;
+use glam::{Mat3, Vec3};
 
 /// Zwraca kanoniczny skrót kanału na podstawie aliasów/nazw przyjaznych.
 /// Np. "red"/"Red"/"RED"/"R"/"R8" → "R"; analogicznie dla G/B/A.
@@ -50,7 +51,7 @@ pub struct ImageCache {
     pub layers_info: Vec<LayerInfo>,
     pub current_layer_name: String,
     // Opcjonalna macierz konwersji z przestrzeni primaries pliku do sRGB (linear RGB)
-    color_matrix_rgb_to_srgb: Option<[[f32; 3]; 3]>,
+    color_matrix_rgb_to_srgb: Option<Mat3>,
     // Cache wszystkich kanałów dla bieżącej warstwy aby uniknąć I/O przy przełączaniu
     pub current_layer_channels: Option<LayerChannels>,
 }
@@ -97,7 +98,7 @@ impl ImageCache {
     }
 
     #[inline]
-    pub fn color_matrix(&self) -> Option<[[f32; 3]; 3]> { self.color_matrix_rgb_to_srgb }
+    pub fn color_matrix(&self) -> Option<Mat3> { self.color_matrix_rgb_to_srgb }
     
     pub fn process_to_image(&self, exposure: f32, gamma: f32) -> Image {
         let mut buffer = SharedPixelBuffer::<Rgba8Pixel>::new(self.width, self.height);
@@ -119,10 +120,8 @@ impl ImageCache {
                 for (input_pixel, output_pixel) in input_chunk.iter().zip(output_chunk.iter_mut()) {
                     let (mut r, mut g, mut b, a) = *input_pixel;
                     if let Some(mat) = m {
-                        let rr = mat[0][0] * r + mat[0][1] * g + mat[0][2] * b;
-                        let gg = mat[1][0] * r + mat[1][1] * g + mat[1][2] * b;
-                        let bb = mat[2][0] * r + mat[2][1] * g + mat[2][2] * b;
-                        r = rr; g = gg; b = bb;
+                        let v = mat * Vec3::new(r, g, b);
+                        r = v.x; g = v.y; b = v.z;
                     }
                     *output_pixel = process_pixel(r, g, b, a, exposure, gamma);
                 }
@@ -144,10 +143,8 @@ impl ImageCache {
             .for_each(|(&(r0, g0, b0, a), out)| {
                 let (mut r, mut g, mut b) = (r0, g0, b0);
                 if let Some(mat) = m {
-                    let rr = mat[0][0] * r + mat[0][1] * g + mat[0][2] * b;
-                    let gg = mat[1][0] * r + mat[1][1] * g + mat[1][2] * b;
-                    let bb = mat[2][0] * r + mat[2][1] * g + mat[2][2] * b;
-                    r = rr; g = gg; b = bb;
+                    let v = mat * Vec3::new(r, g, b);
+                    r = v.x; g = v.y; b = v.z;
                 }
                 if lighting_rgb {
                     *out = process_pixel(r, g, b, a, exposure, gamma);
@@ -185,10 +182,8 @@ impl ImageCache {
 
             let (mut r, mut g, mut b, a) = self.raw_pixels[src_idx];
             if let Some(mat) = m {
-                let rr = mat[0][0] * r + mat[0][1] * g + mat[0][2] * b;
-                let gg = mat[1][0] * r + mat[1][1] * g + mat[1][2] * b;
-                let bb = mat[2][0] * r + mat[2][1] * g + mat[2][2] * b;
-                r = rr; g = gg; b = bb;
+                let v = mat * Vec3::new(r, g, b);
+                r = v.x; g = v.y; b = v.z;
             }
             *pixel = process_pixel(r, g, b, a, exposure, gamma);
         });

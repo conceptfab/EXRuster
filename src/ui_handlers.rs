@@ -15,6 +15,7 @@ use std::fs::File;
 use tiff::encoder::{TiffEncoder, colortype::{RGBA32Float, RGB32Float, Gray32Float}};
 use tiff::tags::Tag;
 use image::{ImageBuffer, Rgb};
+use glam::Vec3;
 
 // Import komponentów Slint
 use crate::AppWindow;
@@ -959,10 +960,8 @@ pub fn handle_export_beauty(
                     let idx = (y as usize) * (width as usize) + (x as usize);
                     if let Some(&(mut r, mut g, mut b, _a)) = cache.raw_pixels.get(idx) {
                         if let Some(mat) = cache.color_matrix() {
-                            let rr = mat[0][0] * r + mat[0][1] * g + mat[0][2] * b;
-                            let gg = mat[1][0] * r + mat[1][1] * g + mat[1][2] * b;
-                            let bb = mat[2][0] * r + mat[2][1] * g + mat[2][2] * b;
-                            r = rr; g = gg; b = bb;
+                            let v = mat * Vec3::new(r, g, b);
+                            r = v.x; g = v.y; b = v.z;
                         }
                         r *= exp_mul; g *= exp_mul; b *= exp_mul;
                         r = r.clamp(0.0, 1.0);

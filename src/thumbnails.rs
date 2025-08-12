@@ -12,6 +12,7 @@ use crate::image_processing::process_pixel;
 use crate::image_cache::{extract_layers_info, find_best_layer, load_specific_layer};
 use crate::progress::ProgressSink;
 use crate::color_processing::compute_rgb_to_srgb_matrix_from_file_for_layer;
+use glam::Vec3;
 
 /// Zwięzła reprezentacja miniaturki EXR do wyświetlenia w UI
 pub struct ExrThumbnailInfo {
@@ -195,10 +196,8 @@ fn generate_single_exr_thumbnail_work(
                 // Transformacja kolorów (opcjonalna) + tone-mapping
                 let (mut r, mut g, mut b, a) = (r0, g0, b0, a0);
                 if let Some(mat) = m {
-                    let rr = mat[0][0] * r + mat[0][1] * g + mat[0][2] * b;
-                    let gg = mat[1][0] * r + mat[1][1] * g + mat[1][2] * b;
-                    let bb = mat[2][0] * r + mat[2][1] * g + mat[2][2] * b;
-                    r = rr; g = gg; b = bb;
+                    let v = mat * Vec3::new(r, g, b);
+                    r = v.x; g = v.y; b = v.z;
                 }
                 let px = process_pixel(r, g, b, a, exposure, gamma);
 
@@ -248,10 +247,8 @@ fn generate_single_exr_thumbnail_work(
 
                 let (mut r, mut g, mut b, a) = raw_pixels[src_idx];
                 if let Some(mat) = m {
-                    let rr = mat[0][0] * r + mat[0][1] * g + mat[0][2] * b;
-                    let gg = mat[1][0] * r + mat[1][1] * g + mat[1][2] * b;
-                    let bb = mat[2][0] * r + mat[2][1] * g + mat[2][2] * b;
-                    r = rr; g = gg; b = bb;
+                    let v = mat * Vec3::new(r, g, b);
+                    r = v.x; g = v.y; b = v.z;
                 }
                 let px = process_pixel(r, g, b, a, exposure, gamma);
                 out[0] = px.r; out[1] = px.g; out[2] = px.b; out[3] = px.a;
