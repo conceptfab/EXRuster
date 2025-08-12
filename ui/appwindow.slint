@@ -92,6 +92,9 @@ export component AppWindow inherits Window {
     in-out property <float> exposure-value: 0.0;
     in-out property <float> gamma-value: 2.2;
     // Usunięto obszar zakładek
+     // Tonemap mode (0=ACES, 1=Reinhard, 2=Linear)
+     in-out property <int> tonemap-mode: 0;
+     callback tonemap-mode-changed(int);
 
     // Dolny panel (wariant A: 0px gdy ukryty)
     in-out property <bool> bottom-panel-visible: false;
@@ -426,50 +429,113 @@ export component AppWindow inherits Window {
             // Prawa kolumna: funkcje Exposure na górze
             VerticalBox {
                 padding: 1px;
-                spacing: 12px;
+                spacing: 1px;
                 alignment: start;
+                property <length> controls_inset: 12px;
 
-                ParameterSlider {
-                    label-text: "Exposure:";
-                    value: root.exposure-value;
-                    min-value: -5.0;
-                    max-value: 5.0;
-                    slider-width: parent.width - 10px;
-                    value-changed(new-value) => {
-                        root.exposure-value = new-value;
-                        root.exposure-changed(new-value);
-                    }
-                }
-                
-                ParameterSlider {
-                    label-text: "Gamma:";
-                    value: root.gamma-value;
-                    min-value: 0.5;
-                    max-value: 4.5;
-                    slider-width: parent.width - 10px;
-                    value-changed(new-value) => {
-                        root.gamma-value = new-value;
-                        root.gamma-changed(new-value);
+                // Unified left padding for labels and controls
+                HorizontalBox {
+                    width: parent.width;
+                    spacing: 0px;
+                    Rectangle { width: controls_inset; }
+                    ParameterSlider {
+                        label-text: "Exposure:";
+                        value: root.exposure-value;
+                        min-value: -5.0;
+                        max-value: 5.0;
+                        slider-width: parent.width - controls_inset*2;
+                        value-changed(new-value) => {
+                            root.exposure-value = new-value;
+                            root.exposure-changed(new-value);
+                        }
                     }
                 }
                 
                 HorizontalBox {
-                    width: parent.width - 15px;
+                    width: parent.width;
+                    spacing: 0px;
+                    Rectangle { width: controls_inset; }
+                    ParameterSlider {
+                        label-text: "Gamma:";
+                        value: root.gamma-value;
+                        min-value: 0.5;
+                        max-value: 4.5;
+                        slider-width: parent.width - controls_inset*2;
+                        value-changed(new-value) => {
+                            root.gamma-value = new-value;
+                            root.gamma-changed(new-value);
+                        }
+                    }
+                }
+
+                 // Tonemap selector
+                 HorizontalBox {
+                     width: parent.width;
+                     spacing: 0px;
+                     Rectangle { width: controls_inset; }
+                     Text {
+                         text: "Tonemap:";
+                         color: Kolory.tekst;
+                         font-size: 10px;
+                         font-family: "Geist";
+                         font-weight: 700;
+                         horizontal-alignment: left;
+                         vertical-alignment: center;
+                     }
+                     Rectangle { width: controls_inset; }
+                 }
+                 tm_row := HorizontalBox {
+                     width: parent.width;
+                     height: 25px;
+                     spacing: 6px;
+                     Rectangle { width: controls_inset; }
+                     // ACES
+                     PrzyciskAkcji {
+                         text: "ACES";
+                         height: 25px;
+                         width: (tm_row.width - controls_inset*2 - tm_row.spacing*2) / 3;
+                         highlighted: root.tonemap-mode == 0;
+                         clicked => { root.tonemap-mode = 0; root.tonemap-mode-changed(0); }
+                     }
+                     // Reinhard
+                     PrzyciskAkcji {
+                         text: "Reinhard";
+                         height: 25px;
+                         width: (tm_row.width - controls_inset*2 - tm_row.spacing*2) / 3;
+                         highlighted: root.tonemap-mode == 1;
+                         clicked => { root.tonemap-mode = 1; root.tonemap-mode-changed(1); }
+                     }
+                     // Linear
+                     PrzyciskAkcji {
+                         text: "Linear";
+                         height: 25px;
+                         width: (tm_row.width - controls_inset*2 - tm_row.spacing*2) / 3;
+                         highlighted: root.tonemap-mode == 2;
+                         clicked => { root.tonemap-mode = 2; root.tonemap-mode-changed(2); }
+                     }
+                     Rectangle { width: controls_inset; }
+                 }
+                
+                HorizontalBox {
+                    width: parent.width;
                     height: 25px;
                     spacing: 0px;
-                    Rectangle { width: 6px; }
+                    Rectangle { width: controls_inset; }
                     PrzyciskAkcji {
                         text: "Reset";
                         height: 25px;
-                        width: parent.width - 12px;
+                        width: parent.width - controls_inset*2;
                         clicked => {
                             exposure-value = 0.0;
                             gamma-value = 2.2;
+                             // Przywróć domyślny tryb tonemappingu: ACES
+                             root.tonemap-mode = 0;
+                             root.tonemap-mode-changed(0);
                             exposure-changed(exposure-value);
                             gamma-changed(gamma-value);
                         }
                     }
-                    Rectangle { width: 6px; }
+                    Rectangle { width: controls_inset; }
                 }
                 
                 // Spacer
@@ -478,34 +544,41 @@ export component AppWindow inherits Window {
                 }
 
                 // Export section
-                Text {
-                    text: "Export";
-                    color: Kolory.tekst;
-                    font-size: 12px;
-                    font-family: "Geist";
-                    horizontal-alignment: left;
-                    vertical-alignment: center;
+                HorizontalBox {
+                    width: parent.width;
+                    spacing: 0px;
+                    Rectangle { width: controls_inset; }
+                    Text {
+                        text: "Export";
+                        color: Kolory.tekst;
+                        font-size: 10px;
+                        font-family: "Geist";
+                        font-weight: 700;
+                        horizontal-alignment: left;
+                        vertical-alignment: center;
+                    }
+                    Rectangle { width: controls_inset; }
                 }
 
                 // Convert: EXR -> TIFF (32F RGBA)
                 HorizontalBox { width: parent.width; height: 25px; spacing: 0px;
-                    Rectangle { width: 6px; }
-                    PrzyciskAkcji { text: "Convert (TIFF)"; height: 25px; width: parent.width - 26px; clicked => { export-convert(); } }
-                    Rectangle { width: 6px; }
+                    Rectangle { width: controls_inset; }
+                    PrzyciskAkcji { text: "Convert (TIFF)"; height: 25px; width: parent.width - controls_inset*2; clicked => { export-convert(); } }
+                    Rectangle { width: controls_inset; }
                 }
 
                 // Export Beauty: 16-bit PNG (with exposure/gamma)
                 HorizontalBox { width: parent.width; height: 25px; spacing: 0px;
-                    Rectangle { width: 6px; }
-                    PrzyciskAkcji { text: "Export Beauty (PNG16)"; height: 25px; width: parent.width - 26px; clicked => { export-beauty(); } }
-                    Rectangle { width: 6px; }
+                    Rectangle { width: controls_inset; }
+                    PrzyciskAkcji { text: "Export Beauty (PNG16)"; height: 25px; width: parent.width - controls_inset*2; clicked => { export-beauty(); } }
+                    Rectangle { width: controls_inset; }
                 }
 
                 // Export Channels: PNG16 grayscale per channel
                 HorizontalBox { width: parent.width; height: 25px; spacing: 0px;
-                    Rectangle { width: 6px; }
-                    PrzyciskAkcji { text: "Export Channels (PNG16)"; height: 25px; width: parent.width - 26px; clicked => { export-channels(); } }
-                    Rectangle { width: 6px; }
+                    Rectangle { width: controls_inset; }
+                    PrzyciskAkcji { text: "Export Channels (PNG16)"; height: 25px; width: parent.width - controls_inset*2; clicked => { export-channels(); } }
+                    Rectangle { width: controls_inset; }
                 }
             }
 

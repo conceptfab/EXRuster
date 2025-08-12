@@ -40,7 +40,7 @@ static LAST_PREVIEW_LOG: std::sync::Mutex<Option<Instant>> = std::sync::Mutex::n
 
 
 #[inline]
-fn lock_or_recover<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+pub(crate) fn lock_or_recover<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     match m.lock() {
         Ok(g) => g,
         Err(p) => p.into_inner(),
@@ -100,7 +100,8 @@ pub fn handle_layer_tree_click(
                             let exposure = ui.get_exposure_value();
                             let gamma = ui.get_gamma_value();
                             // Warstwa → kompozyt RGB (z duplikowaniem brakujących kanałów)
-                            let image = cache.process_to_composite(exposure, gamma, 0, true);
+                            let tonemap_mode = ui.get_tonemap_mode() as i32;
+                            let image = cache.process_to_composite(exposure, gamma, tonemap_mode, true);
                             ui.set_exr_image(image);
                             push_console(&ui, &console, format!("[layer] {} → mode: RGB (composite)", layer_name));
                             push_console(&ui, &console, format!("[preview] updated → mode: RGB (composite), layer: {}", layer_name));
@@ -202,7 +203,8 @@ pub fn handle_layer_tree_click(
                             push_console(&ui, &console, format!("[preview] updated → mode: Depth (auto-normalized, inverted), {}::{}", active_layer, channel_short));
                         } else {
                             // Kanał → grayscale przez standardowy pipeline
-                            let image = cache.process_to_composite(exposure, gamma, 0, false);
+                            let tonemap_mode = ui.get_tonemap_mode() as i32;
+                            let image = cache.process_to_composite(exposure, gamma, tonemap_mode, false);
                             ui.set_exr_image(image);
                             ui.set_status_text(format!("Layer: {} | Channel: {} | mode: Grayscale", active_layer, channel_short).into());
                             push_console(&ui, &console, format!("[channel] {}@{} → mode: Grayscale", channel_short, active_layer));
@@ -297,7 +299,8 @@ pub fn load_thumbnails_for_directory(
         let gamma = ui.get_gamma_value();
         let t0 = Instant::now();
         let prog = UiProgress::new(ui.as_weak());
-        match crate::thumbnails::generate_exr_thumbnails_in_dir(directory, 150, exposure, gamma, 0, Some(&prog)) {
+        let tonemap_mode = ui.get_tonemap_mode() as i32;
+        match crate::thumbnails::generate_exr_thumbnails_in_dir(directory, 150, exposure, gamma, tonemap_mode, Some(&prog)) {
             Ok(mut thumbs) => {
                 prog.set(0.95, Some("Sorting thumbnails..."));
                 thumbs.sort_by(|a, b| a.file_name.to_lowercase().cmp(&b.file_name.to_lowercase()));
@@ -409,7 +412,8 @@ pub fn handle_open_exr_from_path(
                 let t_proc = Instant::now();
                 // sygnalizuj dłuższe przetwarzanie (duże obrazy) jako indeterminate
                 if pixel_count > 2_000_000 { prog.start_indeterminate(Some("Processing image...")); }
-                let image = cache.process_to_image(exposure, gamma, 0);
+                let tonemap_mode = ui.get_tonemap_mode() as i32;
+                let image = cache.process_to_image(exposure, gamma, tonemap_mode);
                 push_console(&ui, &console, format!("{{\"type\":\"timing\",\"op\":\"process_to_image\",\"pixels\":{},\"ms\":{}}}", pixel_count, t_proc.elapsed().as_millis()));
                 push_console(&ui, &console, format!("[preview] image generated: {} pixels (exp: {:.2}, gamma: {:.2})", pixel_count, exposure, gamma));
 
@@ -462,10 +466,11 @@ pub fn handle_parameter_changed_throttled(
             let final_gamma = gamma.unwrap_or_else(|| ui.get_gamma_value());
             
             // Użyj thumbnail dla real-time preview jeśli obraz jest duży
+            let tonemap_mode = ui.get_tonemap_mode() as i32;
             let image = if cache.raw_pixels.len() > 2_000_000 {
-                cache.process_to_thumbnail(final_exposure, final_gamma, 0, 2048)
+                cache.process_to_thumbnail(final_exposure, final_gamma, tonemap_mode, 2048)
             } else {
-                cache.process_to_image(final_exposure, final_gamma, 0)
+                cache.process_to_image(final_exposure, final_gamma, tonemap_mode)
             };
             
             ui.set_exr_image(image);
@@ -955,7 +960,7 @@ pub fn handle_export_beauty(
                 // Zastosuj current exposure/tone-map/gamma i sRGB, zapis do 16-bit PNG
                 let exposure = ui.get_exposure_value();
                 let gamma = ui.get_gamma_value();
-                let tonemap_mode: i32 = 0; // ACES domyślnie (Etap 3 pozwoli zmieniać)
+                let tonemap_mode: i32 = ui.get_tonemap_mode() as i32;
                 let mut buf = ImageBuffer::<Rgb<u16>, Vec<u16>>::new(width, height);
                 for (x, y, p) in buf.enumerate_pixels_mut() {
                     let idx = (y as usize) * (width as usize) + (x as usize);

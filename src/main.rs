@@ -289,6 +289,30 @@ fn setup_image_control_callbacks(
         }
     });
 
+    // Tonemap mode changed
+    ui.on_tonemap_mode_changed({
+        let ui_handle = ui.as_weak();
+        let image_cache = image_cache.clone();
+        let console = console_model.clone();
+        move |mode: i32| {
+            if let Some(ui) = ui_handle.upgrade() {
+                let cache_guard = ui_handlers::lock_or_recover(&image_cache);
+                if let Some(ref cache) = *cache_guard {
+                    let exposure = ui.get_exposure_value();
+                    let gamma = ui.get_gamma_value();
+                    let image = if cache.raw_pixels.len() > 2_000_000 {
+                        cache.process_to_thumbnail(exposure, gamma, mode, 2048)
+                    } else {
+                        cache.process_to_image(exposure, gamma, mode)
+                    };
+                    ui.set_exr_image(image);
+                    push_console(&ui, &console, format!("[preview] updated → tonemap mode: {}", mode));
+                    ui.set_status_text(format!("Tonemap: {}", match mode {0=>"ACES",1=>"Reinhard",2=>"Linear", _=>"?"}).into());
+                }
+            }
+        }
+    });
+
     ui.on_layer_tree_clicked({
         let ui_handle = ui.as_weak();
         let image_cache = image_cache.clone();
