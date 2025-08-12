@@ -1,4 +1,4 @@
-cPropozycje wdrożeń (na podstawie claude.md)
+Propozycje wdrożeń (na podstawie claude.md)
 
 1. LRU cache miniaturek
 

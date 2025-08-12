@@ -62,6 +62,56 @@ pub struct ImageCache {
     pub current_layer_channels: Option<LayerChannels>,
     // Pełne dane EXR (wszystkie warstwy i kanały) w pamięci
     full_cache: Arc<FullExrCacheData>,
+    // MIP cache: przeskalowane podglądy (float RGBA) do szybkiego preview
+    mip_levels: Vec<MipLevel>,
+}
+
+#[derive(Clone, Debug)]
+struct MipLevel {
+    width: u32,
+    height: u32,
+    pixels: Vec<(f32, f32, f32, f32)>,
+}
+
+fn build_mip_chain(
+    base_pixels: &[(f32, f32, f32, f32)],
+    mut width: u32,
+    mut height: u32,
+    max_levels: usize,
+) -> Vec<MipLevel> {
+    let mut levels: Vec<MipLevel> = Vec::new();
+    let mut prev: Vec<(f32, f32, f32, f32)> = base_pixels.to_vec();
+    for _ in 0..max_levels {
+        if width <= 1 && height <= 1 { break; }
+        let new_w = (width / 2).max(1);
+        let new_h = (height / 2).max(1);
+        let mut next: Vec<(f32, f32, f32, f32)> = vec![(0.0, 0.0, 0.0, 0.0); (new_w as usize) * (new_h as usize)];
+        // Jednowątkowe uśrednianie 2x2
+        for y_out in 0..(new_h as usize) {
+            let y0 = (y_out * 2).min(height as usize - 1);
+            let y1 = (y0 + 1).min(height as usize - 1);
+            for x_out in 0..(new_w as usize) {
+                let x0 = (x_out * 2).min(width as usize - 1);
+                let x1 = (x0 + 1).min(width as usize - 1);
+                let p00 = prev[y0 * (width as usize) + x0];
+                let p01 = prev[y0 * (width as usize) + x1];
+                let p10 = prev[y1 * (width as usize) + x0];
+                let p11 = prev[y1 * (width as usize) + x1];
+                let acc = (
+                    (p00.0 + p01.0 + p10.0 + p11.0) * 0.25,
+                    (p00.1 + p01.1 + p10.1 + p11.1) * 0.25,
+                    (p00.2 + p01.2 + p10.2 + p11.2) * 0.25,
+                    (p00.3 + p01.3 + p10.3 + p11.3) * 0.25,
+                );
+                next[y_out * (new_w as usize) + x_out] = acc;
+            }
+        }
+        levels.push(MipLevel { width: new_w, height: new_h, pixels: next.clone() });
+        prev = next;
+        width = new_w; height = new_h;
+        if new_w <= 32 && new_h <= 32 { break; }
+    }
+    levels
 }
 
 impl ImageCache {
@@ -79,6 +129,7 @@ impl ImageCache {
         // Spróbuj wyliczyć macierz konwersji primaries → sRGB na podstawie atrybutu chromaticities (dla wybranej warstwy/partu)
         let color_matrix_rgb_to_srgb = compute_rgb_to_srgb_matrix_from_file_for_layer(path, &best_layer).ok();
 
+        let mip_levels = build_mip_chain(&raw_pixels, width, height, 4);
         Ok(ImageCache {
             raw_pixels,
             width,
@@ -88,6 +139,7 @@ impl ImageCache {
             color_matrix_rgb_to_srgb,
             current_layer_channels: Some(layer_channels),
             full_cache: full_cache,
+            mip_levels,
         })
     }
     
@@ -102,6 +154,8 @@ impl ImageCache {
         self.current_layer_channels = Some(layer_channels);
         // Reoblicz macierz primaries→sRGB na wypadek, gdyby warstwa/part zmieniały chromaticities
         self.color_matrix_rgb_to_srgb = compute_rgb_to_srgb_matrix_from_file_for_layer(path, layer_name).ok();
+        // Odbuduj MIP-y dla nowego obrazu
+        self.mip_levels = build_mip_chain(&self.raw_pixels, self.width, self.height, 4);
 
         Ok(())
     }
@@ -286,8 +340,24 @@ impl ImageCache {
         let mut buffer = SharedPixelBuffer::<Rgba8Pixel>::new(thumb_width, thumb_height);
         let slice = buffer.make_mut_slice();
         
+        // Wybierz najlepsze źródło: oryginał lub najbliższy MIP >= docelowej wielkości
+        let (src_pixels, src_w, src_h): (&[(f32, f32, f32, f32)], u32, u32) = {
+            if self.mip_levels.is_empty() { (&self.raw_pixels[..], self.width, self.height) } else {
+                // wybierz poziom, którego dłuższy bok jest najbliższy docelowemu, ale nie mniejszy niż docelowy
+                let target = thumb_width.max(thumb_height);
+                if let Some(lvl) = self.mip_levels.iter().find(|lvl| lvl.width.max(lvl.height) >= target) {
+                    (&lvl.pixels[..], lvl.width, lvl.height)
+                } else {
+                    let last = self.mip_levels.last().unwrap();
+                    (&last.pixels[..], last.width, last.height)
+                }
+            }
+        };
+
         // Proste nearest neighbor sampling dla szybkości, ale przetwarzanie blokami 4 pikseli
         let m = self.color_matrix_rgb_to_srgb;
+        let scale_x = (src_w as f32) / (thumb_width.max(1) as f32);
+        let scale_y = (src_h as f32) / (thumb_height.max(1) as f32);
         // SIMD: paczki po 4 piksele miniatury (równolegle na blokach 4 pikseli)
         slice
             .par_chunks_mut(4) // 4 piksele na blok
@@ -304,10 +374,12 @@ impl ImageCache {
                     if i >= (thumb_width as usize) * (thumb_height as usize) { break; }
                     let x = (i as u32) % thumb_width;
                     let y = (i as u32) / thumb_width;
-                    let src_x = ((x as f32 / scale) as u32).min(self.width.saturating_sub(1));
-                    let src_y = ((y as f32 / scale) as u32).min(self.height.saturating_sub(1));
-                    let src_idx = (src_y as usize) * (self.width as usize) + (src_x as usize);
-                    let (mut r, mut g, mut b, a) = self.raw_pixels[src_idx];
+                    let src_x = ((x as f32) * scale_x) as u32;
+                    let src_y = ((y as f32) * scale_y) as u32;
+                    let sx = src_x.min(src_w.saturating_sub(1)) as usize;
+                    let sy = src_y.min(src_h.saturating_sub(1)) as usize;
+                    let src_idx = sy * (src_w as usize) + sx;
+                    let (mut r, mut g, mut b, a) = src_pixels[src_idx];
                     if let Some(mat) = m {
                         let v = mat * Vec3::new(r, g, b);
                         r = v.x; g = v.y; b = v.z;
