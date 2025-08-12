@@ -31,7 +31,11 @@ pub fn build_full_exr_cache(
     let any_image = exr::read_all_flat_layers_from_file(path)
         .with_context(|| format!("Błąd wczytania EXR: {}", path.display()))?;
 
-    let mut out_layers: Vec<FullLayer> = Vec::with_capacity(any_image.layer_data.len());
+    use std::collections::HashMap;
+    // Agreguj kanały według efektywnej nazwy warstwy tak samo jak UI (extract_layers_info)
+    // Mapowanie: nazwa_warstwy -> (width, height, channel_names, channel_data)
+    let mut layer_map: HashMap<String, (u32, u32, Vec<String>, Vec<f32>)> = HashMap::new();
+    let mut layer_order: Vec<String> = Vec::new();
 
     for layer in any_image.layer_data.iter() {
         let width = layer.size.width() as u32;
@@ -43,25 +47,28 @@ pub fn build_full_exr_cache(
             .layer_name
             .as_ref()
             .map(|s| s.to_string());
-        // Nazwa warstwy ("" dla głównej)
-        let layer_name = base_attr.clone().unwrap_or_else(|| "".to_string());
-
-        let num_channels = layer.channel_data.list.len();
-        let mut channel_names: Vec<String> = Vec::with_capacity(num_channels);
-        let mut channel_data: Vec<f32> = Vec::with_capacity(pixel_count * num_channels);
 
         for (idx, ch) in layer.channel_data.list.iter().enumerate() {
             let full = ch.name.to_string();
-            let (_lname, short) = split_layer_and_short(&full, base_attr.as_deref());
-            channel_names.push(short);
-
-            // Skopiuj kolejno wartości kanału do bufora planearnego
+            let (lname, short) = split_layer_and_short(&full, base_attr.as_deref());
+            let entry = layer_map.entry(lname.clone()).or_insert_with(|| {
+                layer_order.push(lname.clone());
+                (width, height, Vec::new(), Vec::new())
+            });
+            // Jeśli rozmiary różnią się (rzadkie), preferuj pierwszy i pomiń konfliktujące kanały
+            if entry.0 != width || entry.1 != height { continue; }
+            entry.2.push(short);
             for i in 0..pixel_count {
-                channel_data.push(layer.channel_data.list[idx].sample_data.value_by_flat_index(i).to_f32());
+                entry.3.push(layer.channel_data.list[idx].sample_data.value_by_flat_index(i).to_f32());
             }
         }
+    }
 
-        out_layers.push(FullLayer { name: layer_name, width, height, channel_names, channel_data });
+    let mut out_layers: Vec<FullLayer> = Vec::with_capacity(layer_map.len());
+    for name in layer_order {
+        if let Some((w, h, channel_names, channel_data)) = layer_map.remove(&name) {
+            out_layers.push(FullLayer { name, width: w, height: h, channel_names, channel_data });
+        }
     }
 
     if let Some(p) = progress { p.set(0.24, Some("EXR in RAM")); }

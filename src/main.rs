@@ -308,14 +308,44 @@ fn setup_image_control_callbacks(
                 if let Some(ref cache) = *cache_guard {
                     let exposure = ui.get_exposure_value();
                     let gamma = ui.get_gamma_value();
+                    let preview_w = ui.get_preview_area_width() as u32;
+                    let preview_h = ui.get_preview_area_height() as u32;
+                    let target = preview_w.max(preview_h).max(1);
                     let image = if cache.raw_pixels.len() > 2_000_000 {
-                        cache.process_to_thumbnail(exposure, gamma, mode, 2048)
+                        cache.process_to_thumbnail(exposure, gamma, mode, target)
                     } else {
                         cache.process_to_image(exposure, gamma, mode)
                     };
                     ui.set_exr_image(image);
                     push_console(&ui, &console, format!("[preview] updated → tonemap mode: {}", mode));
                     ui.set_status_text(format!("Tonemap: {}", match mode {0=>"ACES",1=>"Reinhard",2=>"Linear", _=>"?"}).into());
+                }
+            }
+        }
+    });
+
+    // Re-render podgląd przy zmianie geometrii obszaru podglądu (1:1 względem widżetu)
+    ui.on_preview_geometry_changed({
+        let ui_handle = ui.as_weak();
+        let image_cache = image_cache.clone();
+        let console = console_model.clone();
+        move |_w: slint::Length, _h: slint::Length| {
+            if let Some(ui) = ui_handle.upgrade() {
+                let cache_guard = ui_handlers::lock_or_recover(&image_cache);
+                if let Some(ref cache) = *cache_guard {
+                    let exposure = ui.get_exposure_value();
+                    let gamma = ui.get_gamma_value();
+                    let mode = ui.get_tonemap_mode() as i32;
+                    let preview_w = ui.get_preview_area_width() as u32;
+                    let preview_h = ui.get_preview_area_height() as u32;
+                    let target = preview_w.max(preview_h).max(1);
+                    let image = if cache.raw_pixels.len() > 2_000_000 {
+                        cache.process_to_thumbnail(exposure, gamma, mode, target)
+                    } else {
+                        cache.process_to_image(exposure, gamma, mode)
+                    };
+                    ui.set_exr_image(image);
+                    ui_handlers::push_console(&ui, &console, format!("[preview] resized → {}x{}", preview_w, preview_h));
                 }
             }
         }

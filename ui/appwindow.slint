@@ -85,6 +85,11 @@ export component AppWindow inherits Window {
     out property <color> layers_color_g: Kolory.kanal_g;
     out property <color> layers_color_b: Kolory.kanal_b;
     out property <color> hover: Kolory.hover;
+     // Rozmiar obszaru podglądu w środkowej kolumnie (do skalowania 1:1)
+     // Aktualizowane przez timer ze względu na ograniczenia przypisań w Image
+     in-out property <length> preview_area_width: 0px;
+     in-out property <length> preview_area_height: 0px;
+     callback preview-geometry-changed(length, length);
     // Aktualnie otwarta z miniatury ścieżka (do zaznaczenia miniatury)
     in-out property <string> opened-thumbnail-path: "";
 
@@ -356,6 +361,20 @@ export component AppWindow inherits Window {
             background: Kolory.panel_tlo;
             border-color: Kolory.linia_podzialu;
             border-width: 1px;
+            // Synchronizuj rozmiar obszaru podglądu z rozmiarem tej kolumny
+            // (obraz wypełnia całą kolumnę)
+            Timer {
+                interval: 100ms;
+                running: true;
+                triggered => {
+                    if (parent.width != root.preview_area_width || parent.height != root.preview_area_height) {
+                        root.preview_area_width = parent.width;
+                        root.preview_area_height = parent.height;
+                        root.preview-geometry-changed(root.preview_area_width, root.preview_area_height);
+                    }
+                    self.running = true;
+                }
+            }
             
             // Background image for the middle column
             Image {
@@ -374,7 +393,7 @@ export component AppWindow inherits Window {
                 alignment: stretch; // ROZCIĄGNIJ DO WYPEŁNIENIA!
                 
                 // Obraz - dopasowuje rozmiar do zawartości
-                Image {
+                preview_image := Image {
                     width: parent.width;
                     height: parent.height;
                     source: exr-image;

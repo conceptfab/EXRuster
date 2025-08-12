@@ -588,10 +588,13 @@ pub fn handle_parameter_changed_throttled(
             let final_exposure = exposure.unwrap_or_else(|| ui.get_exposure_value());
             let final_gamma = gamma.unwrap_or_else(|| ui.get_gamma_value());
             
-            // Użyj thumbnail dla real-time preview jeśli obraz jest duży
+            // Użyj thumbnail dla real-time preview jeśli obraz jest duży, ale nie schodź poniżej 1:1 względem widżetu
             let tonemap_mode = ui.get_tonemap_mode() as i32;
+            let preview_w = ui.get_preview_area_width() as u32;
+            let preview_h = ui.get_preview_area_height() as u32;
+            let target = preview_w.max(preview_h).max(1);
             let image = if cache.raw_pixels.len() > 2_000_000 {
-                cache.process_to_thumbnail(final_exposure, final_gamma, tonemap_mode, 2048)
+                cache.process_to_thumbnail(final_exposure, final_gamma, tonemap_mode, target)
             } else {
                 cache.process_to_image(final_exposure, final_gamma, tonemap_mode)
             };

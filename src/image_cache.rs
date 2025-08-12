@@ -348,8 +348,8 @@ impl ImageCache {
                 if let Some(lvl) = self.mip_levels.iter().find(|lvl| lvl.width.max(lvl.height) >= target) {
                     (&lvl.pixels[..], lvl.width, lvl.height)
                 } else {
-                    let last = self.mip_levels.last().unwrap();
-                    (&last.pixels[..], last.width, last.height)
+                    // Fallback: użyj pełnej rozdzielczości (nigdy poniżej 1:1)
+                    (&self.raw_pixels[..], self.width, self.height)
                 }
             }
         };
