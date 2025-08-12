@@ -485,18 +485,21 @@ export component AppWindow inherits Window {
                      width: parent.width;
                      height: 25px;
                      spacing: 12px;
+                     
                      // ACES
                      PrzyciskAkcji {
+                        
                          text: "ACES";
-                         height: 25px;
+                         
+                         height: 22px;
                          width: (tm_row.width - controls_inset*2 - tm_row.spacing*2) / 3;
                          highlighted: root.tonemap-mode == 0;
                          clicked => { root.tonemap-mode = 0; root.tonemap-mode-changed(0); }
                      }
                      // Reinhard
                      PrzyciskAkcji {
-                         text: "Reinhard";
-                         height: 25px;
+                         text: "Rein.";
+                         height: 22px;
                          width: (tm_row.width - controls_inset*2 - tm_row.spacing*2) / 3;
                          highlighted: root.tonemap-mode == 1;
                          clicked => { root.tonemap-mode = 1; root.tonemap-mode-changed(1); }
@@ -504,7 +507,7 @@ export component AppWindow inherits Window {
                      // Linear
                      PrzyciskAkcji {
                          text: "Linear";
-                         height: 25px;
+                         height: 22px;
                          width: (tm_row.width - controls_inset*2 - tm_row.spacing*2) / 3;
                          highlighted: root.tonemap-mode == 2;
                          clicked => { root.tonemap-mode = 2; root.tonemap-mode-changed(2); }
