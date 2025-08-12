@@ -310,7 +310,8 @@ fn setup_image_control_callbacks(
                     let gamma = ui.get_gamma_value();
                     let preview_w = ui.get_preview_area_width() as u32;
                     let preview_h = ui.get_preview_area_height() as u32;
-                    let target = preview_w.max(preview_h).max(1);
+                    let dpr = ui.window().scale_factor() as f32;
+                    let target = ((preview_w.max(preview_h) as f32) * dpr).round().max(1.0) as u32;
                     let image = if cache.raw_pixels.len() > 2_000_000 {
                         cache.process_to_thumbnail(exposure, gamma, mode, target)
                     } else {

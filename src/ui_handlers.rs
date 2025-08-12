@@ -192,8 +192,8 @@ pub fn handle_layer_tree_click(
                 prog.start_indeterminate(Some("Loading channel..."));
                 match cache.load_channel(&path, &active_layer, &channel_short, Some(&prog)) {
                     Ok(()) => {
-                        let exposure = ui.get_exposure_value();
-                        let gamma = ui.get_gamma_value();
+                        let _exposure = ui.get_exposure_value();
+                        let _gamma = ui.get_gamma_value();
 
                         // Specjalny przypadek Depth: jeżeli nazwa kanału to Z/Depth, użyj process_depth_image z invertem= true (near jasne)
                         let upper = channel_short.to_ascii_uppercase();
@@ -204,13 +204,12 @@ pub fn handle_layer_tree_click(
                             push_console(&ui, &console, format!("[channel] {}@{} → mode: Depth (auto-normalized, inverted)", channel_short, active_layer));
                             push_console(&ui, &console, format!("[preview] updated → mode: Depth (auto-normalized, inverted), {}::{}", active_layer, channel_short));
                         } else {
-                            // Kanał → grayscale przez standardowy pipeline
-                            let tonemap_mode = ui.get_tonemap_mode() as i32;
-                            let image = cache.process_to_composite(exposure, gamma, tonemap_mode, false);
+                            // Kanał → auto-normalizowany grayscale (percentyle)
+                            let image = cache.process_depth_image_with_progress(false, Some(&prog));
                             ui.set_exr_image(image);
-                            ui.set_status_text(format!("Layer: {} | Channel: {} | mode: Grayscale", active_layer, channel_short).into());
-                            push_console(&ui, &console, format!("[channel] {}@{} → mode: Grayscale", channel_short, active_layer));
-                            push_console(&ui, &console, format!("[preview] updated → mode: Grayscale, {}::{}", active_layer, channel_short));
+                            ui.set_status_text(format!("Layer: {} | Channel: {} | mode: Grayscale (auto-normalized)", active_layer, channel_short).into());
+                            push_console(&ui, &console, format!("[channel] {}@{} → mode: Grayscale (auto-normalized)", channel_short, active_layer));
+                            push_console(&ui, &console, format!("[preview] updated → mode: Grayscale (auto-normalized), {}::{}", active_layer, channel_short));
                         }
                         prog.finish(Some("Channel loaded"));
                         // Ustaw podświetlenie wybranego wiersza na liście
@@ -592,7 +591,8 @@ pub fn handle_parameter_changed_throttled(
             let tonemap_mode = ui.get_tonemap_mode() as i32;
             let preview_w = ui.get_preview_area_width() as u32;
             let preview_h = ui.get_preview_area_height() as u32;
-            let target = preview_w.max(preview_h).max(1);
+            let dpr = ui.window().scale_factor() as f32;
+            let target = ((preview_w.max(preview_h) as f32) * dpr).round().max(1.0) as u32;
             let image = if cache.raw_pixels.len() > 2_000_000 {
                 cache.process_to_thumbnail(final_exposure, final_gamma, tonemap_mode, target)
             } else {
@@ -1179,10 +1179,10 @@ pub fn handle_export_channels(
                                         *p = image::Luma([v16]);
                                     }
                                 } else {
-                                    let exposure = ui.get_exposure_value();
-                                    let gamma = ui.get_gamma_value();
-                                    let exp_mul = 2.0_f32.powf(exposure);
-                                    let inv_gamma = if gamma > 0.0 { 1.0 / gamma } else { 1.0 / 2.2 };
+                                    let _exposure = ui.get_exposure_value();
+                                    let _gamma = ui.get_gamma_value();
+                                    let exp_mul = 2.0_f32.powf(_exposure);
+                                    let inv_gamma = if _gamma > 0.0 { 1.0 / _gamma } else { 1.0 / 2.2 };
                                     for (x, y, p) in buf.enumerate_pixels_mut() {
                                         let idx = (y as usize) * (width as usize) + (x as usize);
                                         let mut v = values[idx] * exp_mul;
