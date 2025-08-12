@@ -1,4 +1,5 @@
 use slint::{Weak, ComponentHandle, Timer, TimerMode, ModelRc, VecModel, SharedString, Color};
+use slint::invoke_from_event_loop;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -396,73 +397,96 @@ pub fn handle_open_exr_from_path(
         // Zapisz ścieżkę do pliku
         { *lock_or_recover(&current_file_path) = Some(path.clone()); }
 
-        // Jednorazowo zbuduj pełny cache wszystkich warstw/kanałów i zapisz do globalnego cache
+        // Asynchroniczne wczytanie pełnego EXR w tle (nie blokuj UI)
         prog.set(0.22, Some("Reading EXR (full)..."));
-        let full = match build_full_exr_cache(&path, Some(&prog)) {
-            Ok(c) => std::sync::Arc::new(c),
-            Err(e) => {
-                ui.set_status_text(format!("Read error '{}': {}", get_file_name(&path), e).into());
-                push_console(&ui, &console, format!("[error] reading file '{}': {}", get_file_name(&path), e));
-                prog.reset();
-                return;
-            }
-        };
-        { let mut g = lock_or_recover(&full_exr_cache); *g = Some(full.clone()); }
+        ui.set_progress_value(-1.0);
 
-        // Utwórz cache obrazu z już wczytanego obrazu (bez dodatkowego I/O)
-        prog.set(0.25, Some("Creating image cache..."));
-        push_console(&ui, &console, "[cache] creating image cache".to_string());
-        let t_new = Instant::now();
-        match crate::image_cache::ImageCache::new_with_full_cache(&path, full.clone()) {
-            Ok(cache) => {
-                prog.set(0.45, Some("Cache created, processing..."));
-                push_console(&ui, &console, "[cache] cache created".to_string());
-                push_console(&ui, &console, format!("{{\"type\":\"timing\",\"op\":\"ImageCache.new\",\"ms\":{}}}", t_new.elapsed().as_millis()));
+        // Pobierz aktualne parametry przetwarzania
+        let exposure0 = ui.get_exposure_value();
+        let gamma0 = ui.get_gamma_value();
+        let tonemap_mode0 = ui.get_tonemap_mode() as i32;
 
-                // Pobierz aktualne wartości ekspozycji i gammy
-                let exposure = ui.get_exposure_value();
-                let gamma = ui.get_gamma_value();
+        let ui_weak = ui.as_weak();
+        let image_cache_c = image_cache.clone();
+        let full_exr_cache_c = full_exr_cache.clone();
+        let path_c = path.clone();
 
-                // Przetwórz obraz z cache'a
-                let pixel_count = cache.raw_pixels.len();
-                let t_proc = Instant::now();
-                // sygnalizuj dłuższe przetwarzanie (duże obrazy) jako indeterminate
-                if pixel_count > 2_000_000 { prog.start_indeterminate(Some("Processing image...")); }
-                let tonemap_mode = ui.get_tonemap_mode() as i32;
-                let image = cache.process_to_image(exposure, gamma, tonemap_mode);
-                push_console(&ui, &console, format!("{{\"type\":\"timing\",\"op\":\"process_to_image\",\"pixels\":{},\"ms\":{}}}", pixel_count, t_proc.elapsed().as_millis()));
-                push_console(&ui, &console, format!("[preview] image generated: {} pixels (exp: {:.2}, gamma: {:.2})", pixel_count, exposure, gamma));
+        rayon::spawn(move || {
+            let t_start = Instant::now();
+            let full_res = build_full_exr_cache(&path_c, None).map(std::sync::Arc::new);
+            match full_res {
+                Ok(full) => {
+                    let t_new = Instant::now();
+                    let cache_res = crate::image_cache::ImageCache::new_with_full_cache(&path_c, full.clone());
+                    match cache_res {
+                        Ok(cache) => {
+                            let _ = invoke_from_event_loop(move || {
+                                if let Some(ui2) = ui_weak.upgrade() {
+                                    // Zapisz pełny cache i cache obrazu
+                                    { let mut g = lock_or_recover(&full_exr_cache_c); *g = Some(full.clone()); }
+                                    { let mut cg = lock_or_recover(&image_cache_c); *cg = Some(cache); }
 
-                // Przekaż informacje o warstwach do UI (prosty model, bez stanu drzewa)
-                {
-                    let (layers_model, layers_colors, layers_font_sizes) = create_layers_model(&cache.layers_info, &ui);
-                    ui.set_layers_model(layers_model);
-                    ui.set_layers_colors(layers_colors);
-                    ui.set_layers_font_sizes(layers_font_sizes);
+                                    // Wygeneruj obraz na wątku UI (Image nie jest Send)
+                                    let (img, layers_info_len, layers_info_vec) = {
+                                        let guard = lock_or_recover(&image_cache_c);
+                                        if let Some(ref c) = *guard {
+                                            let li = c.layers_info.clone();
+                                            (c.process_to_image(exposure0, gamma0, tonemap_mode0), li.len(), li)
+                                        } else {
+                                            (ui2.get_exr_image(), 0usize, Vec::new())
+                                        }
+                                    };
+                                    ui2.set_exr_image(img);
+
+                                    // Zaktualizuj listę warstw
+                                    if !layers_info_vec.is_empty() {
+                                        let (layers_model, layers_colors, layers_font_sizes) = create_layers_model(&layers_info_vec, &ui2);
+                                        ui2.set_layers_model(layers_model);
+                                        ui2.set_layers_colors(layers_colors);
+                                        ui2.set_layers_font_sizes(layers_font_sizes);
+                                    }
+
+                                    // Log bez użycia Rc<VecModel>
+                                    let mut log = ui2.get_console_text().to_string();
+                                    let mut append = |line: String| { if !log.is_empty() { log.push('\n'); } log.push_str(&line); };
+                                    append(format!("[cache] cache created ({} ms)", t_new.elapsed().as_millis()));
+                                    append(format!("[preview] image updated (exp: {:.2}, gamma: {:.2})", exposure0, gamma0));
+                                    append(format!("[layers] count: {}", layers_info_len));
+                                    ui2.set_console_text(log.into());
+
+                                    ui2.set_status_text(format!("Loaded in {} ms", t_start.elapsed().as_millis()).into());
+                                    ui2.set_progress_value(1.0);
+                                }
+                            });
+                        }
+                        Err(e) => {
+                            let _ = invoke_from_event_loop(move || {
+                                if let Some(ui2) = ui_weak.upgrade() {
+                                    ui2.set_status_text(format!("Read error '{}': {}", get_file_name(&path_c), e).into());
+                                    let mut log = ui2.get_console_text().to_string();
+                                    if !log.is_empty() { log.push('\n'); }
+                                    log.push_str(&format!("[error] reading file '{}': {}", get_file_name(&path_c), e));
+                                    ui2.set_console_text(log.into());
+                                    ui2.set_progress_value(0.0);
+                                }
+                            });
+                        }
+                    }
                 }
-                // Loguj warstwy i kanały (tytuły)
-                push_console(&ui, &console, format!("[layers] count: {}", cache.layers_info.len()));
-                for layer in &cache.layers_info {
-                    let channel_count = layer.channels.len();
-                    push_console(&ui, &console, format!("  • {} (channels: {})", layer.name, channel_count));
+                Err(e) => {
+                    let _ = invoke_from_event_loop(move || {
+                        if let Some(ui2) = ui_weak.upgrade() {
+                            ui2.set_status_text(format!("Read error '{}': {}", get_file_name(&path_c), e).into());
+                            let mut log = ui2.get_console_text().to_string();
+                            if !log.is_empty() { log.push('\n'); }
+                            log.push_str(&format!("[error] reading file '{}': {}", get_file_name(&path_c), e));
+                            ui2.set_console_text(log.into());
+                            ui2.set_progress_value(0.0);
+                        }
+                    });
                 }
-
-                // Zapisz cache
-                {
-                    let mut cache_guard = lock_or_recover(&image_cache);
-                    *cache_guard = Some(cache);
-                }
-
-                ui.set_exr_image(image);
-                ui.set_status_text(format!("Loaded: {} pixels (exp: {:.2}, gamma: {:.2})", pixel_count, exposure, gamma).into());
-                prog.finish(Some("Ready"));
             }
-            Err(e) => {
-                ui.set_status_text(format!("Read error '{}': {}", get_file_name(&path), e).into());
-                push_console(&ui, &console, format!("[error] reading file '{}': {}", get_file_name(&path), e));
-                prog.reset();
-            }
-        }
+        });
     }
 }
 
