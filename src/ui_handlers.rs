@@ -706,17 +706,13 @@ pub fn handle_export_convert(
                     let height = phys_layer.height as u32;
                     let pixel_count = (width as usize) * (height as usize);
 
-                    // Zmapuj indeksy kanałów
+                    // Zmapuj indeksy kanałów (planarny układ w FullLayer)
                     let mut r_idx: Option<usize> = None;
                     let mut g_idx: Option<usize> = None;
                     let mut b_idx: Option<usize> = None;
                     let mut a_idx: Option<usize> = None;
-                    // Stabilna kolejność kanałów: posortuj po nazwie klucza
-                    let mut channel_list: Vec<(&String, &Vec<f32>)> = phys_layer.channels.iter().collect();
-                    channel_list.sort_by(|a,b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
-                    let mut group_indices: Vec<usize> = Vec::with_capacity(channel_list.len());
-                    for (idx, (short, _vals)) in channel_list.iter().enumerate() {
-                        group_indices.push(idx);
+                    let group_indices: Vec<usize> = (0..phys_layer.channel_names.len()).collect();
+                    for (idx, short) in phys_layer.channel_names.iter().enumerate() {
                         let su = short.to_ascii_uppercase();
                         match su.as_str() {
                             "R" | "RED" => r_idx = Some(idx),
@@ -745,10 +741,10 @@ pub fn handle_export_convert(
                         if has_a {
                             let mut buf: Vec<f32> = vec![0.0; pixel_count * 4];
                             for i in 0..pixel_count {
-                                let r = channel_list[ri].1[i];
-                                let g = channel_list[gi].1[i];
-                                let b = channel_list[bi].1[i];
-                                let a = a_idx.map(|ci| channel_list[ci].1[i]).unwrap_or(1.0);
+                                let r = phys_layer.channel_data[ri * pixel_count + i];
+                                let g = phys_layer.channel_data[gi * pixel_count + i];
+                                let b = phys_layer.channel_data[bi * pixel_count + i];
+                                let a = a_idx.map(|ci| phys_layer.channel_data[ci * pixel_count + i]).unwrap_or(1.0);
                                 let base = i * 4;
                                 buf[base + 0] = r;
                                 buf[base + 1] = g;
@@ -763,9 +759,9 @@ pub fn handle_export_convert(
                         } else {
                             let mut buf: Vec<f32> = vec![0.0; pixel_count * 3];
                             for i in 0..pixel_count {
-                                let r = channel_list[ri].1[i];
-                                let g = channel_list[gi].1[i];
-                                let b = channel_list[bi].1[i];
+                                let r = phys_layer.channel_data[ri * pixel_count + i];
+                                let g = phys_layer.channel_data[gi * pixel_count + i];
+                                let b = phys_layer.channel_data[bi * pixel_count + i];
                                 let base = i * 3;
                                 buf[base + 0] = r;
                                 buf[base + 1] = g;
@@ -790,7 +786,7 @@ pub fn handle_export_convert(
                         let wanted = if has_r { "R" } else if has_g { "G" } else { "B" };
                         // znajdź indeks kanału
                         let mut ci: Option<usize> = None;
-                        for (idx, (short, _)) in channel_list.iter().enumerate() {
+                        for (idx, short) in phys_layer.channel_names.iter().enumerate() {
                             if short.eq_ignore_ascii_case(wanted) || short.to_ascii_uppercase().starts_with(&wanted.to_ascii_uppercase()) {
                                 ci = Some(idx);
                                 break;
@@ -801,7 +797,7 @@ pub fn handle_export_convert(
                             continue;
                         };
                         let mut buf: Vec<f32> = vec![0.0; pixel_count];
-                        for i in 0..pixel_count { buf[i] = channel_list[ci].1[i]; }
+                        for i in 0..pixel_count { buf[i] = phys_layer.channel_data[ci * pixel_count + i]; }
                         if let Err(e) = write_tiff_page_gray_f32(&mut tiff_encoder, width, height, &display_name, &buf) {
                             ui.set_status_text(format!("Export error (TIFF Gray): {}", e).into());
                             prog.reset();
@@ -820,7 +816,7 @@ pub fn handle_export_convert(
                         let ch_name = &layer.channels[0].name;
                         // znajdź indeks kanału po krótkiej nazwie
                         let mut ci: Option<usize> = None;
-                        for (idx, (short, _)) in channel_list.iter().enumerate() {
+                        for (idx, short) in phys_layer.channel_names.iter().enumerate() {
                             if short.as_str() == ch_name.as_str() {
                                 ci = Some(idx);
                                 break;
@@ -831,7 +827,7 @@ pub fn handle_export_convert(
                             continue;
                         };
                         let mut buf: Vec<f32> = vec![0.0; pixel_count];
-                        for i in 0..pixel_count { buf[i] = channel_list[ci].1[i]; }
+                        for i in 0..pixel_count { buf[i] = phys_layer.channel_data[ci * pixel_count + i]; }
                         if let Err(e) = write_tiff_page_gray_f32(&mut tiff_encoder, width, height, &display_name, &buf) {
                             ui.set_status_text(format!("Export error (TIFF Gray): {}", e).into());
                             prog.reset();
@@ -1023,27 +1019,25 @@ pub fn handle_export_channels(
                         let height = phys_layer.height as u32;
                         let pixel_count = (width as usize) * (height as usize);
 
-                        // Przygotuj stabilną listę kanałów
-                        let mut channel_list: Vec<(&String, &Vec<f32>)> = phys_layer.channels.iter().collect();
-                        channel_list.sort_by(|a,b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
+                    // Kanały dostępne w postaci planarnych danych
 
-                        for ch in &layer.channels {
+                    for ch in &layer.channels {
                             let ch_upper = ch.name.to_ascii_uppercase();
-                            // znajdź indeks kanału po krótkiej nazwie
-                            let mut channel_index: Option<usize> = None;
-                            for (idx, (short, _)) in channel_list.iter().enumerate() {
-                                let su = short.to_ascii_uppercase();
-                                if su == ch_upper || su.starts_with(&ch_upper) { channel_index = Some(idx); break; }
-                                if ch_upper == "Z" && (su == "Z" || su.contains("DEPTH") || su == "DISTANCE") { channel_index = Some(idx); break; }
-                            }
+                        // znajdź indeks kanału po krótkiej nazwie
+                        let mut channel_index: Option<usize> = None;
+                        for (idx, short) in phys_layer.channel_names.iter().enumerate() {
+                            let su = short.to_ascii_uppercase();
+                            if su == ch_upper || su.starts_with(&ch_upper) { channel_index = Some(idx); break; }
+                            if ch_upper == "Z" && (su == "Z" || su.contains("DEPTH") || su == "DISTANCE") { channel_index = Some(idx); break; }
+                        }
                             let Some(ci) = channel_index else {
                                 push_console(&ui, &console, format!("[export] skip channel '{}::{}' (not found)", display_layer, ch.name));
                                 continue;
                             };
 
                             // Zbierz wartości kanału
-                            let mut values: Vec<f32> = Vec::with_capacity(pixel_count);
-                            for i in 0..pixel_count { values.push(channel_list[ci].1[i]); }
+                        let mut values: Vec<f32> = Vec::with_capacity(pixel_count);
+                        for i in 0..pixel_count { values.push(phys_layer.channel_data[ci * pixel_count + i]); }
 
                             // Renderuj do 16-bit grayscale
                             let mut buf = ImageBuffer::<image::Luma<u16>, Vec<u16>>::new(width, height);

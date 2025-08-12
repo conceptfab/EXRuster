@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::path::PathBuf;
 
 use anyhow::Context;
@@ -12,7 +11,10 @@ pub struct FullLayer {
     pub name: String,
     pub width: u32,
     pub height: u32,
-    pub channels: HashMap<String, Vec<f32>>, // short_name -> values
+    // Lista krótkich nazw kanałów w stabilnej kolejności (zgodnie z kolejnością w pliku)
+    pub channel_names: Vec<String>,
+    // Dane pikseli w układzie planarnym: [ch0(0..N), ch1(0..N), ...]
+    pub channel_data: Vec<f32>,
 }
 
 #[derive(Clone, Debug)]
@@ -44,20 +46,22 @@ pub fn build_full_exr_cache(
         // Nazwa warstwy ("" dla głównej)
         let layer_name = base_attr.clone().unwrap_or_else(|| "".to_string());
 
-        let mut channels: HashMap<String, Vec<f32>> = HashMap::new();
+        let num_channels = layer.channel_data.list.len();
+        let mut channel_names: Vec<String> = Vec::with_capacity(num_channels);
+        let mut channel_data: Vec<f32> = Vec::with_capacity(pixel_count * num_channels);
 
         for (idx, ch) in layer.channel_data.list.iter().enumerate() {
             let full = ch.name.to_string();
             let (_lname, short) = split_layer_and_short(&full, base_attr.as_deref());
+            channel_names.push(short);
 
-            let mut v: Vec<f32> = Vec::with_capacity(pixel_count);
+            // Skopiuj kolejno wartości kanału do bufora planearnego
             for i in 0..pixel_count {
-                v.push(layer.channel_data.list[idx].sample_data.value_by_flat_index(i).to_f32());
+                channel_data.push(layer.channel_data.list[idx].sample_data.value_by_flat_index(i).to_f32());
             }
-            channels.insert(short, v);
         }
 
-        out_layers.push(FullLayer { name: layer_name, width, height, channels });
+        out_layers.push(FullLayer { name: layer_name, width, height, channel_names, channel_data });
     }
 
     if let Some(p) = progress { p.set(0.24, Some("EXR in RAM")); }
@@ -72,6 +76,22 @@ pub fn find_layer_by_name<'a>(cache: &'a FullExrCacheData, wanted: &str) -> Opti
         if wanted_lower.is_empty() || lname.is_empty() { return false; }
         lname == wanted_lower || lname.contains(&wanted_lower) || wanted_lower.contains(&lname)
     })
+}
+
+#[allow(dead_code)]
+impl FullLayer {
+    #[inline]
+    pub fn pixel_count(&self) -> usize { (self.width as usize) * (self.height as usize) }
+
+    #[inline]
+    pub fn num_channels(&self) -> usize { self.channel_names.len() }
+
+    #[inline]
+    pub fn channel_slice(&self, channel_index: usize) -> &[f32] {
+        let n = self.pixel_count();
+        let base = channel_index * n;
+        &self.channel_data[base..base + n]
+    }
 }
 
 

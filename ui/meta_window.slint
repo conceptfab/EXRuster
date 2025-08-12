@@ -61,11 +61,11 @@ export component MetaWindow inherits Rectangle {
                         HorizontalBox {
                             visible: !is_header; spacing: 8px; x: 4px; y: 10px; width: parent.width - 8px; height: parent.height - 20px;
 
-                            Rectangle { width: (parent.width - 8px) * 0.30; height: parent.height;
-                                k_text := Text { text: key; color: Kolory.tekst_silny; font-size: 10px; font-family: "Geist"; wrap: word-wrap; width: parent.width; height: parent.height; vertical-alignment: center; }
+                            Rectangle { width: (parent.width - 8px) * 0.30; height: parent.height; padding: 3px;
+                                k_text := Text { text: key; color: Kolory.tekst_silny; font-size: 13px; font-family: "Geist"; wrap: word-wrap; width: parent.width; height: parent.height; vertical-alignment: center; }
                             }
 
-                            Rectangle { width: (parent.width - 8px) * 0.70; height: parent.height;
+                            Rectangle { width: (parent.width - 8px) * 0.70; height: parent.height; padding: 3px;
                                 v_text := Text {
                                     text: root.meta-table-values[i];
                                     padding: 4px; // test

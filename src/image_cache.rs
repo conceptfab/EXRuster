@@ -3,7 +3,7 @@ use exr::prelude as exr;
 use std::path::PathBuf;
 use crate::image_processing::process_pixel;
 use rayon::prelude::*;
-use std::collections::HashMap;
+use std::collections::HashMap; // potrzebne dla extract_layers_info
 use crate::utils::split_layer_and_short;
 use crate::progress::ProgressSink;
 use crate::color_processing::compute_rgb_to_srgb_matrix_from_file_for_layer;
@@ -42,8 +42,10 @@ pub struct LayerChannels {
     pub layer_name: String,
     pub width: u32,
     pub height: u32,
-    // Klucze: krótkie nazwy kanałów z pliku (np. "R", "G", "B", "A", "Z", itp.)
-    pub channels: HashMap<String, Vec<f32>>,
+    // Stabilna lista krótkich nazw kanałów (np. "R", "G", "B", "A", "Z", itp.)
+    pub channel_names: Vec<String>,
+    // Dane w układzie planarnym: [ch0(0..N), ch1(0..N), ...]
+    pub channel_data: Vec<f32>,
 }
 
 pub struct ImageCache {
@@ -455,15 +457,17 @@ impl ImageCache {
         // Teraz mamy current_layer_channels dla właściwej warstwy
         let layer_cache = self.current_layer_channels.as_ref().ok_or_else(|| anyhow::anyhow!("Brak cache kanałów dla warstwy"))?;
 
-        let find_channel_vec = |wanted: &str| -> Option<&Vec<f32>> {
+        let pixel_count = (layer_cache.width as usize) * (layer_cache.height as usize);
+
+        let find_channel_index = |wanted: &str| -> Option<usize> {
             // 1) dokładne dopasowanie (case-sensitive)
-            if let Some(v) = layer_cache.channels.get(wanted) { return Some(v); }
+            if let Some(idx) = layer_cache.channel_names.iter().position(|k| k == wanted) { return Some(idx); }
             // 2) case-insensitive
             let wanted_lower = wanted.to_lowercase();
-            if let Some((_, v)) = layer_cache.channels.iter().find(|(k, _)| k.to_lowercase() == wanted_lower) { return Some(v); }
+            if let Some((idx, _)) = layer_cache.channel_names.iter().enumerate().find(|(_, k)| k.to_lowercase() == wanted_lower) { return Some(idx); }
             // 3) według kanonicznego skrótu R/G/B/A
             let wanted_canon = channel_alias_to_short(wanted).to_ascii_uppercase();
-            if let Some((_, v)) = layer_cache.channels.iter().find(|(k, _)| channel_alias_to_short(k).to_ascii_uppercase() == wanted_canon) { return Some(v); }
+            if let Some((idx, _)) = layer_cache.channel_names.iter().enumerate().find(|(_, k)| channel_alias_to_short(k).to_ascii_uppercase() == wanted_canon) { return Some(idx); }
             None
         };
 
@@ -471,21 +475,26 @@ impl ImageCache {
         let wanted_upper = channel_short.to_ascii_uppercase();
         let is_depth = wanted_upper == "Z" || wanted_upper.contains("DEPTH");
 
-        let channel_vec = if is_depth {
+        let channel_index_opt = if is_depth {
             // Preferuj dokładnie "Z"; w razie braku wybierz kanał zawierający "DEPTH" albo "DISTANCE"
-            find_channel_vec("Z")
-                .or_else(|| layer_cache.channels.iter().find(|(k, _)| k.to_ascii_uppercase().contains("DEPTH") || k.to_ascii_uppercase() == "DISTANCE").map(|(_, v)| v))
+            find_channel_index("Z").or_else(|| {
+                layer_cache
+                    .channel_names
+                    .iter()
+                    .position(|k| k.to_ascii_uppercase().contains("DEPTH") || k.to_ascii_uppercase() == "DISTANCE")
+            })
         } else {
-            find_channel_vec(channel_short)
+            find_channel_index(channel_short)
         };
 
-        let channel_vec = channel_vec.ok_or_else(|| anyhow::anyhow!(format!("Nie znaleziono kanału '{}' w warstwie '{}'", channel_short, layer_cache.layer_name)))?;
+        let channel_index = channel_index_opt
+            .ok_or_else(|| anyhow::anyhow!(format!("Nie znaleziono kanału '{}' w warstwie '{}'", channel_short, layer_cache.layer_name)))?;
 
-        let pixel_count = (layer_cache.width as usize) * (layer_cache.height as usize);
-        debug_assert_eq!(channel_vec.len(), pixel_count, "Długość kanału nie zgadza się z rozmiarem obrazu");
+        let base = channel_index * pixel_count;
+        let channel_slice = &layer_cache.channel_data[base..base + pixel_count];
 
         let mut out: Vec<(f32, f32, f32, f32)> = Vec::with_capacity(pixel_count);
-        for &v in channel_vec.iter() {
+        for &v in channel_slice.iter() {
             out.push((v, v, v, 1.0));
         }
 
@@ -585,12 +594,10 @@ pub(crate) fn load_all_channels_for_layer_from_full(
         };
         if matches {
             if let Some(p) = _progress { p.set(0.35, Some("Copying channel data...")); }
-            let mut map: HashMap<String, Vec<f32>> = HashMap::new();
-            for (k, v) in layer.channels.iter() {
-                map.insert(k.clone(), v.clone());
-            }
+            let channel_names = layer.channel_names.clone();
+            let channel_data = layer.channel_data.clone();
             if let Some(p) = _progress { p.finish(Some("Layer channels loaded")); }
-            return Ok(LayerChannels { layer_name: layer_name.to_string(), width: layer.width, height: layer.height, channels: map });
+            return Ok(LayerChannels { layer_name: layer_name.to_string(), width: layer.width, height: layer.height, channel_names, channel_data });
         }
     }
 
@@ -606,8 +613,6 @@ pub(crate) fn load_all_channels_for_layer(
     _progress: Option<&dyn ProgressSink>,
 ) -> anyhow::Result<LayerChannels> {
     let any_image = exr::read_all_flat_layers_from_file(path)?;
-    // Lokalny, tymczasowy cache na jedną warstwę
-    let mut pixel_map: HashMap<String, Vec<f32>> = HashMap::new();
     let wanted_lower = layer_name.to_lowercase();
     for layer in any_image.layer_data.iter() {
         let width = layer.size.width() as u32;
@@ -623,14 +628,16 @@ pub(crate) fn load_all_channels_for_layer(
             lname_lower == wanted_lower || lname_lower.contains(&wanted_lower) || wanted_lower.contains(&lname_lower)
         };
         if matches {
+            let num_channels = layer.channel_data.list.len();
+            let mut channel_names: Vec<String> = Vec::with_capacity(num_channels);
+            let mut channel_data: Vec<f32> = Vec::with_capacity(pixel_count * num_channels);
             for (ci, ch) in layer.channel_data.list.iter().enumerate() {
                 let full = ch.name.to_string();
                 let (_lname, short) = split_layer_and_short(&full, base_attr.as_deref());
-                let mut v = Vec::with_capacity(pixel_count);
-                for i in 0..pixel_count { v.push(layer.channel_data.list[ci].sample_data.value_by_flat_index(i).to_f32()); }
-                pixel_map.insert(short, v);
+                channel_names.push(short);
+                for i in 0..pixel_count { channel_data.push(layer.channel_data.list[ci].sample_data.value_by_flat_index(i).to_f32()); }
             }
-            return Ok(LayerChannels { layer_name: layer_name.to_string(), width, height, channels: pixel_map });
+            return Ok(LayerChannels { layer_name: layer_name.to_string(), width, height, channel_names, channel_data });
         }
     }
     anyhow::bail!(format!("Nie znaleziono warstwy '{}'", layer_name))
@@ -642,26 +649,28 @@ fn compose_composite_from_channels(layer_channels: &LayerChannels) -> Vec<(f32, 
     let mut out: Vec<(f32, f32, f32, f32)> = Vec::with_capacity(pixel_count);
 
     // Heurystyki: najpierw dokładne R/G/B/A, potem nazwy zaczynające się od R/G/B, a na końcu pierwszy dostępny kanał
-    let pick_exact = |name: &str| -> Option<&Vec<f32>> { layer_channels.channels.get(name) };
-    let pick_prefix = |prefix: char| -> Option<&Vec<f32>> {
+    let pick_exact_index = |name: &str| -> Option<usize> { layer_channels.channel_names.iter().position(|n| n == name) };
+    let pick_prefix_index = |prefix: char| -> Option<usize> {
         let prefix = prefix.to_ascii_uppercase();
-        layer_channels.channels.iter().find(|(k, _)| k.to_ascii_uppercase().starts_with(prefix)).map(|(_, v)| v)
+        layer_channels.channel_names.iter().position(|n| n.to_ascii_uppercase().starts_with(prefix))
     };
 
-    let r = pick_exact("R").or_else(|| pick_prefix('R')).or_else(|| layer_channels.channels.values().next());
-    let g = pick_exact("G").or_else(|| pick_prefix('G')).or(r);
-    let b = pick_exact("B").or_else(|| pick_prefix('B')).or(g).or(r);
-    let a = pick_exact("A").or_else(|| pick_prefix('A'));
+    let r_idx = pick_exact_index("R").or_else(|| pick_prefix_index('R')).or_else(|| Some(0));
+    let r_idx = r_idx.expect("Brak kanału R do kompozytu");
+    let g_idx = pick_exact_index("G").or_else(|| pick_prefix_index('G')).or(Some(r_idx)).unwrap();
+    let b_idx = pick_exact_index("B").or_else(|| pick_prefix_index('B')).or(Some(g_idx)).or(Some(r_idx)).unwrap();
+    let a_idx = pick_exact_index("A").or_else(|| pick_prefix_index('A'));
 
-    let r = r.expect("Brak kanału R do kompozytu");
-    let g = g.expect("Brak kanału G do kompozytu");
-    let b = b.expect("Brak kanału B do kompozytu");
+    let base_r = r_idx * pixel_count;
+    let base_g = g_idx * pixel_count;
+    let base_b = b_idx * pixel_count;
+    let a_base_opt = a_idx.map(|ai| ai * pixel_count);
 
     for i in 0..pixel_count {
-        let rr = r[i];
-        let gg = g[i];
-        let bb = b[i];
-        let aa = a.map(|av| av[i]).unwrap_or(1.0);
+        let rr = layer_channels.channel_data[base_r + i];
+        let gg = layer_channels.channel_data[base_g + i];
+        let bb = layer_channels.channel_data[base_b + i];
+        let aa = a_base_opt.map(|ab| layer_channels.channel_data[ab + i]).unwrap_or(1.0);
         out.push((rr, gg, bb, aa));
     }
 
