@@ -1,4 +1,61 @@
 use slint::Rgba8Pixel;
+use std::cell::RefCell;
+
+// Thread-local cache LUT dla gammy, aby bezpiecznie działać z Rayon
+thread_local! {
+    static GAMMA_LUT_CACHE: RefCell<Option<(f32, [f32; 1024])>> = RefCell::new(None);
+}
+
+#[inline]
+fn apply_gamma_lut(value: f32, gamma_inv: f32) -> f32 {
+    // Zakładamy wejście w [0,1] po tone-mappingu; clamp dla pewności
+    let v = value.clamp(0.0, 1.0);
+
+    // Szybkie ścieżki dla typowych przypadków
+    if (gamma_inv - 1.0).abs() < 1e-6 {
+        return v;
+    }
+
+    // Pobierz lub zbuduj LUT dla danej wartości gamma_inv
+    let y = GAMMA_LUT_CACHE.with(|cell| {
+        let mut opt = cell.borrow_mut();
+        let need_rebuild = match *opt {
+            Some((stored_inv, _)) => (stored_inv - gamma_inv).abs() > 1e-6,
+            None => true,
+        };
+
+        if need_rebuild {
+            let mut table = [0.0_f32; 1024];
+            let denom = (table.len() - 1) as f32;
+            for (i, slot) in table.iter_mut().enumerate() {
+                let x = (i as f32) / denom;
+                *slot = x.powf(gamma_inv);
+            }
+            *opt = Some((gamma_inv, table));
+        }
+
+        // Interpolacja liniowa z LUT
+        if let Some((_, table)) = *opt {
+            let max_idx = (table.len() - 1) as f32;
+            let fidx = v * max_idx;
+            let lo = fidx.floor() as usize;
+            let hi = fidx.ceil() as usize;
+            if lo == hi {
+                table[lo]
+            } else {
+                let t = fidx - lo as f32;
+                let a = table[lo];
+                let b = table[hi];
+                a + (b - a) * t
+            }
+        } else {
+            // Nie powinno się zdarzyć, fallback
+            v.powf(gamma_inv)
+        }
+    });
+
+    y
+}
 
 /// Przetwarza pojedynczy piksel z wartościami HDR na 8-bitowe RGB
 pub fn process_pixel(r: f32, g: f32, b: f32, a: f32, exposure: f32, gamma: f32) -> Rgba8Pixel {
@@ -31,9 +88,9 @@ pub fn process_pixel(r: f32, g: f32, b: f32, a: f32, exposure: f32, gamma: f32) 
     } else {
         let gamma_inv = 1.0 / gamma.max(1e-4);
         (
-            apply_gamma_fast(tone_mapped_r, gamma_inv),
-            apply_gamma_fast(tone_mapped_g, gamma_inv),
-            apply_gamma_fast(tone_mapped_b, gamma_inv),
+            apply_gamma_lut(tone_mapped_r, gamma_inv),
+            apply_gamma_lut(tone_mapped_g, gamma_inv),
+            apply_gamma_lut(tone_mapped_b, gamma_inv),
         )
     };
     
@@ -56,23 +113,7 @@ fn aces_tonemap(x: f32) -> f32 {
     ((x * (a * x + b)) / (x * (c * x + d) + e)).clamp(0.0, 1.0)
 }
 
-/// Szybka gamma correction z lookup table dla typowych wartości
-#[inline]
-fn apply_gamma_fast(value: f32, gamma_inv: f32) -> f32 {
-    match gamma_inv {
-        // Usunięto błędną optymalizację dla sRGB (1/2.2).
-        // Teraz jest to obsługiwane przez poprawny, ogólny przypadek `powf`.
-        x if (x - 0.5).abs() < 0.001 => {
-            // Gamma 2.0
-            value.sqrt()
-        },
-        x if (x - 1.0).abs() < 0.001 => {
-            // Gamma 1.0 (linear)
-            value
-        },
-        _ => value.powf(gamma_inv)
-    }
-}
+// (usunięto) apply_gamma_fast – zastąpione przez szybsze `apply_gamma_lut`
 
 // usunięto nieużywaną funkcję read_exr_to_slint_image
 
