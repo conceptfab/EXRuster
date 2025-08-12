@@ -42,3 +42,11 @@ Sposób przechowywania danych kanałów można zoptymalizować, aby zmniejszyć 
 ## Podsumowanie
 
 Kluczową i najbardziej wpływową zmianą jest wprowadzenie globalnego cache'a na cały plik EXR (Etap 1). Już samo to powinno przynieść ogromny wzrost responsywności aplikacji. Pozostałe etapy, zwłaszcza wykorzystanie SIMD, stanowią dalsze, bardziej zaawansowane kroki w kierunku maksymalizacji wydajności, które warto wdrożyć po zrealizowaniu pierwszego etapu.
+
+
+Rekomendacje uzupełniające
+Etap 2: dodać std::simd (np. f32x4) w ścieżkach process_to_image i image_processing::tone_map_and_gamma, oraz użyć SIMD w miniaturach.
+Etap 2 (mip-mapy): przed fallbackiem sprawdzać poziomy mip i czytać najbliższy rozmiar zamiast pełnej rozdzielczości.
+Czy chcesz, żebym wdrożył brakujące elementy Etapu 2 (SIMD + mip-mapy) i ograniczył pozostałe I/O w fallbackach?
+Zmian nie wprowadzam bez Twojej zgody.
+Jeśli potwierdzisz, przygotuję minimalne, mierzalne edity i zweryfikuję ich wpływ.
