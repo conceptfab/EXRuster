@@ -588,11 +588,18 @@ pub fn handle_parameter_changed_throttled(
             let final_gamma = gamma.unwrap_or_else(|| ui.get_gamma_value());
             
             // Użyj thumbnail dla real-time preview jeśli obraz jest duży, ale nie schodź poniżej 1:1 względem widżetu
+            // Uwzględnij HiDPI i image-fit: contain (dopasowanie aspektu)
             let tonemap_mode = ui.get_tonemap_mode() as i32;
-            let preview_w = ui.get_preview_area_width() as u32;
-            let preview_h = ui.get_preview_area_height() as u32;
+            let preview_w = ui.get_preview_area_width() as f32;
+            let preview_h = ui.get_preview_area_height() as f32;
             let dpr = ui.window().scale_factor() as f32;
-            let target = ((preview_w.max(preview_h) as f32) * dpr).round().max(1.0) as u32;
+            let img_w = cache.width as f32;
+            let img_h = cache.height as f32;
+            let container_ratio = if preview_h > 0.0 { preview_w / preview_h } else { 1.0 };
+            let image_ratio = if img_h > 0.0 { img_w / img_h } else { 1.0 };
+            // Dłuzszy bok obrazu po dopasowaniu do kontenera (contain)
+            let display_long_side_logical = if container_ratio > image_ratio { preview_h * image_ratio } else { preview_w };
+            let target = (display_long_side_logical * dpr).round().max(1.0) as u32;
             let image = if cache.raw_pixels.len() > 2_000_000 {
                 cache.process_to_thumbnail(final_exposure, final_gamma, tonemap_mode, target)
             } else {
@@ -600,12 +607,25 @@ pub fn handle_parameter_changed_throttled(
             };
             
             ui.set_exr_image(image);
-            // Throttled log do konsoli: co najmniej 300 ms odstępu
+            // Throttled log do konsoli: co najmniej 300 ms odstępu, z diagnostyką DPI i dopasowania
             let mut last = lock_or_recover(&LAST_PREVIEW_LOG);
             let now = Instant::now();
             if last.map(|t| now.duration_since(t).as_millis() >= 300).unwrap_or(true) {
+                let display_w_logical = if container_ratio > image_ratio { preview_h * image_ratio } else { preview_w };
+                let display_h_logical = if container_ratio > image_ratio { preview_h } else { preview_w / image_ratio };
+                let win_w = ui.get_window_width() as u32;
+                let win_h = ui.get_window_height() as u32;
+                let win_w_px = (win_w as f32 * dpr).round() as u32;
+                let win_h_px = (win_h as f32 * dpr).round() as u32;
                 push_console(&ui, &console,
-                    format!("[preview] updated → params: exp={:.2}, gamma={:.2}", final_exposure, final_gamma));
+                    format!("[preview] params: exp={:.2}, gamma={:.2} | window={}x{} (≈{}x{} px @{}x) | view={}x{} @{}x | img={}x{} | display≈{}x{} px target={} px",
+                        final_exposure, final_gamma,
+                        win_w, win_h, win_w_px, win_h_px, dpr,
+                        preview_w as u32, preview_h as u32, dpr,
+                        img_w as u32, img_h as u32,
+                        (display_w_logical * dpr).round() as u32,
+                        (display_h_logical * dpr).round() as u32,
+                        target));
                 *last = Some(now);
             }
             

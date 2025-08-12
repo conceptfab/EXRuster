@@ -308,10 +308,15 @@ fn setup_image_control_callbacks(
                 if let Some(ref cache) = *cache_guard {
                     let exposure = ui.get_exposure_value();
                     let gamma = ui.get_gamma_value();
-                    let preview_w = ui.get_preview_area_width() as u32;
-                    let preview_h = ui.get_preview_area_height() as u32;
+                    let preview_w = ui.get_preview_area_width() as f32;
+                    let preview_h = ui.get_preview_area_height() as f32;
                     let dpr = ui.window().scale_factor() as f32;
-                    let target = ((preview_w.max(preview_h) as f32) * dpr).round().max(1.0) as u32;
+                    let img_w = cache.width as f32;
+                    let img_h = cache.height as f32;
+                    let container_ratio = if preview_h > 0.0 { preview_w / preview_h } else { 1.0 };
+                    let image_ratio = if img_h > 0.0 { img_w / img_h } else { 1.0 };
+                    let display_long_side_logical = if container_ratio > image_ratio { preview_h * image_ratio } else { preview_w };
+                    let target = (display_long_side_logical * dpr).round().max(1.0) as u32;
                     let image = if cache.raw_pixels.len() > 2_000_000 {
                         cache.process_to_thumbnail(exposure, gamma, mode, target)
                     } else {
@@ -325,7 +330,7 @@ fn setup_image_control_callbacks(
         }
     });
 
-    // Re-render podgląd przy zmianie geometrii obszaru podglądu (1:1 względem widżetu)
+    // Re-render podgląd przy zmianie geometrii obszaru podglądu (1:1 względem widżetu, z DPI)
     ui.on_preview_geometry_changed({
         let ui_handle = ui.as_weak();
         let image_cache = image_cache.clone();
@@ -337,16 +342,22 @@ fn setup_image_control_callbacks(
                     let exposure = ui.get_exposure_value();
                     let gamma = ui.get_gamma_value();
                     let mode = ui.get_tonemap_mode() as i32;
-                    let preview_w = ui.get_preview_area_width() as u32;
-                    let preview_h = ui.get_preview_area_height() as u32;
-                    let target = preview_w.max(preview_h).max(1);
+                    let preview_w = ui.get_preview_area_width() as f32;
+                    let preview_h = ui.get_preview_area_height() as f32;
+                    let dpr = ui.window().scale_factor() as f32;
+                    let img_w = cache.width as f32;
+                    let img_h = cache.height as f32;
+                    let container_ratio = if preview_h > 0.0 { preview_w / preview_h } else { 1.0 };
+                    let image_ratio = if img_h > 0.0 { img_w / img_h } else { 1.0 };
+                    let display_long_side_logical = if container_ratio > image_ratio { preview_h * image_ratio } else { preview_w };
+                    let target = (display_long_side_logical * dpr).round().max(1.0) as u32;
                     let image = if cache.raw_pixels.len() > 2_000_000 {
                         cache.process_to_thumbnail(exposure, gamma, mode, target)
                     } else {
                         cache.process_to_image(exposure, gamma, mode)
                     };
                     ui.set_exr_image(image);
-                    ui_handlers::push_console(&ui, &console, format!("[preview] resized → {}x{}", preview_w, preview_h));
+                    ui_handlers::push_console(&ui, &console, format!("[preview] resized → {}x{} @{}x", preview_w, preview_h, dpr));
                 }
             }
         }

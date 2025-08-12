@@ -90,6 +90,9 @@ export component AppWindow inherits Window {
      in-out property <length> preview_area_width: 0px;
      in-out property <length> preview_area_height: 0px;
      callback preview-geometry-changed(length, length);
+     // Ekspozycja wymiarów dla logów
+     out property <length> window_width: self.width;
+     out property <length> window_height: self.height;
     // Aktualnie otwarta z miniatury ścieżka (do zaznaczenia miniatury)
     in-out property <string> opened-thumbnail-path: "";
 
