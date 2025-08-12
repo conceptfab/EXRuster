@@ -16,6 +16,71 @@ class RustBuilder:
     def __init__(self, project_dir="."):
         self.project_dir = Path(project_dir).resolve()
         self.cargo_toml = self.project_dir / "Cargo.toml"
+    
+    def detect_bin_name(self):
+        """Wykrywa nazwę binarki na podstawie Cargo.toml.
+        Zwraca nazwę lub None, jeśli nie udało się wykryć.
+        """
+        try:
+            content = self.cargo_toml.read_text(encoding="utf-8")
+        except Exception:
+            return None
+
+        # Najpierw spróbuj użyć tomllib (Python 3.11+)
+        try:
+            import tomllib  # type: ignore
+            data = tomllib.loads(content)
+            # Preferuj pierwszą definicję z [[bin]]
+            bin_tables = data.get("bin")
+            if isinstance(bin_tables, list) and bin_tables:
+                name = bin_tables[0].get("name")
+                if isinstance(name, str) and name.strip():
+                    return name.strip()
+            # Fallback do nazwy pakietu
+            package = data.get("package", {})
+            pkg_name = package.get("name")
+            if isinstance(pkg_name, str) and pkg_name.strip():
+                return pkg_name.strip()
+        except Exception:
+            pass
+
+        # Prosty parser liniowy jako fallback
+        lines = content.splitlines()
+        in_bin = False
+        for raw_line in lines:
+            line = raw_line.strip()
+            if line.startswith("[[bin]]"):
+                in_bin = True
+                continue
+            if in_bin and line.startswith("name") and "=" in line:
+                try:
+                    name_part = line.split("=", 1)[1].strip()
+                    if name_part.startswith('"') and '"' in name_part[1:]:
+                        name = name_part.split('"')[1]
+                        if name:
+                            return name
+                except Exception:
+                    pass
+        # Ostateczny fallback: spróbuj znaleźć name w [package]
+        in_package = False
+        for raw_line in lines:
+            line = raw_line.strip()
+            if line.startswith("[package]"):
+                in_package = True
+                continue
+            if in_package:
+                if line.startswith("[") and not line.startswith("[package]"):
+                    break
+                if line.startswith("name") and "=" in line:
+                    try:
+                        name_part = line.split("=", 1)[1].strip()
+                        if name_part.startswith('"') and '"' in name_part[1:]:
+                            name = name_part.split('"')[1]
+                            if name:
+                                return name
+                    except Exception:
+                        pass
+        return None
         
     def print_header(self, message):
         """Wyświetla nagłówek z ramką"""
@@ -128,21 +193,24 @@ class RustBuilder:
         )
         
         if success:
-            # Sprawdź czy plik wykonywalny został utworzony
-            exe_name = "rustexr.exe" if os.name == "nt" else "rustexr"
+            # Sprawdź czy plik wykonywalny został utworzony na podstawie Cargo.toml
+            detected_bin = self.detect_bin_name()
             exe_dir = "release" if release else "debug"
-            exe_path = self.project_dir / "target" / exe_dir / exe_name
-            
-            if exe_path.exists():
-                size = exe_path.stat().st_size / (1024 * 1024)  # MB
-                print(f"📦 Plik wykonywalny utworzony: {exe_path}")
-                print(f"   Rozmiar: {size:.2f} MB")
+            if detected_bin:
+                exe_name = f"{detected_bin}.exe" if os.name == "nt" else detected_bin
+                exe_path = self.project_dir / "target" / exe_dir / exe_name
+                if exe_path.exists():
+                    size = exe_path.stat().st_size / (1024 * 1024)  # MB
+                    print(f"📦 Plik wykonywalny utworzony: {exe_path}")
+                    print(f"   Rozmiar: {size:.2f} MB")
+                else:
+                    print(f"⚠️  Nie znaleziono spodziewanego pliku wykonywalnego: {exe_path}")
             else:
-                print(f"⚠️  Nie znaleziono pliku wykonywalnego: {exe_path}")
+                print("⚠️  Nie udało się wykryć nazwy binarki z Cargo.toml – pomijam sprawdzenie artefaktu.")
                 
         return success
 
-    def build_final(self, bin_name: str = "EXruster", out_dir: str = "dist", clean: bool = False, verbose: bool = False) -> bool:
+    def build_final(self, bin_name: str = "EXruster_nightly", out_dir: str = "dist", clean: bool = False, verbose: bool = False) -> bool:
         """Buduje finalną wersję binarki w trybie release i kopiuje do katalogu out_dir bez uruchamiania."""
         self.print_header("🚀 FINALNY BUILD APLIKACJI")
         print(f"📁 Katalog projektu: {self.project_dir}")
@@ -360,8 +428,8 @@ Przykłady użycia:
     parser.add_argument(
         "--bin",
         type=str,
-        default="EXruster",
-        help="Nazwa binarki Cargo do zbudowania (domyślnie: EXruster)"
+        default="EXruster_nightly",
+        help="Nazwa binarki Cargo do zbudowania (domyślnie: EXruster_nightly)"
     )
 
     parser.add_argument(
