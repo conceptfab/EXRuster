@@ -396,7 +396,7 @@ Przykłady użycia:
             
         else:
             # Domyślne zachowanie: zbuduj finalny artefakt bez uruchamiania
-            builder.print_header("🔨 BUDOWANIE FINALNEGO ARTEFAKTU")
+            builder.print_header("BUDOWANIE FINALNEGO ARTEFAKTU")
             if not builder.check_cargo_project():
                 sys.exit(1)
             success = builder.build_final(bin_name=args.bin, out_dir=args.out_dir, clean=args.clean, verbose=args.verbose)

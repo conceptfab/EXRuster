@@ -130,6 +130,7 @@ fn generate_single_exr_thumbnail_work(
     tonemap_mode: i32,
 ) -> anyhow::Result<ExrThumbWork> {
     use std::convert::Infallible;
+    use ::exr::math::Vec2;
 
     let path_buf = path.to_path_buf();
 
@@ -144,12 +145,10 @@ fn generate_single_exr_thumbnail_work(
     let dims = Rc::new(RefCell::new((0u32, 0u32, 0u32, 0u32))); // (w, h, tw, th)
     let strides = Rc::new(RefCell::new((1.0f32, 1.0f32))); // (sx, sy)
     let out_pixels = Rc::new(RefCell::new(Vec::<u8>::new()));
-    let pixel_index = Rc::new(RefCell::new(0usize));
 
     let dims_c = dims.clone();
     let strides_c = strides.clone();
     let out_c1 = out_pixels.clone();
-    let write_count = Rc::new(RefCell::new(0usize));
 
     // 1) Inicjalizacja po rozdzielczości
     let stream_result = exr::read_first_rgba_layer_from_file(
@@ -173,29 +172,23 @@ fn generate_single_exr_thumbnail_work(
             let out_c2 = out_pixels.clone();
             let dims_r = dims.clone();
             let strides_r = strides.clone();
-            let pix_idx = pixel_index.clone();
-            let write_ctr = write_count.clone();
-            move |_, _, (r0, g0, b0, a0): (f32, f32, f32, f32)| {
-                let (width, height, thumb_w, thumb_h) = *dims_r.borrow();
-                if width == 0 || height == 0 || thumb_w == 0 || thumb_h == 0 {
+            move |_, position: Vec2<usize>, (r0, g0, b0, a0): (f32, f32, f32, f32)| {
+                let (_width, _height, thumb_w, thumb_h) = *dims_r.borrow();
+                if thumb_w == 0 || thumb_h == 0 {
                     return;
                 }
                 let (sx, sy) = *strides_r.borrow();
 
-                let idx = {
-                    let mut pi = pix_idx.borrow_mut();
-                    let current = *pi;
-                    *pi += 1;
-                    current
-                };
+                // Użyj poprawnych współrzędnych z biblioteki `exr`
+                let src_x = position.x() as u32;
+                let src_y = position.y() as u32;
 
-                let src_x = (idx as u32) % width;
-                let src_y = (idx as u32) / width;
-
-                // Mapowanie do piksela docelowego (NN, bez nadpisywania wielokrotnego)
+                // Mapowanie do piksela docelowego (NN)
                 let x_out = ((src_x as f32) / sx).floor() as u32;
                 let y_out = ((src_y as f32) / sy).floor() as u32;
-                if x_out >= thumb_w || y_out >= thumb_h { return; }
+                if x_out >= thumb_w || y_out >= thumb_h {
+                    return;
+                }
 
                 // Transformacja kolorów (opcjonalna) + tone-mapping
                 let (mut r, mut g, mut b, a) = (r0, g0, b0, a0);
@@ -208,26 +201,23 @@ fn generate_single_exr_thumbnail_work(
                 let out_index = ((y_out as usize) * (thumb_w as usize) + (x_out as usize)) * 4;
                 {
                     let mut out_ref = out_c2.borrow_mut();
-                    out_ref[out_index + 0] = px.r;
-                    out_ref[out_index + 1] = px.g;
-                    out_ref[out_index + 2] = px.b;
-                    out_ref[out_index + 3] = 255; // wymuś pełną nieprzezroczystość miniaturek
+                    if out_index + 3 < out_ref.len() {
+                        out_ref[out_index + 0] = px.r;
+                        out_ref[out_index + 1] = px.g;
+                        out_ref[out_index + 2] = px.b;
+                        out_ref[out_index + 3] = 255;
+                    }
                 }
-                *write_ctr.borrow_mut() += 1;
             }
         }
     );
 
-    // Jeśli strumień się nie powiódł albo zapisał mniej pikseli niż rozmiar miniatury, fallback do heurystyki warstw
-    let (_w, _h, thumb_w, thumb_h) = *dims.borrow();
-    let expected = (thumb_w as usize) * (thumb_h as usize);
-    let writes = *write_count.borrow();
-    let need_fallback = stream_result.is_err() || writes < expected;
-    if need_fallback {
+    // Jeśli strumień się nie powiódł, fallback do heurystyki warstw
+    if stream_result.is_err() {
         // Fallback: wczytaj warstwę w pełnej rozdzielczości, potem przeskaluj (stabilne API)
         let best_layer_name = find_best_layer(&layers_info);
         let (raw_pixels, width, height, _current_layer) = load_specific_layer(&path_buf, &best_layer_name, None)
-            .with_context(|| format!("Błąd wczytania warstwy '{}': {}", best_layer_name, path.display()))?;
+            .with_context(|| format!("Błąd wczytania warstwy \"{}\": {}", best_layer_name, path.display()))?;
 
         let color_matrix_rgb_to_srgb = compute_rgb_to_srgb_matrix_from_file_for_layer(&path_buf.as_path(), &best_layer_name).ok();
 
@@ -332,6 +322,8 @@ fn generate_single_exr_thumbnail_work(
         pixels: pixels_vec,
     })
 }
+
+
 
 
 
