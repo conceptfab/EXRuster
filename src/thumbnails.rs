@@ -15,6 +15,8 @@ use crate::image_cache::{extract_layers_info, find_best_layer, load_specific_lay
 use crate::progress::ProgressSink;
 use crate::color_processing::compute_rgb_to_srgb_matrix_from_file_for_layer;
 use glam::Vec3;
+use std::sync::{Mutex, OnceLock};
+use lru::LruCache;
 
 /// Zwięzła reprezentacja miniaturki EXR do wyświetlenia w UI
 pub struct ExrThumbnailInfo {
@@ -53,7 +55,29 @@ pub fn generate_exr_thumbnails_in_dir(
     let works: Vec<ExrThumbWork> = files
         .par_iter()
         .filter_map(|path| {
-            let res = generate_single_exr_thumbnail_work(path, thumb_height, exposure, gamma, tonemap_mode);
+            // Spróbuj z cache LRU
+            let cached_opt = {
+                if let Ok(mut guard) = get_thumb_cache().lock() {
+                    c_get(&mut *guard, path, thumb_height, exposure, gamma, tonemap_mode)
+                } else {
+                    None
+                }
+            };
+            if let Some(cached) = cached_opt {
+                let n = completed.fetch_add(1, Ordering::Relaxed) + 1;
+                if let Some(p) = progress {
+                    let frac = (n as f32) / (total_files as f32);
+                    p.set(frac, Some(&format!("{} / {}", n, total_files)));
+                }
+                return Some(cached);
+            }
+
+            let res = generate_single_exr_thumbnail_work(path, thumb_height, exposure, gamma, tonemap_mode)
+                .map(|work| {
+                    // Zapisz do cache
+                    put_thumb_cache(&work, thumb_height, exposure, gamma, tonemap_mode);
+                    work
+                });
             let n = completed.fetch_add(1, Ordering::Relaxed) + 1;
             if let Some(p) = progress {
                 let frac = (n as f32) / (total_files as f32);
@@ -323,7 +347,95 @@ fn generate_single_exr_thumbnail_work(
     })
 }
 
+// ================= LRU cache miniaturek =================
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct ThumbPresetKey {
+    thumb_h: u32,
+    tonemap_mode: i32,
+    // Kwantyzujemy ekspozycję i gammę, by nie tworzyć nadmiaru wariantów
+    exp_q: i16,
+    gam_q: i16,
+}
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct ThumbKey {
+    path: PathBuf,
+    modified: u64,
+    preset: ThumbPresetKey,
+}
 
+// Przechowujemy wyłącznie gotowe piksele RGBA8 i podstawowe metadane
+#[derive(Clone)]
+struct ThumbValue {
+    width: u32,
+    height: u32,
+    num_layers: usize,
+    file_size_bytes: u64,
+    file_name: String,
+    pixels: Vec<u8>,
+}
 
+fn quantize(v: f32, step: f32, min: f32, max: f32) -> i16 {
+    let clamped = v.clamp(min, max);
+    ((clamped / step).round() as i32).clamp(i16::MIN as i32, i16::MAX as i32) as i16
+}
+
+fn make_preset(thumb_h: u32, exposure: f32, gamma: f32, tonemap_mode: i32) -> ThumbPresetKey {
+    ThumbPresetKey {
+        thumb_h,
+        tonemap_mode,
+        exp_q: quantize(exposure, 0.25, -16.0, 16.0),
+        gam_q: quantize(gamma, 0.10, 0.5, 4.5),
+    }
+}
+
+fn file_mtime_u64(path: &Path) -> u64 {
+    fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+static THUMB_CACHE: OnceLock<Mutex<LruCache<ThumbKey, ThumbValue>>> = OnceLock::new();
+
+fn get_thumb_cache() -> &'static Mutex<LruCache<ThumbKey, ThumbValue>> {
+    THUMB_CACHE.get_or_init(|| Mutex::new(LruCache::new(std::num::NonZeroUsize::new(256).unwrap())))
+}
+
+fn c_get(
+    cache: &mut LruCache<ThumbKey, ThumbValue>,
+    path: &Path,
+    thumb_h: u32,
+    exposure: f32,
+    gamma: f32,
+    tonemap_mode: i32,
+) -> Option<ExrThumbWork> {
+    let preset = make_preset(thumb_h, exposure, gamma, tonemap_mode);
+    let key = ThumbKey { path: path.to_path_buf(), modified: file_mtime_u64(path), preset };
+    cache.get(&key).map(|v| ExrThumbWork {
+        path: key.path.clone(),
+        file_name: v.file_name.clone(),
+        file_size_bytes: v.file_size_bytes,
+        width: v.width,
+        height: v.height,
+        num_layers: v.num_layers,
+        pixels: v.pixels.clone(),
+    })
+}
+
+fn put_thumb_cache(work: &ExrThumbWork, thumb_h: u32, exposure: f32, gamma: f32, tonemap_mode: i32) {
+    let preset = make_preset(thumb_h, exposure, gamma, tonemap_mode);
+    let key = ThumbKey { path: work.path.clone(), modified: file_mtime_u64(&work.path), preset };
+    let val = ThumbValue {
+        width: work.width,
+        height: work.height,
+        num_layers: work.num_layers,
+        file_size_bytes: work.file_size_bytes,
+        file_name: work.file_name.clone(),
+        pixels: work.pixels.clone(),
+    };
+    if let Ok(mut c) = get_thumb_cache().lock() { c.put(key, val); }
+}
