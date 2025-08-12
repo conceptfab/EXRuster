@@ -9,6 +9,8 @@ use std::rc::Rc;
 use exr::prelude as exr;
 
 use crate::image_processing::process_pixel;
+use core::simd::{f32x4, Simd};
+use std::simd::prelude::SimdFloat;
 use crate::image_cache::{extract_layers_info, find_best_layer, load_specific_layer};
 use crate::progress::ProgressSink;
 use crate::color_processing::compute_rgb_to_srgb_matrix_from_file_for_layer;
@@ -236,25 +238,65 @@ fn generate_single_exr_thumbnail_work(
         let mut pixels: Vec<u8> = vec![0; (thumb_w as usize) * (thumb_h as usize) * 4];
         let raw_width = width as usize;
         let m = color_matrix_rgb_to_srgb;
-        pixels
-            .par_chunks_mut(4)
-            .enumerate()
-            .for_each(|(i, out)| {
+        let total = (thumb_w as usize) * (thumb_h as usize);
+        let par_pixels: Vec<u8> = (0..(total / 4)).into_par_iter().flat_map(|block| {
+            let base = block * 4;
+            let mut rr = [0.0f32; 4];
+            let mut gg = [0.0f32; 4];
+            let mut bb = [0.0f32; 4];
+            let mut aa = [1.0f32; 4];
+            for lane in 0..4 {
+                let i = base + lane;
                 let x = (i as u32) % thumb_w;
                 let y = (i as u32) / thumb_w;
-
                 let src_x = ((x as f32 / scale) as u32).min(width.saturating_sub(1));
                 let src_y = ((y as f32 / scale) as u32).min(height.saturating_sub(1));
                 let src_idx = (src_y as usize) * raw_width + (src_x as usize);
-
                 let (mut r, mut g, mut b, a) = raw_pixels[src_idx];
                 if let Some(mat) = m {
                     let v = mat * Vec3::new(r, g, b);
                     r = v.x; g = v.y; b = v.z;
                 }
-                let px = process_pixel(r, g, b, a, exposure, gamma, tonemap_mode);
-                out[0] = px.r; out[1] = px.g; out[2] = px.b; out[3] = px.a;
-            });
+                rr[lane] = r; gg[lane] = g; bb[lane] = b; aa[lane] = a;
+            }
+            let (r8, g8, b8) = crate::image_processing::tone_map_and_gamma_simd(
+                f32x4::from_array(rr), f32x4::from_array(gg), f32x4::from_array(bb), exposure, gamma, tonemap_mode);
+            let a8 = f32x4::from_array(aa).simd_clamp(Simd::splat(0.0), Simd::splat(1.0));
+            let ra: [f32; 4] = r8.into();
+            let ga: [f32; 4] = g8.into();
+            let ba: [f32; 4] = b8.into();
+            let aa: [f32; 4] = a8.into();
+            
+            let mut chunk = Vec::with_capacity(16);
+            for lane in 0..4 {
+                chunk.push((ra[lane] * 255.0).round().clamp(0.0, 255.0) as u8);
+                chunk.push((ga[lane] * 255.0).round().clamp(0.0, 255.0) as u8);
+                chunk.push((ba[lane] * 255.0).round().clamp(0.0, 255.0) as u8);
+                chunk.push((aa[lane] * 255.0).round().clamp(0.0, 255.0) as u8);
+            }
+            chunk
+        }).collect();
+
+        pixels[..par_pixels.len()].copy_from_slice(&par_pixels);
+
+        for i in (total / 4 * 4)..total {
+            let x = (i as u32) % thumb_w;
+            let y = (i as u32) / thumb_w;
+            let src_x = ((x as f32 / scale) as u32).min(width.saturating_sub(1));
+            let src_y = ((y as f32 / scale) as u32).min(height.saturating_sub(1));
+            let src_idx = (src_y as usize) * raw_width + (src_x as usize);
+            let (mut r, mut g, mut b, a) = raw_pixels[src_idx];
+            if let Some(mat) = m {
+                let v = mat * Vec3::new(r, g, b);
+                r = v.x; g = v.y; b = v.z;
+            }
+            let px = process_pixel(r, g, b, a, exposure, gamma, tonemap_mode);
+            let out_index = i * 4;
+            pixels[out_index + 0] = px.r;
+            pixels[out_index + 1] = px.g;
+            pixels[out_index + 2] = px.b;
+            pixels[out_index + 3] = px.a;
+        }
 
         let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("?").to_string();
         let file_size_bytes = fs::metadata(path).map(|m| m.len()).unwrap_or(0);

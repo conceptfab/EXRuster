@@ -10,6 +10,8 @@ use crate::color_processing::compute_rgb_to_srgb_matrix_from_file_for_layer;
 use glam::{Mat3, Vec3};
 use std::sync::Arc;
 use crate::full_exr_cache::FullExrCacheData;
+use core::simd::{f32x4, Simd};
+use std::simd::prelude::SimdFloat;
 
 /// Zwraca kanoniczny skrót kanału na podstawie aliasów/nazw przyjaznych.
 /// Np. "red"/"Red"/"RED"/"R"/"R8" → "R"; analogicznie dla G/B/A.
@@ -109,21 +111,72 @@ impl ImageCache {
     
     pub fn process_to_image(&self, exposure: f32, gamma: f32, tonemap_mode: i32) -> Image {
         let mut buffer = SharedPixelBuffer::<Rgba8Pixel>::new(self.width, self.height);
-        let slice = buffer.make_mut_slice();
+        let out_slice = buffer.make_mut_slice();
 
-        let m = self.color_matrix_rgb_to_srgb;
+        let color_m = self.color_matrix_rgb_to_srgb;
 
-        self.raw_pixels
-            .par_iter()
-            .zip(slice.par_iter_mut())
-            .for_each(|(&(r0, g0, b0, a), out)| {
-                let (mut r, mut g, mut b) = (r0, g0, b0);
-                if let Some(mat) = m {
+        // SIMD: przetwarzaj paczki po 4 piksele
+        let in_chunks = self.raw_pixels.par_chunks_exact(4);
+        let out_chunks = out_slice.par_chunks_mut(4);
+        in_chunks.zip(out_chunks).for_each(|(in4, out4)| {
+            // Zbierz do rejestrów SIMD
+            let (mut r, mut g, mut b, a) = {
+                let r = f32x4::from_array([in4[0].0, in4[1].0, in4[2].0, in4[3].0]);
+                let g = f32x4::from_array([in4[0].1, in4[1].1, in4[2].1, in4[3].1]);
+                let b = f32x4::from_array([in4[0].2, in4[1].2, in4[2].2, in4[3].2]);
+                let a = f32x4::from_array([in4[0].3, in4[1].3, in4[2].3, in4[3].3]);
+                (r, g, b, a)
+            };
+
+            // Macierz kolorów (primaries → sRGB) jeśli dostępna
+            if let Some(mat) = color_m {
+                let m00 = Simd::splat(mat.x_axis.x);
+                let m01 = Simd::splat(mat.y_axis.x);
+                let m02 = Simd::splat(mat.z_axis.x);
+                let m10 = Simd::splat(mat.x_axis.y);
+                let m11 = Simd::splat(mat.y_axis.y);
+                let m12 = Simd::splat(mat.z_axis.y);
+                let m20 = Simd::splat(mat.x_axis.z);
+                let m21 = Simd::splat(mat.y_axis.z);
+                let m22 = Simd::splat(mat.z_axis.z);
+                let rr = m00 * r + m01 * g + m02 * b;
+                let gg = m10 * r + m11 * g + m12 * b;
+                let bb = m20 * r + m21 * g + m22 * b;
+                r = rr; g = gg; b = bb;
+            }
+
+            let (r8, g8, b8) = crate::image_processing::tone_map_and_gamma_simd(r, g, b, exposure, gamma, tonemap_mode);
+            let a8 = a.simd_clamp(Simd::splat(0.0), Simd::splat(1.0));
+
+            // Zapisz 4 piksele
+            let ra: [f32; 4] = r8.into();
+            let ga: [f32; 4] = g8.into();
+            let ba: [f32; 4] = b8.into();
+            let aa: [f32; 4] = a8.into();
+            for i in 0..4 {
+                out4[i] = Rgba8Pixel {
+                    r: (ra[i] * 255.0).round().clamp(0.0, 255.0) as u8,
+                    g: (ga[i] * 255.0).round().clamp(0.0, 255.0) as u8,
+                    b: (ba[i] * 255.0).round().clamp(0.0, 255.0) as u8,
+                    a: (aa[i] * 255.0).round().clamp(0.0, 255.0) as u8,
+                };
+            }
+        });
+
+        // Remainder (0..3 piksele)
+        let rem = self.raw_pixels.len() % 4;
+        if rem > 0 {
+            let start = self.raw_pixels.len() - rem;
+            for i in 0..rem {
+                let (r0, g0, b0, a0) = self.raw_pixels[start + i];
+                let mut r = r0; let mut g = g0; let mut b = b0;
+                if let Some(mat) = color_m {
                     let v = mat * Vec3::new(r, g, b);
                     r = v.x; g = v.y; b = v.z;
                 }
-                *out = process_pixel(r, g, b, a, exposure, gamma, tonemap_mode);
-            });
+                out_slice[start + i] = process_pixel(r, g, b, a0, exposure, gamma, tonemap_mode);
+            }
+        }
 
         Image::from_rgba8(buffer)
     }
@@ -169,26 +222,47 @@ impl ImageCache {
         
         // Proste nearest neighbor sampling dla szybkości, ale przetwarzanie blokami 4 pikseli
         let m = self.color_matrix_rgb_to_srgb;
+        // SIMD: paczki po 4 piksele miniatury (równolegle na blokach 4 pikseli)
         slice
-            .par_chunks_mut(4)
+            .par_chunks_mut(4) // 4 piksele na blok
             .enumerate()
-            .for_each(|(block_idx, out_rgba)| {
-                // Każdy chunk w buforze służy pojedynczemu pikselowi RGBA8
-                let base_i = block_idx; // jeden piksel
-                let x = (base_i as u32) % thumb_width;
-                let y = (base_i as u32) / thumb_width;
-
-                let src_x = ((x as f32 / scale) as u32).min(self.width.saturating_sub(1));
-                let src_y = ((y as f32 / scale) as u32).min(self.height.saturating_sub(1));
-                let src_idx = (src_y as usize) * (self.width as usize) + (src_x as usize);
-
-                let (mut r, mut g, mut b, a) = self.raw_pixels[src_idx];
-                if let Some(mat) = m {
-                    let v = mat * Vec3::new(r, g, b);
-                    r = v.x; g = v.y; b = v.z;
+            .for_each(|(block_idx, out_block)| {
+                let base = block_idx * 4;
+                let mut rr = [0.0f32; 4];
+                let mut gg = [0.0f32; 4];
+                let mut bb = [0.0f32; 4];
+                let mut aa = [1.0f32; 4];
+                let mut valid = 0usize;
+                for lane in 0..4 {
+                    let i = base + lane;
+                    if i >= (thumb_width as usize) * (thumb_height as usize) { break; }
+                    let x = (i as u32) % thumb_width;
+                    let y = (i as u32) / thumb_width;
+                    let src_x = ((x as f32 / scale) as u32).min(self.width.saturating_sub(1));
+                    let src_y = ((y as f32 / scale) as u32).min(self.height.saturating_sub(1));
+                    let src_idx = (src_y as usize) * (self.width as usize) + (src_x as usize);
+                    let (mut r, mut g, mut b, a) = self.raw_pixels[src_idx];
+                    if let Some(mat) = m {
+                        let v = mat * Vec3::new(r, g, b);
+                        r = v.x; g = v.y; b = v.z;
+                    }
+                    rr[lane] = r; gg[lane] = g; bb[lane] = b; aa[lane] = a; valid += 1;
                 }
-                let px = process_pixel(r, g, b, a, exposure, gamma, tonemap_mode);
-                out_rgba[0] = px;
+                let (r8, g8, b8) = crate::image_processing::tone_map_and_gamma_simd(
+                    f32x4::from_array(rr), f32x4::from_array(gg), f32x4::from_array(bb), exposure, gamma, tonemap_mode);
+                let a8 = f32x4::from_array(aa).simd_clamp(Simd::splat(0.0), Simd::splat(1.0));
+                let ra: [f32; 4] = r8.into();
+                let ga: [f32; 4] = g8.into();
+                let ba: [f32; 4] = b8.into();
+                let aa: [f32; 4] = a8.into();
+                for lane in 0..valid.min(4) {
+                    out_block[lane] = Rgba8Pixel {
+                        r: (ra[lane] * 255.0).round().clamp(0.0, 255.0) as u8,
+                        g: (ga[lane] * 255.0).round().clamp(0.0, 255.0) as u8,
+                        b: (ba[lane] * 255.0).round().clamp(0.0, 255.0) as u8,
+                        a: (aa[lane] * 255.0).round().clamp(0.0, 255.0) as u8,
+                    };
+                }
             });
         
         Image::from_rgba8(buffer)

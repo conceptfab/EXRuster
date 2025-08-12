@@ -1,3 +1,4 @@
+#![feature(portable_simd)]
 #![windows_subsystem = "windows"]
 
 slint::include_modules!();

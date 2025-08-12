@@ -1,11 +1,11 @@
 [package]
 name = "EXruster"
-version = "0.1.3"
+version = "0.1.5"
 edition = "2021"
 authors = ["Your Name <your.email@example.com>"]
 description = "EXR image processing tool"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/yourusername/exruster"
+repository = "https://github.com/conceptfab/exruster"
 keywords = ["exr", "image", "processing"]
 categories = ["multimedia::images"]
 
