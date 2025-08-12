@@ -3,10 +3,8 @@ use ::exr::meta::attribute::AttributeValue;
 use glam::{DMat3, DVec3, Mat3, Vec3};
 
 // Make the main function public
-pub fn compute_rgb_to_srgb_matrix_from_file_for_layer(path: &Path, layer_name: &str) -> anyhow::Result<Mat3> {
-    // Odczytaj wyłącznie nagłówki/atrybuty (bez danych pikseli)
-    // Wczytaj tylko meta-dane (nagłówki) bez pikseli
-    let meta = ::exr::meta::MetaData::read_from_file(path, /*pedantic=*/false)?;
+pub fn compute_rgb_to_srgb_matrix_from_metadata_for_layer(meta: &::exr::meta::MetaData, layer_name: &str) -> anyhow::Result<Mat3> {
+    
     let wanted_lower = layer_name.to_lowercase();
     let mut primaries: Option<(f64, f64, f64, f64, f64, f64, f64, f64)> = None;
 
