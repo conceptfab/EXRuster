@@ -58,42 +58,21 @@ fn apply_gamma_lut(value: f32, gamma_inv: f32) -> f32 {
 }
 
 /// Przetwarza pojedynczy piksel z wartościami HDR na 8-bitowe RGB
-pub fn process_pixel(r: f32, g: f32, b: f32, a: f32, exposure: f32, gamma: f32) -> Rgba8Pixel {
-    let exposure_multiplier = 2.0_f32.powf(exposure);
-    
-    // Sprawdzenie NaN/Inf i clamp do sensownych wartości
-    let safe_r = if r.is_finite() { r.max(0.0) } else { 0.0 };
-    let safe_g = if g.is_finite() { g.max(0.0) } else { 0.0 };
-    let safe_b = if b.is_finite() { b.max(0.0) } else { 0.0 };
+/// tonemap_mode: 0 = ACES, 1 = Reinhard, 2 = Linear (brak tone-map)
+pub fn process_pixel(
+    r: f32,
+    g: f32,
+    b: f32,
+    a: f32,
+    exposure: f32,
+    gamma: f32,
+    tonemap_mode: i32,
+) -> Rgba8Pixel {
+    let (corrected_r, corrected_g, corrected_b) =
+        tone_map_and_gamma(r, g, b, exposure, gamma, tonemap_mode);
+
     let safe_a = if a.is_finite() { a.clamp(0.0, 1.0) } else { 1.0 };
-    
-    // Zastosowanie ekspozycji
-    let exposed_r = safe_r * exposure_multiplier;
-    let exposed_g = safe_g * exposure_multiplier;
-    let exposed_b = safe_b * exposure_multiplier;
-    
-    // ACES tone mapping (lepszy niż Reinhard)
-    let tone_mapped_r = aces_tonemap(exposed_r);
-    let tone_mapped_g = aces_tonemap(exposed_g);
-    let tone_mapped_b = aces_tonemap(exposed_b);
-    
-    // Korekcja wyjściowa: preferuj prawdziwą krzywą sRGB (OETF) dla gamma ~2.2/2.4; w innym wypadku użyj niestandardowej gammy
-    let use_srgb = (gamma - 2.2).abs() < 0.2 || (gamma - 2.4).abs() < 0.2;
-    let (corrected_r, corrected_g, corrected_b) = if use_srgb {
-        (
-            srgb_oetf(tone_mapped_r),
-            srgb_oetf(tone_mapped_g),
-            srgb_oetf(tone_mapped_b),
-        )
-    } else {
-        let gamma_inv = 1.0 / gamma.max(1e-4);
-        (
-            apply_gamma_lut(tone_mapped_r, gamma_inv),
-            apply_gamma_lut(tone_mapped_g, gamma_inv),
-            apply_gamma_lut(tone_mapped_b, gamma_inv),
-        )
-    };
-    
+
     Rgba8Pixel {
         r: (corrected_r * 255.0).round().clamp(0.0, 255.0) as u8,
         g: (corrected_g * 255.0).round().clamp(0.0, 255.0) as u8,
@@ -113,6 +92,12 @@ fn aces_tonemap(x: f32) -> f32 {
     ((x * (a * x + b)) / (x * (c * x + d) + e)).clamp(0.0, 1.0)
 }
 
+/// Reinhard tone mapping: x / (1 + x)
+#[inline]
+fn reinhard_tonemap(x: f32) -> f32 {
+    (x / (1.0 + x)).clamp(0.0, 1.0)
+}
+
 // (usunięto) apply_gamma_fast – zastąpione przez szybsze `apply_gamma_lut`
 
 // usunięto nieużywaną funkcję read_exr_to_slint_image
@@ -125,5 +110,66 @@ fn srgb_oetf(x: f32) -> f32 {
         12.92 * x
     } else {
         1.055 * x.powf(1.0 / 2.4) - 0.055
+    }
+}
+
+/// Wspólny pipeline: ekspozycja → tone-map (wg trybu) → gamma/sRGB
+/// Zwraca wartości w [0, 1] po korekcji gamma.
+#[inline]
+pub fn tone_map_and_gamma(
+    r: f32,
+    g: f32,
+    b: f32,
+    exposure: f32,
+    gamma: f32,
+    tonemap_mode: i32,
+) -> (f32, f32, f32) {
+    let exposure_multiplier = 2.0_f32.powf(exposure);
+
+    // Sprawdzenie NaN/Inf i clamp do sensownych wartości
+    let safe_r = if r.is_finite() { r.max(0.0) } else { 0.0 };
+    let safe_g = if g.is_finite() { g.max(0.0) } else { 0.0 };
+    let safe_b = if b.is_finite() { b.max(0.0) } else { 0.0 };
+
+    // Zastosowanie ekspozycji
+    let exposed_r = safe_r * exposure_multiplier;
+    let exposed_g = safe_g * exposure_multiplier;
+    let exposed_b = safe_b * exposure_multiplier;
+
+    // Tone mapping wg trybu
+    let (tm_r, tm_g, tm_b) = match tonemap_mode {
+        1 => (
+            reinhard_tonemap(exposed_r),
+            reinhard_tonemap(exposed_g),
+            reinhard_tonemap(exposed_b),
+        ),
+        2 => (
+            // Linear: brak tone-map, tylko clamp do [0,1] po ekspozycji
+            exposed_r.clamp(0.0, 1.0),
+            exposed_g.clamp(0.0, 1.0),
+            exposed_b.clamp(0.0, 1.0),
+        ),
+        _ => (
+            aces_tonemap(exposed_r),
+            aces_tonemap(exposed_g),
+            aces_tonemap(exposed_b),
+        ),
+    };
+
+    // Korekcja wyjściowa: preferuj prawdziwą krzywą sRGB (OETF) dla gamma ~2.2/2.4; w innym wypadku użyj niestandardowej gammy
+    let use_srgb = (gamma - 2.2).abs() < 0.2 || (gamma - 2.4).abs() < 0.2;
+    if use_srgb {
+        (
+            srgb_oetf(tm_r),
+            srgb_oetf(tm_g),
+            srgb_oetf(tm_b),
+        )
+    } else {
+        let gamma_inv = 1.0 / gamma.max(1e-4);
+        (
+            apply_gamma_lut(tm_r, gamma_inv),
+            apply_gamma_lut(tm_g, gamma_inv),
+            apply_gamma_lut(tm_b, gamma_inv),
+        )
     }
 }

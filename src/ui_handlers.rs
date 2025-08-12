@@ -16,6 +16,7 @@ use tiff::encoder::{TiffEncoder, colortype::{RGBA32Float, RGB32Float, Gray32Floa
 use tiff::tags::Tag;
 use image::{ImageBuffer, Rgb};
 use glam::Vec3;
+use crate::image_processing::tone_map_and_gamma;
 
 // Import komponentów Slint
 use crate::AppWindow;
@@ -99,7 +100,7 @@ pub fn handle_layer_tree_click(
                             let exposure = ui.get_exposure_value();
                             let gamma = ui.get_gamma_value();
                             // Warstwa → kompozyt RGB (z duplikowaniem brakujących kanałów)
-                            let image = cache.process_to_composite(exposure, gamma, true);
+                            let image = cache.process_to_composite(exposure, gamma, 0, true);
                             ui.set_exr_image(image);
                             push_console(&ui, &console, format!("[layer] {} → mode: RGB (composite)", layer_name));
                             push_console(&ui, &console, format!("[preview] updated → mode: RGB (composite), layer: {}", layer_name));
@@ -201,7 +202,7 @@ pub fn handle_layer_tree_click(
                             push_console(&ui, &console, format!("[preview] updated → mode: Depth (auto-normalized, inverted), {}::{}", active_layer, channel_short));
                         } else {
                             // Kanał → grayscale przez standardowy pipeline
-                            let image = cache.process_to_composite(exposure, gamma, false);
+                            let image = cache.process_to_composite(exposure, gamma, 0, false);
                             ui.set_exr_image(image);
                             ui.set_status_text(format!("Layer: {} | Channel: {} | mode: Grayscale", active_layer, channel_short).into());
                             push_console(&ui, &console, format!("[channel] {}@{} → mode: Grayscale", channel_short, active_layer));
@@ -296,7 +297,7 @@ pub fn load_thumbnails_for_directory(
         let gamma = ui.get_gamma_value();
         let t0 = Instant::now();
         let prog = UiProgress::new(ui.as_weak());
-        match crate::thumbnails::generate_exr_thumbnails_in_dir(directory, 150, exposure, gamma, Some(&prog)) {
+        match crate::thumbnails::generate_exr_thumbnails_in_dir(directory, 150, exposure, gamma, 0, Some(&prog)) {
             Ok(mut thumbs) => {
                 prog.set(0.95, Some("Sorting thumbnails..."));
                 thumbs.sort_by(|a, b| a.file_name.to_lowercase().cmp(&b.file_name.to_lowercase()));
@@ -408,7 +409,7 @@ pub fn handle_open_exr_from_path(
                 let t_proc = Instant::now();
                 // sygnalizuj dłuższe przetwarzanie (duże obrazy) jako indeterminate
                 if pixel_count > 2_000_000 { prog.start_indeterminate(Some("Processing image...")); }
-                let image = cache.process_to_image(exposure, gamma);
+                let image = cache.process_to_image(exposure, gamma, 0);
                 push_console(&ui, &console, format!("{{\"type\":\"timing\",\"op\":\"process_to_image\",\"pixels\":{},\"ms\":{}}}", pixel_count, t_proc.elapsed().as_millis()));
                 push_console(&ui, &console, format!("[preview] image generated: {} pixels (exp: {:.2}, gamma: {:.2})", pixel_count, exposure, gamma));
 
@@ -462,9 +463,9 @@ pub fn handle_parameter_changed_throttled(
             
             // Użyj thumbnail dla real-time preview jeśli obraz jest duży
             let image = if cache.raw_pixels.len() > 2_000_000 {
-                cache.process_to_thumbnail(final_exposure, final_gamma, 2048)
+                cache.process_to_thumbnail(final_exposure, final_gamma, 0, 2048)
             } else {
-                cache.process_to_image(final_exposure, final_gamma)
+                cache.process_to_image(final_exposure, final_gamma, 0)
             };
             
             ui.set_exr_image(image);
@@ -951,10 +952,10 @@ pub fn handle_export_beauty(
             if let Some(ref cache) = *guard {
                 let width = cache.width;
                 let height = cache.height;
-                // Zastosuj current exposure/gamma i sRGB, zapis do 16-bit PNG
+                // Zastosuj current exposure/tone-map/gamma i sRGB, zapis do 16-bit PNG
                 let exposure = ui.get_exposure_value();
                 let gamma = ui.get_gamma_value();
-                let exp_mul = 2.0_f32.powf(exposure);
+                let tonemap_mode: i32 = 0; // ACES domyślnie (Etap 3 pozwoli zmieniać)
                 let mut buf = ImageBuffer::<Rgb<u16>, Vec<u16>>::new(width, height);
                 for (x, y, p) in buf.enumerate_pixels_mut() {
                     let idx = (y as usize) * (width as usize) + (x as usize);
@@ -963,17 +964,10 @@ pub fn handle_export_beauty(
                             let v = mat * Vec3::new(r, g, b);
                             r = v.x; g = v.y; b = v.z;
                         }
-                        r *= exp_mul; g *= exp_mul; b *= exp_mul;
-                        r = r.clamp(0.0, 1.0);
-                        g = g.clamp(0.0, 1.0);
-                        b = b.clamp(0.0, 1.0);
-                        let inv_gamma = if gamma > 0.0 { 1.0 / gamma } else { 1.0 / 2.2 };
-                        r = r.powf(inv_gamma);
-                        g = g.powf(inv_gamma);
-                        b = b.powf(inv_gamma);
-                        let r16 = (r * 65535.0).round().clamp(0.0, 65535.0) as u16;
-                        let g16 = (g * 65535.0).round().clamp(0.0, 65535.0) as u16;
-                        let b16 = (b * 65535.0).round().clamp(0.0, 65535.0) as u16;
+                        let (r_out, g_out, b_out) = tone_map_and_gamma(r, g, b, exposure, gamma, tonemap_mode);
+                        let r16 = (r_out * 65535.0).round().clamp(0.0, 65535.0) as u16;
+                        let g16 = (g_out * 65535.0).round().clamp(0.0, 65535.0) as u16;
+                        let b16 = (b_out * 65535.0).round().clamp(0.0, 65535.0) as u16;
                         *p = image::Rgb([r16, g16, b16]);
                     }
                 }

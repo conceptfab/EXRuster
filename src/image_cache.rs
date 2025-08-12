@@ -100,7 +100,7 @@ impl ImageCache {
     #[inline]
     pub fn color_matrix(&self) -> Option<Mat3> { self.color_matrix_rgb_to_srgb }
     
-    pub fn process_to_image(&self, exposure: f32, gamma: f32) -> Image {
+    pub fn process_to_image(&self, exposure: f32, gamma: f32, tonemap_mode: i32) -> Image {
         let mut buffer = SharedPixelBuffer::<Rgba8Pixel>::new(self.width, self.height);
         let slice = buffer.make_mut_slice();
         
@@ -123,14 +123,14 @@ impl ImageCache {
                         let v = mat * Vec3::new(r, g, b);
                         r = v.x; g = v.y; b = v.z;
                     }
-                    *output_pixel = process_pixel(r, g, b, a, exposure, gamma);
+                    *output_pixel = process_pixel(r, g, b, a, exposure, gamma, tonemap_mode);
                 }
             });
         
         Image::from_rgba8(buffer)
     }
 
-    pub fn process_to_composite(&self, exposure: f32, gamma: f32, lighting_rgb: bool) -> Image {
+    pub fn process_to_composite(&self, exposure: f32, gamma: f32, tonemap_mode: i32, lighting_rgb: bool) -> Image {
         let mut buffer = SharedPixelBuffer::<Rgba8Pixel>::new(self.width, self.height);
         let slice = buffer.make_mut_slice();
 
@@ -147,9 +147,9 @@ impl ImageCache {
                     r = v.x; g = v.y; b = v.z;
                 }
                 if lighting_rgb {
-                    *out = process_pixel(r, g, b, a, exposure, gamma);
+                    *out = process_pixel(r, g, b, a, exposure, gamma, tonemap_mode);
                 } else {
-                    let px = process_pixel(r, g, b, a, exposure, gamma);
+                    let px = process_pixel(r, g, b, a, exposure, gamma, tonemap_mode);
                     let rr = (px.r as f32) / 255.0;
                     let gg = (px.g as f32) / 255.0;
                     let bb = (px.b as f32) / 255.0;
@@ -162,7 +162,7 @@ impl ImageCache {
         Image::from_rgba8(buffer)
     }
     // Nowa metoda dla preview (szybsze przetwarzanie małego obrazka)
-    pub fn process_to_thumbnail(&self, exposure: f32, gamma: f32, max_size: u32) -> Image {
+    pub fn process_to_thumbnail(&self, exposure: f32, gamma: f32, tonemap_mode: i32, max_size: u32) -> Image {
         let scale = (max_size as f32 / self.width.max(self.height) as f32).min(1.0);
         let thumb_width = (self.width as f32 * scale) as u32;
         let thumb_height = (self.height as f32 * scale) as u32;
@@ -185,7 +185,7 @@ impl ImageCache {
                 let v = mat * Vec3::new(r, g, b);
                 r = v.x; g = v.y; b = v.z;
             }
-            *pixel = process_pixel(r, g, b, a, exposure, gamma);
+            *pixel = process_pixel(r, g, b, a, exposure, gamma, tonemap_mode);
         });
         
         Image::from_rgba8(buffer)

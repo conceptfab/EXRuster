@@ -34,6 +34,7 @@ pub fn generate_exr_thumbnails_in_dir(
     thumb_height: u32,
     exposure: f32,
     gamma: f32,
+    tonemap_mode: i32,
     progress: Option<&dyn ProgressSink>,
 ) -> anyhow::Result<Vec<ExrThumbnailInfo>> {
     let files = list_exr_files(directory)?;
@@ -50,7 +51,7 @@ pub fn generate_exr_thumbnails_in_dir(
     let works: Vec<ExrThumbWork> = files
         .par_iter()
         .filter_map(|path| {
-            let res = generate_single_exr_thumbnail_work(path, thumb_height, exposure, gamma);
+            let res = generate_single_exr_thumbnail_work(path, thumb_height, exposure, gamma, tonemap_mode);
             let n = completed.fetch_add(1, Ordering::Relaxed) + 1;
             if let Some(p) = progress {
                 let frac = (n as f32) / (total_files as f32);
@@ -124,6 +125,7 @@ fn generate_single_exr_thumbnail_work(
     thumb_height: u32,
     exposure: f32,
     gamma: f32,
+    tonemap_mode: i32,
 ) -> anyhow::Result<ExrThumbWork> {
     use std::convert::Infallible;
 
@@ -199,7 +201,7 @@ fn generate_single_exr_thumbnail_work(
                     let v = mat * Vec3::new(r, g, b);
                     r = v.x; g = v.y; b = v.z;
                 }
-                let px = process_pixel(r, g, b, a, exposure, gamma);
+                let px = process_pixel(r, g, b, a, exposure, gamma, tonemap_mode);
 
                 let out_index = ((y_out as usize) * (thumb_w as usize) + (x_out as usize)) * 4;
                 {
@@ -250,7 +252,7 @@ fn generate_single_exr_thumbnail_work(
                     let v = mat * Vec3::new(r, g, b);
                     r = v.x; g = v.y; b = v.z;
                 }
-                let px = process_pixel(r, g, b, a, exposure, gamma);
+                let px = process_pixel(r, g, b, a, exposure, gamma, tonemap_mode);
                 out[0] = px.r; out[1] = px.g; out[2] = px.b; out[3] = px.a;
             });
 
