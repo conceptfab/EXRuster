@@ -54,28 +54,22 @@ pub struct ImageCache {
     pub raw_pixels: Vec<(f32, f32, f32, f32)>,
     pub width: u32,
     pub height: u32,
+    pub layers_info: Vec<LayerInfo>,
     pub current_layer_name: String,
     // Opcjonalna macierz konwersji z przestrzeni primaries pliku do sRGB (linear RGB)
     color_matrix_rgb_to_srgb: Option<Mat3>,
     // Cache wszystkich kanałów dla bieżącej warstwy aby uniknąć I/O przy przełączaniu
     pub current_layer_channels: Option<LayerChannels>,
     // Pełne dane EXR (wszystkie warstwy i kanały) w pamięci
-    full_cache: Arc<Mutex<FullExrCacheData>>,
+    full_cache: Arc<FullExrCacheData>,
 }
 
 impl ImageCache {
-    pub fn new_with_full_cache(full_cache: Arc<Mutex<FullExrCacheData>>, progress: Option<&dyn ProgressSink>) -> anyhow::Result<Self> {
-        let full_cache_guard = full_cache.lock().unwrap();
-        let path = &full_cache_guard.path;
-        let metadata = &full_cache_guard.metadata;
-
+    pub fn new_with_full_cache(path: &PathBuf, full_cache: Arc<FullExrCacheData>) -> anyhow::Result<Self> {
         // Najpierw wyciągnij informacje o warstwach (meta), wybierz najlepszą i wczytaj ją jako startowy podgląd
-        let layers_info = extract_layers_info(metadata)?;
+        let layers_info = extract_layers_info(path)?;
         let best_layer = find_best_layer(&layers_info);
-        
-        // Wczytaj dane pikseli dla najlepszej warstwy
-        let layer_channels = full_cache_guard.load_layer_data(&best_layer, progress)?;
-        drop(full_cache_guard); // Drop the guard early
+        let layer_channels = load_all_channels_for_layer_from_full(&full_cache, &best_layer, None)?;
 
         let raw_pixels = compose_composite_from_channels(&layer_channels);
         let width = layer_channels.width;
@@ -89,6 +83,7 @@ impl ImageCache {
             raw_pixels,
             width,
             height,
+            layers_info,
             current_layer_name,
             color_matrix_rgb_to_srgb,
             current_layer_channels: Some(layer_channels),
@@ -96,12 +91,9 @@ impl ImageCache {
         })
     }
     
-    pub fn load_layer(&mut self, layer_name: &str, progress: Option<&dyn ProgressSink>) -> anyhow::Result<()> {
-        let full_cache_guard = self.full_cache.lock().unwrap();
-        let path = &full_cache_guard.path;
+    pub fn load_layer(&mut self, path: &PathBuf, layer_name: &str, progress: Option<&dyn ProgressSink>) -> anyhow::Result<()> {
         // Jednorazowo wczytaj wszystkie kanały wybranej warstwy z pełnego cache i zbuduj kompozyt
-        let layer_channels = full_cache_guard.load_layer_data(layer_name, progress)?;
-        drop(full_cache_guard); // Drop the guard early
+        let layer_channels = load_all_channels_for_layer_from_full(&self.full_cache, layer_name, progress)?;
 
         self.width = layer_channels.width;
         self.height = layer_channels.height;
@@ -344,18 +336,21 @@ impl ImageCache {
 
     /// Zwraca współdzielony wskaźnik do pełnego obrazu EXR trzymanego w pamięci
     #[allow(dead_code)]
-    pub fn full_cache(&self) -> Arc<Mutex<FullExrCacheData>> { self.full_cache.clone() }
+    pub fn full_cache(&self) -> Arc<FullExrCacheData> { self.full_cache.clone() }
 }
 
 
 
-pub(crate) fn extract_layers_info(metadata: &exr::meta::MetaData) -> anyhow::Result<Vec<LayerInfo>> {
+pub(crate) fn extract_layers_info(path: &PathBuf) -> anyhow::Result<Vec<LayerInfo>> {
+        // Odczytaj jedynie meta-dane (nagłówki) bez pikseli
+        let meta = ::exr::meta::MetaData::read_from_file(path, /*pedantic=*/false)?;
+
         // Mapowanie: nazwa_warstwy -> kanały
         let mut layer_map: HashMap<String, Vec<ChannelInfo>> = HashMap::new();
         // Kolejność pierwszego wystąpienia nazw warstw do stabilnego porządku w UI
         let mut layer_order: Vec<String> = Vec::new();
 
-        for header in metadata.headers.iter() {
+        for header in meta.headers.iter() {
             // Preferuj nazwę z atrybutu warstwy; jeśli brak, kanały mogą być w formacie "warstwa.kanał"
             let base_layer_name: Option<String> = header
                 .own_attributes
@@ -388,9 +383,7 @@ pub(crate) fn extract_layers_info(metadata: &exr::meta::MetaData) -> anyhow::Res
         Ok(layers)
 }
 
-pub(crate) fn find_best_layer(metadata: &exr::meta::MetaData) -> String {
-    let layers_info = extract_layers_info(metadata).unwrap_or_default();
-
+pub(crate) fn find_best_layer(layers_info: &[LayerInfo]) -> String {
     // Plan A: Sprawdź czy istnieje warstwa pusta ("") z kanałami R, G, B
     // Ta warstwa zawiera główne kanały obrazu bez prefiksu
     if let Some(layer) = layers_info.iter().find(|l| l.name.is_empty()) {
@@ -720,7 +713,77 @@ impl ImageCache {
 
 // (usunięto) stary loader pojedynczego kanału – zastąpiony cachingiem wszystkich kanałów warstwy
 
+// Pomocnicze: wczytuje wszystkie kanały dla wybranej warstwy do pamięci (bez dalszego I/O przy przełączaniu)
+pub(crate) fn load_all_channels_for_layer_from_full(
+    full: &Arc<FullExrCacheData>,
+    layer_name: &str,
+    _progress: Option<&dyn ProgressSink>,
+) -> anyhow::Result<LayerChannels> {
+    if let Some(p) = _progress { p.start_indeterminate(Some("Reading layer channels...")); }
 
+    let wanted_lower = layer_name.to_lowercase();
+
+    for layer in full.layers.iter() {
+        let lname_lower = layer.name.to_lowercase();
+        let matches = if wanted_lower.is_empty() && lname_lower.is_empty() {
+            true
+        } else if wanted_lower.is_empty() || lname_lower.is_empty() {
+            false
+        } else {
+            lname_lower == wanted_lower || lname_lower.contains(&wanted_lower) || wanted_lower.contains(&lname_lower)
+        };
+        if matches {
+            if let Some(p) = _progress { p.set(0.35, Some("Copying channel data...")); }
+            let channel_names = layer.channel_names.clone();
+            // Zmieniono: Utwórz Arc<[f32]> z istniejących danych
+            let channel_data = Arc::from(layer.channel_data.as_slice());
+            if let Some(p) = _progress { p.finish(Some("Layer channels loaded")); }
+            return Ok(LayerChannels { layer_name: layer_name.to_string(), width: layer.width, height: layer.height, channel_names, channel_data });
+        }
+    }
+
+    if let Some(p) = _progress { p.reset(); }
+    anyhow::bail!(format!("Nie znaleziono warstwy '{}'", layer_name))
+}
+
+/// Zachowany wariant czytający z dysku (używany w ścieżkach niezależnych od globalnego cache)
+#[allow(dead_code)]
+pub(crate) fn load_all_channels_for_layer(
+    path: &PathBuf,
+    layer_name: &str,
+    _progress: Option<&dyn ProgressSink>,
+) -> anyhow::Result<LayerChannels> {
+    let any_image = exr::read_all_flat_layers_from_file(path)?;
+    let wanted_lower = layer_name.to_lowercase();
+    for layer in any_image.layer_data.iter() {
+        let width = layer.size.width() as u32;
+        let height = layer.size.height() as u32;
+        let pixel_count = (width as usize) * (height as usize);
+        let base_attr: Option<String> = layer.attributes.layer_name.as_ref().map(|s| s.to_string());
+        let lname_lower = base_attr.as_deref().unwrap_or("").to_lowercase();
+        let matches = if wanted_lower.is_empty() && lname_lower.is_empty() {
+            true
+        } else if wanted_lower.is_empty() || lname_lower.is_empty() {
+            false
+        } else {
+            lname_lower == wanted_lower || lname_lower.contains(&wanted_lower) || wanted_lower.contains(&lname_lower)
+        };
+        if matches {
+            let num_channels = layer.channel_data.list.len();
+            let mut channel_names: Vec<String> = Vec::with_capacity(num_channels);
+            let mut channel_data_vec: Vec<f32> = Vec::with_capacity(pixel_count * num_channels); // Temporary Vec
+            for (ci, ch) in layer.channel_data.list.iter().enumerate() {
+                let full = ch.name.to_string();
+                let (_lname, short) = split_layer_and_short(&full, base_attr.as_deref());
+                channel_names.push(short);
+                for i in 0..pixel_count { channel_data_vec.push(layer.channel_data.list[ci].sample_data.value_by_flat_index(i).to_f32()); }
+            }
+            let channel_data = Arc::from(channel_data_vec.into_boxed_slice()); // Convert Vec to Arc<[f32]>
+            return Ok(LayerChannels { layer_name: layer_name.to_string(), width, height, channel_names, channel_data });
+        }
+    }
+    anyhow::bail!(format!("Nie znaleziono warstwy '{}'", layer_name))
+}
 
 // Pomocnicze: buduje kompozyt RGB z mapy kanałów
 fn compose_composite_from_channels(layer_channels: &LayerChannels) -> Vec<(f32, f32, f32, f32)> {

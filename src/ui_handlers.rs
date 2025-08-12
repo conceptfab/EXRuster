@@ -25,7 +25,7 @@ pub type ImageCacheType = Arc<Mutex<Option<ImageCache>>>;
 pub type CurrentFilePathType = Arc<Mutex<Option<PathBuf>>>;
 pub type ConsoleModel = Rc<VecModel<SharedString>>;
 use crate::full_exr_cache::{FullExrCacheData, build_full_exr_cache};
-pub type FullExrCache = Arc<Mutex<Option<FullExrCacheData>>>;
+pub type FullExrCache = Arc<Mutex<Option<std::sync::Arc<FullExrCacheData>>>>;
 
 /// Dodaje linię do modelu konsoli i aktualizuje tekst w `TextEdit` (console-text)
 pub fn push_console(ui: &crate::AppWindow, console: &ConsoleModel, line: String) {
@@ -95,7 +95,7 @@ pub fn handle_layer_tree_click(
                 if let Some(ref mut cache) = *cache_guard {
                     let prog = UiProgress::new(ui.as_weak());
                     prog.start_indeterminate(Some("Loading layer..."));
-                    match cache.load_layer(&layer_name, Some(&prog)) {
+                    match cache.load_layer(&path, &layer_name, Some(&prog)) {
                         Ok(()) => {
                             // Pobierz aktualne wartości ekspozycji i gammy
                             let exposure = ui.get_exposure_value();
@@ -106,9 +106,7 @@ pub fn handle_layer_tree_click(
                             ui.set_exr_image(image);
                             push_console(&ui, &console, format!("[layer] {} → mode: RGB (composite)", layer_name));
                             push_console(&ui, &console, format!("[preview] updated → mode: RGB (composite), layer: {}", layer_name));
-                            let full_cache_guard = cache.full_cache.lock().unwrap();
-                            let layers_info = crate::image_cache::extract_layers_info(&full_cache_guard.metadata).unwrap_or_default();
-                            let channels = layers_info
+                            let channels = cache.layers_info
                                 .iter()
                                 .find(|l| l.name == layer_name)
                                 .map(|l| l.channels.iter().map(|c| c.name.clone()).collect::<Vec<_>>().join(", "))
@@ -374,61 +372,6 @@ pub fn handle_open_exr_from_path(
         push_console(&ui, &console, format!("{{\"event\":\"file.open\",\"path\":\"{}\"}}", path.display()));
 
         // Zbuduj i wyświetl metadane w zakładce Meta
-        let full_cache_data = match crate::full_exr_cache::FullExrCacheData::new(path.clone(), Some(&prog)) {
-            Ok(c) => c,
-            Err(e) => {
-                ui.set_status_text(format!("Read error '{}': {}", get_file_name(&path), e).into());
-                push_console(&ui, &console, format!("[error] reading file '{}': {}", get_file_name(&path), e));
-                prog.reset();
-                return;
-            }
-        };
-        let metadata = &full_cache_data.metadata;
-
-        let full_cache_data = match crate::full_exr_cache::FullExrCacheData::new(path.clone(), Some(&prog)) {
-            Ok(c) => c,
-            Err(e) => {
-                ui.set_status_text(format!("Read error '{}': {}", get_file_name(&path), e).into());
-                push_console(&ui, &console, format!("[error] reading file '{}': {}", get_file_name(&path), e));
-                prog.reset();
-                return;
-            }
-        };
-        let metadata = &full_cache_data.metadata;
-
-        let full_cache_data = match crate::full_exr_cache::FullExrCacheData::new(path.clone(), Some(&prog)) {
-            Ok(c) => c,
-            Err(e) => {
-                ui.set_status_text(format!("Read error '{}': {}", get_file_name(&path), e).into());
-                push_console(&ui, &console, format!("[error] reading file '{}': {}", get_file_name(&path), e));
-                prog.reset();
-                return;
-            }
-        };
-        let metadata = &full_cache_data.metadata;
-
-        let full_cache_data = match crate::full_exr_cache::FullExrCacheData::new(path.clone(), Some(&prog)) {
-            Ok(c) => c,
-            Err(e) => {
-                ui.set_status_text(format!("Read error '{}': {}", get_file_name(&path), e).into());
-                push_console(&ui, &console, format!("[error] reading file '{}': {}", get_file_name(&path), e));
-                prog.reset();
-                return;
-            }
-        };
-        let metadata = &full_cache_data.metadata;
-
-        let full_cache_data = match crate::full_exr_cache::FullExrCacheData::new(path.clone(), Some(&prog)) {
-            Ok(c) => c,
-            Err(e) => {
-                ui.set_status_text(format!("Read error '{}': {}", get_file_name(&path), e).into());
-                push_console(&ui, &console, format!("[error] reading file '{}': {}", get_file_name(&path), e));
-                prog.reset();
-                return;
-            }
-        };
-        let metadata = &full_cache_data.metadata;
-
         match exr_metadata::read_and_group_metadata(&path) {
             Ok(meta) => {
                 // Tekstowa wersja (zostawiona jako fallback)
