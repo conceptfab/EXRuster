@@ -3,7 +3,6 @@ use slint::Rgba8Pixel;
 /// Przetwarza pojedynczy piksel z wartościami HDR na 8-bitowe RGB
 pub fn process_pixel(r: f32, g: f32, b: f32, a: f32, exposure: f32, gamma: f32) -> Rgba8Pixel {
     let exposure_multiplier = 2.0_f32.powf(exposure);
-    let gamma_inv = 1.0 / gamma.max(1e-4);
     
     // Sprawdzenie NaN/Inf i clamp do sensownych wartości
     let safe_r = if r.is_finite() { r.max(0.0) } else { 0.0 };
@@ -21,10 +20,22 @@ pub fn process_pixel(r: f32, g: f32, b: f32, a: f32, exposure: f32, gamma: f32) 
     let tone_mapped_g = aces_tonemap(exposed_g);
     let tone_mapped_b = aces_tonemap(exposed_b);
     
-    // Optymalizowana gamma correction
-    let corrected_r = apply_gamma_fast(tone_mapped_r, gamma_inv);
-    let corrected_g = apply_gamma_fast(tone_mapped_g, gamma_inv);
-    let corrected_b = apply_gamma_fast(tone_mapped_b, gamma_inv);
+    // Korekcja wyjściowa: preferuj prawdziwą krzywą sRGB (OETF) dla gamma ~2.2/2.4; w innym wypadku użyj niestandardowej gammy
+    let use_srgb = (gamma - 2.2).abs() < 0.2 || (gamma - 2.4).abs() < 0.2;
+    let (corrected_r, corrected_g, corrected_b) = if use_srgb {
+        (
+            srgb_oetf(tone_mapped_r),
+            srgb_oetf(tone_mapped_g),
+            srgb_oetf(tone_mapped_b),
+        )
+    } else {
+        let gamma_inv = 1.0 / gamma.max(1e-4);
+        (
+            apply_gamma_fast(tone_mapped_r, gamma_inv),
+            apply_gamma_fast(tone_mapped_g, gamma_inv),
+            apply_gamma_fast(tone_mapped_b, gamma_inv),
+        )
+    };
     
     Rgba8Pixel {
         r: (corrected_r * 255.0).round().clamp(0.0, 255.0) as u8,
@@ -64,3 +75,14 @@ fn apply_gamma_fast(value: f32, gamma_inv: f32) -> f32 {
 }
 
 // usunięto nieużywaną funkcję read_exr_to_slint_image
+
+#[inline]
+fn srgb_oetf(x: f32) -> f32 {
+    // Prawdziwa krzywa sRGB (OETF), zastosowana do wartości w [0,1]
+    let x = x.clamp(0.0, 1.0);
+    if x <= 0.003_130_8 {
+        12.92 * x
+    } else {
+        1.055 * x.powf(1.0 / 2.4) - 0.055
+    }
+}
