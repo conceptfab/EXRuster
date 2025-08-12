@@ -56,7 +56,7 @@ Planowane zmiany:
     1.  **`ui/appwindow.slint`**:
         *   Dodać nową właściwość `property <int> tonemap_mode: 0;`.
         *   Dodać nowy `callback tonemap_mode_changed(int);`.
-        *   Wstawić komponent `ComboBox` obok suwaków ekspozycji/gammy, z opcjami "ACES", "Reinhard", "Linear". Powiązać go z nową właściwością i callbackiem.
+        *   Wstawić komponenty `Checkbox` obok suwaków ekspozycji/gammy, z opcjami "ACES", "Reinhard", "Linear". Powiązać go z nową właściwością i callbackiem.
     2.  **`main.rs` / `ui_handlers.rs`**:
         *   Dodać nową funkcję obsługi zdarzenia `on_tonemap_mode_changed`.
         *   Wewnątrz tej funkcji, odświeżyć obraz, wywołując `process_to_image` (lub `process_to_thumbnail`) z nowym trybem.
