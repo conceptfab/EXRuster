@@ -8,7 +8,6 @@ use crate::file_operations::{open_file_dialog, get_file_name};
 use std::rc::Rc;
 // removed unused: use exr::prelude as exr;
 use crate::exr_metadata;
-use exr::prelude as exr;
 use crate::progress::{ProgressSink, UiProgress};
 use crate::utils::{get_channel_info, normalize_channel_name, human_size};
 use std::fs::File;
@@ -25,6 +24,8 @@ use crate::ThumbItem;
 pub type ImageCacheType = Arc<Mutex<Option<ImageCache>>>;
 pub type CurrentFilePathType = Arc<Mutex<Option<PathBuf>>>;
 pub type ConsoleModel = Rc<VecModel<SharedString>>;
+use crate::full_exr_cache::{FullExrCacheData, build_full_exr_cache};
+pub type FullExrCache = Arc<Mutex<Option<std::sync::Arc<FullExrCacheData>>>>;
 
 /// Dodaje linię do modelu konsoli i aktualizuje tekst w `TextEdit` (console-text)
 pub fn push_console(ui: &crate::AppWindow, console: &ConsoleModel, line: String) {
@@ -339,6 +340,7 @@ pub fn handle_open_exr(
     current_file_path: CurrentFilePathType,
     image_cache: ImageCacheType,
     console: ConsoleModel,
+    full_exr_cache: FullExrCache,
 ) {
     if let Some(ui) = ui_handle.upgrade() {
         let prog = UiProgress::new(ui.as_weak());
@@ -346,7 +348,7 @@ pub fn handle_open_exr(
         push_console(&ui, &console, "[file] opening EXR file".to_string());
 
         if let Some(path) = open_file_dialog() {
-            handle_open_exr_from_path(ui_handle, current_file_path, image_cache, console, path);
+            handle_open_exr_from_path(ui_handle, current_file_path, image_cache, console, full_exr_cache, path);
         } else {
             prog.reset();
             ui.set_status_text("File selection canceled".into());
@@ -361,6 +363,7 @@ pub fn handle_open_exr_from_path(
     current_file_path: CurrentFilePathType,
     image_cache: ImageCacheType,
     console: ConsoleModel,
+    full_exr_cache: FullExrCache,
     path: PathBuf,
 ) {
     if let Some(ui) = ui_handle.upgrade() {
@@ -393,11 +396,24 @@ pub fn handle_open_exr_from_path(
         // Zapisz ścieżkę do pliku
         { *lock_or_recover(&current_file_path) = Some(path.clone()); }
 
-        // Utwórz cache obrazu (jednorazowy odczyt z dysku)
+        // Jednorazowo zbuduj pełny cache wszystkich warstw/kanałów i zapisz do globalnego cache
+        prog.set(0.22, Some("Reading EXR (full)..."));
+        let full = match build_full_exr_cache(&path, Some(&prog)) {
+            Ok(c) => std::sync::Arc::new(c),
+            Err(e) => {
+                ui.set_status_text(format!("Read error '{}': {}", get_file_name(&path), e).into());
+                push_console(&ui, &console, format!("[error] reading file '{}': {}", get_file_name(&path), e));
+                prog.reset();
+                return;
+            }
+        };
+        { let mut g = lock_or_recover(&full_exr_cache); *g = Some(full.clone()); }
+
+        // Utwórz cache obrazu z już wczytanego obrazu (bez dodatkowego I/O)
         prog.set(0.25, Some("Creating image cache..."));
         push_console(&ui, &console, "[cache] creating image cache".to_string());
         let t_new = Instant::now();
-        match ImageCache::new(&path) {
+        match crate::image_cache::ImageCache::new_with_full_cache(&path, full.clone()) {
             Ok(cache) => {
                 prog.set(0.45, Some("Cache created, processing..."));
                 push_console(&ui, &console, "[cache] cache created".to_string());
@@ -583,9 +599,10 @@ pub fn handle_export_convert(
     current_file_path: CurrentFilePathType,
     image_cache: ImageCacheType,
     console: ConsoleModel,
+    full_exr_cache: FullExrCache,
 ) {
     if let Some(ui) = ui_handle.upgrade() {
-        let Some(path) = with_current_path(&current_file_path) else {
+        let Some(_path) = with_current_path(&current_file_path) else {
             ui.set_status_text("Error: No file loaded".into());
             return;
         };
@@ -649,11 +666,11 @@ pub fn handle_export_convert(
                     }
                 };
 
-                // Jednorazowy odczyt wszystkich płaskich warstw EXR
-                let any_image = match exr::read_all_flat_layers_from_file(&path) {
-                    Ok(img) => img,
-                    Err(e) => {
-                        ui.set_status_text(format!("Export error (read EXR): {}", e).into());
+                // Użyj globalnego cache pełnych danych EXR
+                let full = {
+                    let g = lock_or_recover(&full_exr_cache);
+                    if let Some(ref img) = *g { img.clone() } else {
+                        ui.set_status_text("Export error: EXR cache is empty".into());
                         prog.reset();
                         return;
                     }
@@ -679,33 +696,14 @@ pub fn handle_export_convert(
 
                     let display_name = if layer.name.is_empty() { "Beauty".to_string() } else { layer.name.clone() };
 
-                    // Znajdź dopasowaną grupę w jednorazowo odczytanym obrazie
+                    // Znajdź dopasowaną warstwę w pełnym cache
                     let wanted_lower = layer.name.to_lowercase();
-                    let mut found_group: Option<usize> = None;
-                    for (li, phys_layer) in any_image.layer_data.iter().enumerate() {
-                        let base_attr: Option<String> = phys_layer.attributes.layer_name.as_ref().map(|s| s.to_string());
-                        let lname = base_attr.unwrap_or_else(|| "".to_string());
-                        let lname_lower = lname.to_lowercase();
-                        let matches = if wanted_lower.is_empty() && lname_lower.is_empty() {
-                            true
-                        } else if wanted_lower.is_empty() || lname_lower.is_empty() {
-                            false
-                        } else {
-                            lname_lower == wanted_lower || lname_lower.contains(&wanted_lower) || wanted_lower.contains(&lname_lower)
-                        };
-                        if matches {
-                            found_group = Some(li);
-                            break;
-                        }
-                    }
-
-                    let Some(group_index) = found_group else {
-                        push_console(&ui, &console, format!("[export] skip '{}' (group not found)", display_name));
+                    let phys_layer = if let Some(pl) = crate::full_exr_cache::find_layer_by_name(&full, &wanted_lower) { pl } else {
+                        push_console(&ui, &console, format!("[export] skip '{}' (layer not found)", display_name));
                         continue;
                     };
-                    let phys_layer = &any_image.layer_data[group_index];
-                    let width = phys_layer.size.width() as u32;
-                    let height = phys_layer.size.height() as u32;
+                    let width = phys_layer.width as u32;
+                    let height = phys_layer.height as u32;
                     let pixel_count = (width as usize) * (height as usize);
 
                     // Zmapuj indeksy kanałów
@@ -713,11 +711,11 @@ pub fn handle_export_convert(
                     let mut g_idx: Option<usize> = None;
                     let mut b_idx: Option<usize> = None;
                     let mut a_idx: Option<usize> = None;
-                    let mut group_indices: Vec<usize> = Vec::with_capacity(phys_layer.channel_data.list.len());
-                    for (idx, ch) in phys_layer.channel_data.list.iter().enumerate() {
-                        let full = ch.name.to_string();
-                        let base_attr: Option<String> = phys_layer.attributes.layer_name.as_ref().map(|s| s.to_string());
-                        let (_lname, short) = crate::utils::split_layer_and_short(&full, base_attr.as_deref());
+                    // Stabilna kolejność kanałów: posortuj po nazwie klucza
+                    let mut channel_list: Vec<(&String, &Vec<f32>)> = phys_layer.channels.iter().collect();
+                    channel_list.sort_by(|a,b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
+                    let mut group_indices: Vec<usize> = Vec::with_capacity(channel_list.len());
+                    for (idx, (short, _vals)) in channel_list.iter().enumerate() {
                         group_indices.push(idx);
                         let su = short.to_ascii_uppercase();
                         match su.as_str() {
@@ -747,10 +745,10 @@ pub fn handle_export_convert(
                         if has_a {
                             let mut buf: Vec<f32> = vec![0.0; pixel_count * 4];
                             for i in 0..pixel_count {
-                                let r = phys_layer.channel_data.list[ri].sample_data.value_by_flat_index(i).to_f32();
-                                let g = phys_layer.channel_data.list[gi].sample_data.value_by_flat_index(i).to_f32();
-                                let b = phys_layer.channel_data.list[bi].sample_data.value_by_flat_index(i).to_f32();
-                                let a = a_idx.map(|ci| phys_layer.channel_data.list[ci].sample_data.value_by_flat_index(i).to_f32()).unwrap_or(1.0);
+                                let r = channel_list[ri].1[i];
+                                let g = channel_list[gi].1[i];
+                                let b = channel_list[bi].1[i];
+                                let a = a_idx.map(|ci| channel_list[ci].1[i]).unwrap_or(1.0);
                                 let base = i * 4;
                                 buf[base + 0] = r;
                                 buf[base + 1] = g;
@@ -765,9 +763,9 @@ pub fn handle_export_convert(
                         } else {
                             let mut buf: Vec<f32> = vec![0.0; pixel_count * 3];
                             for i in 0..pixel_count {
-                                let r = phys_layer.channel_data.list[ri].sample_data.value_by_flat_index(i).to_f32();
-                                let g = phys_layer.channel_data.list[gi].sample_data.value_by_flat_index(i).to_f32();
-                                let b = phys_layer.channel_data.list[bi].sample_data.value_by_flat_index(i).to_f32();
+                                let r = channel_list[ri].1[i];
+                                let g = channel_list[gi].1[i];
+                                let b = channel_list[bi].1[i];
                                 let base = i * 3;
                                 buf[base + 0] = r;
                                 buf[base + 1] = g;
@@ -792,10 +790,7 @@ pub fn handle_export_convert(
                         let wanted = if has_r { "R" } else if has_g { "G" } else { "B" };
                         // znajdź indeks kanału
                         let mut ci: Option<usize> = None;
-                        for (idx, ch) in phys_layer.channel_data.list.iter().enumerate() {
-                            let full = ch.name.to_string();
-                            let base_attr: Option<String> = phys_layer.attributes.layer_name.as_ref().map(|s| s.to_string());
-                            let (_lname, short) = crate::utils::split_layer_and_short(&full, base_attr.as_deref());
+                        for (idx, (short, _)) in channel_list.iter().enumerate() {
                             if short.eq_ignore_ascii_case(wanted) || short.to_ascii_uppercase().starts_with(&wanted.to_ascii_uppercase()) {
                                 ci = Some(idx);
                                 break;
@@ -806,10 +801,7 @@ pub fn handle_export_convert(
                             continue;
                         };
                         let mut buf: Vec<f32> = vec![0.0; pixel_count];
-                        for i in 0..pixel_count {
-                            let v = phys_layer.channel_data.list[ci].sample_data.value_by_flat_index(i).to_f32();
-                            buf[i] = v;
-                        }
+                        for i in 0..pixel_count { buf[i] = channel_list[ci].1[i]; }
                         if let Err(e) = write_tiff_page_gray_f32(&mut tiff_encoder, width, height, &display_name, &buf) {
                             ui.set_status_text(format!("Export error (TIFF Gray): {}", e).into());
                             prog.reset();
@@ -828,11 +820,8 @@ pub fn handle_export_convert(
                         let ch_name = &layer.channels[0].name;
                         // znajdź indeks kanału po krótkiej nazwie
                         let mut ci: Option<usize> = None;
-                        for (idx, ch) in phys_layer.channel_data.list.iter().enumerate() {
-                            let full = ch.name.to_string();
-                            let base_attr: Option<String> = phys_layer.attributes.layer_name.as_ref().map(|s| s.to_string());
-                            let (_lname, short) = crate::utils::split_layer_and_short(&full, base_attr.as_deref());
-                            if short == *ch_name {
+                        for (idx, (short, _)) in channel_list.iter().enumerate() {
+                            if short.as_str() == ch_name.as_str() {
                                 ci = Some(idx);
                                 break;
                             }
@@ -842,10 +831,7 @@ pub fn handle_export_convert(
                             continue;
                         };
                         let mut buf: Vec<f32> = vec![0.0; pixel_count];
-                        for i in 0..pixel_count {
-                            let v = phys_layer.channel_data.list[ci].sample_data.value_by_flat_index(i).to_f32();
-                            buf[i] = v;
-                        }
+                        for i in 0..pixel_count { buf[i] = channel_list[ci].1[i]; }
                         if let Err(e) = write_tiff_page_gray_f32(&mut tiff_encoder, width, height, &display_name, &buf) {
                             ui.set_status_text(format!("Export error (TIFF Gray): {}", e).into());
                             prog.reset();
@@ -993,6 +979,7 @@ pub fn handle_export_channels(
     current_file_path: CurrentFilePathType,
     image_cache: ImageCacheType,
     console: ConsoleModel,
+    full_exr_cache: FullExrCache,
 ) {
     if let Some(ui) = ui_handle.upgrade() {
         let Some(path) = with_current_path(&current_file_path) else {
@@ -1006,11 +993,11 @@ pub fn handle_export_channels(
             {
                 let guard = lock_or_recover(&image_cache);
                 if let Some(ref cache) = *guard {
-                    // Jednorazowy odczyt wszystkich płaskich warstw EXR
-                    let any_image = match exr::read_all_flat_layers_from_file(&path) {
-                        Ok(img) => img,
-                        Err(e) => {
-                            ui.set_status_text(format!("Export error (read EXR): {}", e).into());
+                    // Pobierz pełny cache danych
+                    let full = {
+                        let g = lock_or_recover(&full_exr_cache);
+                        if let Some(ref img) = *g { img.clone() } else {
+                            ui.set_status_text("Export error: EXR cache is empty".into());
                             prog.reset();
                             return;
                         }
@@ -1026,49 +1013,28 @@ pub fn handle_export_channels(
 
                     for layer in &cache.layers_info {
                         let display_layer = if layer.name.is_empty() { "Beauty".to_string() } else { layer.name.clone() };
-                        // Znajdź odpowiadającą fizyczną warstwę
+                        // Znajdź odpowiadającą warstwę w pełnym cache
                         let wanted_lower = layer.name.to_lowercase();
-                        let mut found_group: Option<usize> = None;
-                        for (li, phys_layer) in any_image.layer_data.iter().enumerate() {
-                            let base_attr: Option<String> = phys_layer.attributes.layer_name.as_ref().map(|s| s.to_string());
-                            let lname = base_attr.unwrap_or_else(|| "".to_string());
-                            let lname_lower = lname.to_lowercase();
-                            let matches = if wanted_lower.is_empty() && lname_lower.is_empty() {
-                                true
-                            } else if wanted_lower.is_empty() || lname_lower.is_empty() {
-                                false
-                            } else {
-                                lname_lower == wanted_lower || lname_lower.contains(&wanted_lower) || wanted_lower.contains(&lname_lower)
-                            };
-                            if matches { found_group = Some(li); break; }
-                        }
-                        let Some(group_index) = found_group else {
-                            push_console(&ui, &console, format!("[export] skip layer '{}' (group not found)", display_layer));
+                        let phys_layer = if let Some(pl) = crate::full_exr_cache::find_layer_by_name(&full, &wanted_lower) { pl } else {
+                            push_console(&ui, &console, format!("[export] skip layer '{}' (layer not found)", display_layer));
                             continue;
                         };
-                        let phys_layer = &any_image.layer_data[group_index];
-                        let width = phys_layer.size.width() as u32;
-                        let height = phys_layer.size.height() as u32;
+                        let width = phys_layer.width as u32;
+                        let height = phys_layer.height as u32;
                         let pixel_count = (width as usize) * (height as usize);
+
+                        // Przygotuj stabilną listę kanałów
+                        let mut channel_list: Vec<(&String, &Vec<f32>)> = phys_layer.channels.iter().collect();
+                        channel_list.sort_by(|a,b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
 
                         for ch in &layer.channels {
                             let ch_upper = ch.name.to_ascii_uppercase();
-                            // znajdź indeks kanału w tej grupie po krótkiej nazwie
+                            // znajdź indeks kanału po krótkiej nazwie
                             let mut channel_index: Option<usize> = None;
-                            for (idx, chd) in phys_layer.channel_data.list.iter().enumerate() {
-                                let full = chd.name.to_string();
-                                let base_attr: Option<String> = phys_layer.attributes.layer_name.as_ref().map(|s| s.to_string());
-                                let (_lname, short) = crate::utils::split_layer_and_short(&full, base_attr.as_deref());
-                                let short_upper = short.to_ascii_uppercase();
-                                if short_upper == ch_upper || short_upper.starts_with(&ch_upper) {
-                                    channel_index = Some(idx);
-                                    break;
-                                }
-                                // Dodatkowe dopasowanie dla Depth
-                                if ch_upper == "Z" && (short_upper == "Z" || short_upper.contains("DEPTH") || short_upper == "DISTANCE") {
-                                    channel_index = Some(idx);
-                                    break;
-                                }
+                            for (idx, (short, _)) in channel_list.iter().enumerate() {
+                                let su = short.to_ascii_uppercase();
+                                if su == ch_upper || su.starts_with(&ch_upper) { channel_index = Some(idx); break; }
+                                if ch_upper == "Z" && (su == "Z" || su.contains("DEPTH") || su == "DISTANCE") { channel_index = Some(idx); break; }
                             }
                             let Some(ci) = channel_index else {
                                 push_console(&ui, &console, format!("[export] skip channel '{}::{}' (not found)", display_layer, ch.name));
@@ -1077,10 +1043,7 @@ pub fn handle_export_channels(
 
                             // Zbierz wartości kanału
                             let mut values: Vec<f32> = Vec::with_capacity(pixel_count);
-                            for i in 0..pixel_count {
-                                let v = phys_layer.channel_data.list[ci].sample_data.value_by_flat_index(i).to_f32();
-                                values.push(v);
-                            }
+                            for i in 0..pixel_count { values.push(channel_list[ci].1[i]); }
 
                             // Renderuj do 16-bit grayscale
                             let mut buf = ImageBuffer::<image::Luma<u16>, Vec<u16>>::new(width, height);

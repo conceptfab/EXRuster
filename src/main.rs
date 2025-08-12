@@ -11,10 +11,11 @@ mod exr_metadata;
 mod progress;
 mod utils;
 mod color_processing;
+mod full_exr_cache;
 
 use std::sync::{Arc, Mutex};
 use crate::ui_handlers::push_console;
-use ui_handlers::{ImageCacheType, CurrentFilePathType};
+use ui_handlers::{ImageCacheType, CurrentFilePathType, FullExrCache};
 use slint::{VecModel, SharedString, Model};
 use std::rc::Rc;
 
@@ -51,9 +52,10 @@ fn main() -> Result<(), slint::PlatformError> {
     
     let image_cache: ImageCacheType = Arc::new(Mutex::new(None));
     let current_file_path: CurrentFilePathType = Arc::new(Mutex::new(None));
+    let full_exr_cache: FullExrCache = Arc::new(Mutex::new(None));
 
     // Setup UI callbacks...
-    let console_model = setup_ui_callbacks(&ui, image_cache.clone(), current_file_path.clone());
+    let console_model = setup_ui_callbacks(&ui, image_cache.clone(), current_file_path.clone(), full_exr_cache.clone());
 
     // Obsługa argumentów uruchomieniowych: otwórz wskazany plik EXR i ewentualnie wczytaj miniatury folderu
     {
@@ -74,6 +76,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     current_file_path.clone(),
                     image_cache.clone(),
                     console_model.clone(),
+                    full_exr_cache.clone(),
                     first_exr.clone(),
                 );
 
@@ -184,6 +187,7 @@ fn setup_menu_callbacks(
     current_file_path: CurrentFilePathType,
     image_cache: ImageCacheType,
     console_model: Rc<VecModel<SharedString>>,
+    full_exr_cache: FullExrCache,
 ) {
     ui.on_clear_console({
         let ui_handle = ui.as_weak();
@@ -209,8 +213,9 @@ fn setup_menu_callbacks(
         let current_file_path = current_file_path.clone();
         let image_cache = image_cache.clone();
         let console = console_model.clone(); // Use console_model directly
+        let full_exr_cache = full_exr_cache.clone();
         move || {
-            ui_handlers::handle_open_exr(ui_handle.clone(), current_file_path.clone(), image_cache.clone(), console.clone());
+            ui_handlers::handle_open_exr(ui_handle.clone(), current_file_path.clone(), image_cache.clone(), console.clone(), full_exr_cache.clone());
         }
     });
 
@@ -220,8 +225,9 @@ fn setup_menu_callbacks(
         let current_file_path = current_file_path.clone();
         let image_cache = image_cache.clone();
         let console = console_model.clone();
+        let full_exr_cache = full_exr_cache.clone();
         move || {
-            ui_handlers::handle_export_convert(ui_handle.clone(), current_file_path.clone(), image_cache.clone(), console.clone());
+            ui_handlers::handle_export_convert(ui_handle.clone(), current_file_path.clone(), image_cache.clone(), console.clone(), full_exr_cache.clone());
         }
     });
 
@@ -242,8 +248,9 @@ fn setup_menu_callbacks(
         let current_file_path = current_file_path.clone();
         let image_cache = image_cache.clone();
         let console = console_model.clone();
+        let full_exr_cache = full_exr_cache.clone();
         move || {
-            ui_handlers::handle_export_channels(ui_handle.clone(), current_file_path.clone(), image_cache.clone(), console.clone());
+            ui_handlers::handle_export_channels(ui_handle.clone(), current_file_path.clone(), image_cache.clone(), console.clone(), full_exr_cache.clone());
         }
     });
 }
@@ -335,6 +342,7 @@ fn setup_panel_callbacks(
     current_file_path: CurrentFilePathType,
     image_cache: ImageCacheType,
     console_model: Rc<VecModel<SharedString>>,
+    full_exr_cache: FullExrCache,
 ) {
     // Debug klawiszy: wypisz do statusu i konsoli
     ui.on_key_pressed_debug({
@@ -369,6 +377,7 @@ fn setup_panel_callbacks(
         let current_file_path = current_file_path.clone();
         let image_cache = image_cache.clone();
         let console_model = console_model.clone(); // Use console_model directly
+        let full_exr_cache = full_exr_cache.clone();
         move |path_str: slint::SharedString| {
             if let Some(_ui) = ui_handle.upgrade() {
                 let path = std::path::PathBuf::from(path_str.as_str());
@@ -376,7 +385,7 @@ fn setup_panel_callbacks(
                     let line = SharedString::from(format!("[thumbnails] opening file {}", path.display()));
                     console_model.push(line.clone());
                 }
-                ui_handlers::handle_open_exr_from_path(ui_handle.clone(), current_file_path.clone(), image_cache.clone(), console_model.clone(), path);
+                ui_handlers::handle_open_exr_from_path(ui_handle.clone(), current_file_path.clone(), image_cache.clone(), console_model.clone(), full_exr_cache.clone(), path);
             }
         }
     });
@@ -421,6 +430,7 @@ fn setup_panel_callbacks(
                         current_file_path.clone(),
                         image_cache.clone(),
                         console_model.clone(),
+                        full_exr_cache.clone(),
                         path,
                     );
                 }
@@ -433,13 +443,14 @@ fn setup_ui_callbacks(
     ui: &AppWindow,
     image_cache: ImageCacheType,
     current_file_path: CurrentFilePathType,
+    full_exr_cache: FullExrCache,
 ) -> Rc<VecModel<SharedString>> {
     let console_model: Rc<VecModel<SharedString>> = Rc::new(VecModel::from(vec![]));
     ui.set_console_text(SharedString::from(""));
 
-    setup_menu_callbacks(ui, current_file_path.clone(), image_cache.clone(), console_model.clone());
+    setup_menu_callbacks(ui, current_file_path.clone(), image_cache.clone(), console_model.clone(), full_exr_cache.clone());
     setup_image_control_callbacks(ui, image_cache.clone(), current_file_path.clone(), console_model.clone());
-    setup_panel_callbacks(ui, current_file_path.clone(), image_cache.clone(), console_model.clone());
+    setup_panel_callbacks(ui, current_file_path.clone(), image_cache.clone(), console_model.clone(), full_exr_cache.clone());
 
     console_model
 }
