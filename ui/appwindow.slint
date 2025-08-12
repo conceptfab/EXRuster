@@ -428,8 +428,8 @@ export component AppWindow inherits Window {
             
             // Prawa kolumna: funkcje Exposure na górze
             VerticalBox {
-                padding: 1px;
-                spacing: 1px;
+                padding: 4px;
+                spacing: 4px;
                 alignment: start;
                 property <length> controls_inset: 12px;
 
@@ -474,9 +474,9 @@ export component AppWindow inherits Window {
                      Text {
                          text: "Tonemap:";
                          color: Kolory.tekst;
-                         font-size: 10px;
+                         font-size: 13px;
                          font-family: "Geist";
-                         font-weight: 700;
+                         font-weight: 300;
                          horizontal-alignment: left;
                          vertical-alignment: center;
                      }
@@ -484,7 +484,7 @@ export component AppWindow inherits Window {
                  tm_row := HorizontalBox {
                      width: parent.width;
                      height: 25px;
-                     spacing: 6px;
+                     spacing: 12px;
                      // ACES
                      PrzyciskAkcji {
                          text: "ACES";
@@ -514,7 +514,7 @@ export component AppWindow inherits Window {
                 HorizontalBox {
                     width: parent.width;
                     height: 25px;
-                    spacing: 0px;
+                    spacing: 6px;
                     PrzyciskAkcji {
                         text: "Reset";
                         height: 25px;
@@ -532,6 +532,9 @@ export component AppWindow inherits Window {
                 }
                 
                 // Spacer
+                Rectangle {
+                    height: 2px;
+                }
                 // Export section
                 HorizontalBox {
                     width: parent.width;
@@ -539,9 +542,9 @@ export component AppWindow inherits Window {
                     Text {
                         text: "Export";
                         color: Kolory.tekst;
-                        font-size: 10px;
+                        font-size: 13px;
                         font-family: "Geist";
-                        font-weight: 700;
+                        font-weight: 300;
                         horizontal-alignment: left;
                         vertical-alignment: center;
                     }

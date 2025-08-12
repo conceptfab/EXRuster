@@ -13,19 +13,20 @@ export component ParameterSlider inherits Rectangle {
     height: 50px; // Adjust height as needed for the component
 
     VerticalBox {
-        spacing: 4px;
+        spacing: 0px;
+        padding: 0px;
         alignment: stretch;
         
         Text {
             text: label-text;
             color: Kolory.tekst;
-            font-size: 10px;
+            font-size: 13px;
             font-family: "Geist";
-            font-weight: 700;
+            font-weight: 300;
         }
         
         HorizontalBox {
-            spacing: 0.4px;
+            spacing: 0px;
             alignment: start;
             
             Rectangle {
@@ -76,8 +77,9 @@ export component ParameterSlider inherits Rectangle {
             Text {
                 text: (Math.round(value * 100) / 100) + "";
                 color: Kolory.tekst_silny;
-                font-size: 10px;
+                font-size: 12px;
                 font-family: "Geist";
+                font-weight: 300;
                 width: 60px;
                 horizontal-alignment: center;
             }
