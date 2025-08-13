@@ -750,7 +750,8 @@ export component AppWindow inherits Window {
                                         parent.hover_ticks = Math.min(100000, parent.hover_ticks + 1);
                                         if (parent.hover_ticks >= thumbs_panel.tt_delay_ticks) {
                                             thumbs_panel.tt_visible = true;
-                                            thumbs_panel.tt_text = t.path;
+                                            // Pokaż tylko nazwę pliku (bez ścieżki)
+                                            thumbs_panel.tt_text = t.name;
                                             thumbs_panel.tt_owner_path = t.path;
                                             // aktualna pozycja kursora
                                             thumbs_panel.tt_x = viewport.x + parent.x - scroll_view.viewport-x + tile_area.mouse-x + 12px;
