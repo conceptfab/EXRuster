@@ -494,6 +494,34 @@ fn setup_panel_callbacks(
             }
         }
     });
+
+    // Usunięcie pliku z poziomu miniatur (menu kontekstowe)
+    ui.on_delete_thumbnail({
+        let ui_handle = ui.as_weak();
+        let console_model = console_model.clone();
+        move |path_str: slint::SharedString| {
+            if let Some(ui) = ui_handle.upgrade() {
+                let path = std::path::PathBuf::from(path_str.as_str());
+                if path.is_file() {
+                    let display = path.display().to_string();
+                    match std::fs::remove_file(&path) {
+                        Ok(_) => {
+                            push_console(&ui, &console_model, format!("[delete] removed {}", display));
+                            ui.set_status_text(format!("Deleted: {}", display).into());
+                            // Po usunięciu odśwież miniatury dla katalogu pliku
+                            if let Some(dir) = path.parent() {
+                                crate::ui_handlers::load_thumbnails_for_directory(ui.as_weak(), dir, console_model.clone());
+                            }
+                        }
+                        Err(e) => {
+                            ui.set_status_text(format!("Delete error: {}", e).into());
+                            push_console(&ui, &console_model, format!("[error][delete] {} → {}", display, e));
+                        }
+                    }
+                }
+            }
+        }
+    });
 }
 
 fn setup_ui_callbacks(

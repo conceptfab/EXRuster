@@ -117,6 +117,7 @@ export component AppWindow inherits Window {
     callback layer-tree-clicked(string);
     callback choose-working-folder();
     callback open-thumbnail(string); // otwórz plik EXR z podanej ścieżki
+    callback delete-thumbnail(string); // usuń plik na podstawie ścieżki
     callback open-console-window(); // otwórz okno konsoli
     callback navigate-thumbnails(int); // nawigacja miniatur: -1 wstecz, +1 dalej
     callback key-pressed-debug(string); // diagnostyka: logowanie nazwy klawisza
@@ -625,6 +626,15 @@ export component AppWindow inherits Window {
         // Który kafelek aktualnie kontroluje tooltip (ścieżka)
         property <string> tt_owner_path: "";
 
+        // Context menu state (panel-level)
+        property <bool> ctx_visible: false;
+        property <string> ctx_path: "";
+        property <length> ctx_x: 0px;
+        property <length> ctx_y: 0px;
+        property <int> ctx_longpress_ticks: 4; // ≈ 320ms przy 80ms ticku
+        // Dwuklik do otwierania
+        property <int> dbl_click_ticks: 2; // ≈ 160ms
+
         viewport := Rectangle {
             x: 6px;
             y: 6px;
@@ -642,6 +652,12 @@ export component AppWindow inherits Window {
                     for t[index] in root.thumbnails: Rectangle {
                         // licznik opóźnienia dla konkretnego kafelka
                         property <int> hover_ticks: 0;
+                        // licznik do long-press (otwarcie menu kontekstowego)
+                        property <int> press_ticks: 0;
+                        // Uzbrajanie dwukliku (true po pierwszym kliku do czasu wygaśnięcia timera)
+                        property <bool> dbl_arm: false;
+                        // Jednorazowy timer okna dwukliku
+                        dbl_timer := Timer { interval: 260ms; running: false; triggered => { parent.dbl_arm = false; } }
                         width: max(0px, viewport.height - 12px - desc.height - 1.6px)
                                   * ((t.width * 1.0) / (t.height * 1.0));
                         height: viewport.height - 12px;
@@ -691,12 +707,37 @@ export component AppWindow inherits Window {
                             width: parent.width;
                             height: parent.height;
                             mouse-cursor: MouseCursor.pointer;
-                            clicked => { root.opened-thumbnail-path = t.path; root.open-thumbnail(t.path); }
+                            clicked => {
+                                // Jeżeli widoczne menu – zamknij i nie otwieraj pliku
+                                if (thumbs_panel.ctx_visible) { root.key-pressed-debug("ctx close-before-click"); thumbs_panel.ctx_visible = false; return; }
+                                if (parent.dbl_arm) {
+                                    root.key-pressed-debug("thumb open (double-click): " + t.path);
+                                    root.opened-thumbnail-path = t.path; root.open-thumbnail(t.path);
+                                    parent.dbl_arm = false;
+                                    dbl_timer.running = false;
+                                } else {
+                                    parent.dbl_arm = true;
+                                    dbl_timer.running = true;
+                                    root.key-pressed-debug("thumb single-click arm");
+                                }
+                            }
                             moved => {
                                     if (self.has-hover && (thumbs_panel.tt_owner_path == "" || thumbs_panel.tt_owner_path == t.path)) {
                                         thumbs_panel.tt_x = viewport.x + parent.x - scroll_view.viewport-x + self.mouse-x + 12px;
                                         thumbs_panel.tt_y = viewport.y + parent.y + self.mouse-y + 12px;
                                     }
+                            }
+                            // Obsługa prawego przycisku (najnowsze Slint) – jeśli dostępna
+                            pointer-event(ev) => {
+                                // Prawy klik (jeśli dostępny w tej wersji Slint)
+                                if (ev.kind == PointerEventKind.down && ev.button == PointerEventButton.right) {
+                                    root.key-pressed-debug("ctx right-click: " + t.path);
+                                    thumbs_panel.ctx_visible = true;
+                                    thumbs_panel.ctx_path = t.path;
+                                    // Fallback: brak pozycji w ev → użyj pozycji myszy z TouchArea
+                                    thumbs_panel.ctx_x = viewport.x + parent.x - scroll_view.viewport-x + self.mouse-x;
+                                    thumbs_panel.ctx_y = viewport.y + parent.y + self.mouse-y;
+                                }
                             }
                         }
                         Timer {
@@ -719,6 +760,22 @@ export component AppWindow inherits Window {
                                         // inny kafelek jest właścicielem – reset lokalnego licznika
                                         parent.hover_ticks = 0;
                                     }
+
+                                    // Long-press do menu kontekstowego
+                                    if (tile_area.pressed) {
+                                        if (parent.press_ticks == 0) { root.key-pressed-debug("ctx press-start: " + t.path); }
+                                        parent.press_ticks = Math.min(100000, parent.press_ticks + 1);
+                                        if (parent.press_ticks >= thumbs_panel.ctx_longpress_ticks && !thumbs_panel.ctx_visible) {
+                                            root.key-pressed-debug("ctx open: " + t.path);
+                                            thumbs_panel.ctx_visible = true;
+                                            thumbs_panel.ctx_path = t.path;
+                                            thumbs_panel.ctx_x = viewport.x + parent.x - scroll_view.viewport-x + tile_area.mouse-x;
+                                            thumbs_panel.ctx_y = viewport.y + parent.y + tile_area.mouse-y;
+                                        }
+                                    } else {
+                                        parent.press_ticks = 0;
+                                    }
+                                    // brak obsługi ticków dla dwukliku — używamy jednorazowego timera per-kafelek
                                 } else {
                                     // zakończenie hovera – jeśli to był właściciel, schowaj i zwolnij
                                     if (thumbs_panel.tt_owner_path == t.path) {
@@ -726,6 +783,8 @@ export component AppWindow inherits Window {
                                         thumbs_panel.tt_owner_path = "";
                                     }
                                     parent.hover_ticks = 0;
+                                    parent.press_ticks = 0;
+                                    parent.dbl_arm = false;
                                 }
                                 self.running = true;
                             }
@@ -761,6 +820,42 @@ export component AppWindow inherits Window {
                 x: 6px;
                 y: 4px;
             }
+        }
+
+        // Overlay context menu (panel-level)
+        ctx_menu := Rectangle {
+            visible: thumbs_panel.ctx_visible;
+            x: min(parent.width - self.width - 4px, max(4px, thumbs_panel.ctx_x));
+            y: min(parent.height - self.height - 4px, max(4px, thumbs_panel.ctx_y));
+            width: 180px;
+            height: 26px;
+            background: Kolory.menu_tlo;
+            border-color: Kolory.menu_obramowanie;
+            border-width: 1px;
+            z: 2000;
+
+            VerticalBox {
+                padding: 0px;
+                spacing: 0px;
+                PozycjaMenu {
+                    width: parent.width;
+                    text: "Delete file";
+                    clicked => {
+                        thumbs_panel.ctx_visible = false;
+                        root.key-pressed-debug("ctx delete: " + thumbs_panel.ctx_path);
+                        root.delete-thumbnail(thumbs_panel.ctx_path);
+                    }
+                }
+            }
+        }
+
+        // Dismiss area to close context menu when clicking elsewhere
+        ctx_dismiss := TouchArea {
+            visible: thumbs_panel.ctx_visible;
+            width: parent.width;
+            height: parent.height;
+            clicked => { root.key-pressed-debug("ctx dismiss"); thumbs_panel.ctx_visible = false; }
+            z: 1500;
         }
 
         thumbs_bar := Rectangle {
