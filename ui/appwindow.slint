@@ -101,7 +101,7 @@ export component AppWindow inherits Window {
     in-out property <float> gamma-value: 2.2;
     // Usunięto obszar zakładek
      // Tonemap mode (0=ACES, 1=Reinhard, 2=Linear)
-     in-out property <int> tonemap-mode: 0;
+     in-out property <int> tonemap-mode: 2;
      callback tonemap-mode-changed(int);
 
     // Dolny panel (wariant A: 0px gdy ukryty)
@@ -507,7 +507,14 @@ export component AppWindow inherits Window {
                      width: parent.width;
                      height: 25px;
                      spacing: 12px;
-                     
+                      // Linear
+                     PrzyciskAkcji {
+                         text: "Linear";
+                         height: 22px;
+                         width: (tm_row.width - controls_inset*2 - tm_row.spacing*2) / 3;
+                         highlighted: root.tonemap-mode == 2;
+                         clicked => { root.tonemap-mode = 2; root.tonemap-mode-changed(2); }
+                     }
                      // ACES
                      PrzyciskAkcji {
                         
@@ -526,14 +533,7 @@ export component AppWindow inherits Window {
                          highlighted: root.tonemap-mode == 1;
                          clicked => { root.tonemap-mode = 1; root.tonemap-mode-changed(1); }
                      }
-                     // Linear
-                     PrzyciskAkcji {
-                         text: "Linear";
-                         height: 22px;
-                         width: (tm_row.width - controls_inset*2 - tm_row.spacing*2) / 3;
-                         highlighted: root.tonemap-mode == 2;
-                         clicked => { root.tonemap-mode = 2; root.tonemap-mode-changed(2); }
-                     }
+                    
                  }
                 
                 HorizontalBox {
@@ -547,9 +547,9 @@ export component AppWindow inherits Window {
                         clicked => {
                             exposure-value = 0.0;
                             gamma-value = 2.2;
-                             // Przywróć domyślny tryb tonemappingu: ACES
-                             root.tonemap-mode = 0;
-                             root.tonemap-mode-changed(0);
+                             // Przywróć domyślny tryb tonemappingu: Linear
+                             root.tonemap-mode = 2;
+                             root.tonemap-mode-changed(2);
                             exposure-changed(exposure-value);
                             gamma-changed(gamma-value);
                         }
