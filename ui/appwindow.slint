@@ -615,6 +615,11 @@ export component AppWindow inherits Window {
          animate height { duration: 300ms; easing: ease-in-out; }
 
         property <length> thumbs_bar_height: 10px;
+        // Tooltip state (panel-level)
+        property <bool> tt_visible: false;
+        property <string> tt_text: "";
+        property <length> tt_x: 0px;
+        property <length> tt_y: 0px;
 
         viewport := Rectangle {
             x: 6px;
@@ -681,9 +686,55 @@ export component AppWindow inherits Window {
                             height: parent.height;
                             mouse-cursor: MouseCursor.pointer;
                             clicked => { root.opened-thumbnail-path = t.path; root.open-thumbnail(t.path); }
+                            moved => {
+                                if (self.has-hover) {
+                                    thumbs_panel.tt_visible = true;
+                                    thumbs_panel.tt_text = t.name;
+                                    // Pozycja w układzie panelu: viewport.offset + kafelek.x - scroll + mysz
+                                    thumbs_panel.tt_x = viewport.x + parent.x - scroll_view.viewport-x + self.mouse-x + 12px;
+                                    thumbs_panel.tt_y = viewport.y + parent.y + self.mouse-y + 12px;
+                                }
+                            }
+                        }
+                        Timer {
+                            interval: 120ms;
+                            running: true;
+                            triggered => {
+                                if (!tile_area.has-hover && thumbs_panel.tt_text == t.name) {
+                                    thumbs_panel.tt_visible = false;
+                                }
+                                self.running = true;
+                            }
                         }
                     }
                 }
+            }
+        }
+
+        // Overlay tooltip for the whole thumbnails panel
+        panel_tooltip := Rectangle {
+            visible: thumbs_panel.tt_visible;
+            width: min(420px, parent.width - 8px);
+            height: tooltip_text.height + 8px;
+            x: min(parent.width - self.width - 4px, max(4px, thumbs_panel.tt_x));
+            y: min(parent.height - self.height - 4px, max(4px, thumbs_panel.tt_y));
+            background: Kolory.menu_tlo;
+            border-color: Kolory.menu_obramowanie;
+            border-width: 1px;
+            border-radius: 4px;
+            opacity: 0.98;
+            z: 1000;
+
+            tooltip_text := Text {
+                width: parent.width - 12px;
+                text: thumbs_panel.tt_text;
+                wrap: word-wrap;
+                color: Kolory.tekst;
+                font-size: 10px;
+                font-family: "Geist";
+                horizontal-alignment: left;
+                x: 6px;
+                y: 4px;
             }
         }
 
