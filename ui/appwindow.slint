@@ -737,6 +737,7 @@ export component AppWindow inherits Window {
                                     // Fallback: brak pozycji w ev → użyj pozycji myszy z TouchArea
                                     thumbs_panel.ctx_x = viewport.x + parent.x - scroll_view.viewport-x + self.mouse-x;
                                     thumbs_panel.ctx_y = viewport.y + parent.y + self.mouse-y;
+                                    auto_hide_timer.running = false; auto_hide_timer.running = true;
                                 }
                             }
                         }
@@ -772,6 +773,7 @@ export component AppWindow inherits Window {
                                             thumbs_panel.ctx_path = t.path;
                                             thumbs_panel.ctx_x = viewport.x + parent.x - scroll_view.viewport-x + tile_area.mouse-x;
                                             thumbs_panel.ctx_y = viewport.y + parent.y + tile_area.mouse-y;
+                                            auto_hide_timer.running = false; auto_hide_timer.running = true;
                                         }
                                     } else {
                                         parent.press_ticks = 0;
@@ -857,6 +859,13 @@ export component AppWindow inherits Window {
             height: parent.height;
             clicked => { root.key-pressed-debug("ctx dismiss"); thumbs_panel.ctx_visible = false; }
             z: 1500;
+        }
+
+        // Auto-hide: zniknij po 2.5 s bez interakcji, albo natychmiast po kliknięciu poza menu
+        auto_hide_timer := Timer {
+            interval: 2500ms;
+            running: false;
+            triggered => { thumbs_panel.ctx_visible = false; self.running = false; }
         }
 
         thumbs_bar := Rectangle {
