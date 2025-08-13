@@ -622,7 +622,8 @@ export component AppWindow inherits Window {
         property <length> tt_y: 0px;
         // Opóźnienie wyświetlania tooltipa w tickach timera (tick = 80ms)
         property <int> tt_delay_ticks: 3;
-        property <int> tt_hover_ticks: 0;
+        // Który kafelek aktualnie kontroluje tooltip (ścieżka)
+        property <string> tt_owner_path: "";
 
         viewport := Rectangle {
             x: 6px;
@@ -639,6 +640,8 @@ export component AppWindow inherits Window {
                     spacing: 24px;
 
                     for t[index] in root.thumbnails: Rectangle {
+                        // licznik opóźnienia dla konkretnego kafelka
+                        property <int> hover_ticks: 0;
                         width: max(0px, viewport.height - 12px - desc.height - 1.6px)
                                   * ((t.width * 1.0) / (t.height * 1.0));
                         height: viewport.height - 12px;
@@ -690,9 +693,10 @@ export component AppWindow inherits Window {
                             mouse-cursor: MouseCursor.pointer;
                             clicked => { root.opened-thumbnail-path = t.path; root.open-thumbnail(t.path); }
                             moved => {
-                                    // Aktualizuj pozycję tooltipa, jeśli widoczny lub w trakcie hover
-                                    thumbs_panel.tt_x = viewport.x + parent.x - scroll_view.viewport-x + self.mouse-x + 12px;
-                                    thumbs_panel.tt_y = viewport.y + parent.y + self.mouse-y + 12px;
+                                    if (self.has-hover && (thumbs_panel.tt_owner_path == "" || thumbs_panel.tt_owner_path == t.path)) {
+                                        thumbs_panel.tt_x = viewport.x + parent.x - scroll_view.viewport-x + self.mouse-x + 12px;
+                                        thumbs_panel.tt_y = viewport.y + parent.y + self.mouse-y + 12px;
+                                    }
                             }
                         }
                         Timer {
@@ -700,18 +704,28 @@ export component AppWindow inherits Window {
                             running: true;
                             triggered => {
                                 if (tile_area.has-hover) {
-                                    // Odliczanie do wyświetlenia tooltipa
-                                    thumbs_panel.tt_hover_ticks = Math.min(100000, thumbs_panel.tt_hover_ticks + 1);
-                                    if (thumbs_panel.tt_hover_ticks >= thumbs_panel.tt_delay_ticks) {
-                                        thumbs_panel.tt_visible = true;
-                                        thumbs_panel.tt_text = t.path;
-                                        // Pozycjonowanie względem bieżącej pozycji myszy
-                                        thumbs_panel.tt_x = viewport.x + parent.x - scroll_view.viewport-x + tile_area.mouse-x + 12px;
-                                        thumbs_panel.tt_y = viewport.y + parent.y + tile_area.mouse-y + 12px;
+                                    // Jeśli nikt nie posiada tooltipa lub właścicielem jest ten kafelek, licz odliczanie
+                                    if (thumbs_panel.tt_owner_path == "" || thumbs_panel.tt_owner_path == t.path) {
+                                        parent.hover_ticks = Math.min(100000, parent.hover_ticks + 1);
+                                        if (parent.hover_ticks >= thumbs_panel.tt_delay_ticks) {
+                                            thumbs_panel.tt_visible = true;
+                                            thumbs_panel.tt_text = t.path;
+                                            thumbs_panel.tt_owner_path = t.path;
+                                            // aktualna pozycja kursora
+                                            thumbs_panel.tt_x = viewport.x + parent.x - scroll_view.viewport-x + tile_area.mouse-x + 12px;
+                                            thumbs_panel.tt_y = viewport.y + parent.y + tile_area.mouse-y + 12px;
+                                        }
+                                    } else {
+                                        // inny kafelek jest właścicielem – reset lokalnego licznika
+                                        parent.hover_ticks = 0;
                                     }
-                                } else if (thumbs_panel.tt_text == t.path) {
-                                    thumbs_panel.tt_visible = false;
-                                    thumbs_panel.tt_hover_ticks = 0;
+                                } else {
+                                    // zakończenie hovera – jeśli to był właściciel, schowaj i zwolnij
+                                    if (thumbs_panel.tt_owner_path == t.path) {
+                                        thumbs_panel.tt_visible = false;
+                                        thumbs_panel.tt_owner_path = "";
+                                    }
+                                    parent.hover_ticks = 0;
                                 }
                                 self.running = true;
                             }
