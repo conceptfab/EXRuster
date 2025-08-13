@@ -357,7 +357,21 @@ fn setup_image_control_callbacks(
                         cache.process_to_image(exposure, gamma, mode)
                     };
                     ui.set_exr_image(image);
-                    ui_handlers::push_console(&ui, &console, format!("[preview] resized → {}x{} @{}x", preview_w, preview_h, dpr));
+                    let display_w_logical = if container_ratio > image_ratio { preview_h * image_ratio } else { preview_w };
+                    let display_h_logical = if container_ratio > image_ratio { preview_h } else { preview_w / image_ratio };
+                    let win_w = ui.get_window_width() as u32;
+                    let win_h = ui.get_window_height() as u32;
+                    let win_w_px = (win_w as f32 * dpr).round() as u32;
+                    let win_h_px = (win_h as f32 * dpr).round() as u32;
+                    ui_handlers::push_console(&ui, &console, format!(
+                        "[preview] resized → window={}x{} (≈{}x{} px @{}x) | view={}x{} @{}x | img={}x{} | display≈{}x{} px target={} px",
+                        win_w, win_h, win_w_px, win_h_px, dpr,
+                        preview_w as u32, preview_h as u32, dpr,
+                        img_w as u32, img_h as u32,
+                        (display_w_logical * dpr).round() as u32,
+                        (display_h_logical * dpr).round() as u32,
+                        target
+                    ));
                 }
             }
         }
