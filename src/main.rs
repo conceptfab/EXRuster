@@ -504,7 +504,7 @@ fn setup_panel_callbacks(
                 let path = std::path::PathBuf::from(path_str.as_str());
                 if path.is_file() {
                     let display = path.display().to_string();
-                    match std::fs::remove_file(&path) {
+                    match trash::delete(&path) {
                         Ok(_) => {
                             push_console(&ui, &console_model, format!("[delete] removed {}", display));
                             ui.set_status_text(format!("Deleted: {}", display).into());

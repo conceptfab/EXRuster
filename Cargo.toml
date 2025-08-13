@@ -25,6 +25,7 @@ tiff = "0.10.0"
 cfg-if = "1.0"
 glam = "0.30.5"
 lru = "0.16"
+trash = "5"
 
 # Windows-only: ustawianie ikony okna w runtime (WM_SETICON)
 [target.'cfg(windows)'.dependencies]
