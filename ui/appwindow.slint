@@ -620,6 +620,9 @@ export component AppWindow inherits Window {
         property <string> tt_text: "";
         property <length> tt_x: 0px;
         property <length> tt_y: 0px;
+        // Opóźnienie wyświetlania tooltipa w tickach timera (tick = 80ms)
+        property <int> tt_delay_ticks: 3;
+        property <int> tt_hover_ticks: 0;
 
         viewport := Rectangle {
             x: 6px;
@@ -687,21 +690,28 @@ export component AppWindow inherits Window {
                             mouse-cursor: MouseCursor.pointer;
                             clicked => { root.opened-thumbnail-path = t.path; root.open-thumbnail(t.path); }
                             moved => {
-                                if (self.has-hover) {
-                                    thumbs_panel.tt_visible = true;
-                                    thumbs_panel.tt_text = t.name;
-                                    // Pozycja w układzie panelu: viewport.offset + kafelek.x - scroll + mysz
+                                    // Aktualizuj pozycję tooltipa, jeśli widoczny lub w trakcie hover
                                     thumbs_panel.tt_x = viewport.x + parent.x - scroll_view.viewport-x + self.mouse-x + 12px;
                                     thumbs_panel.tt_y = viewport.y + parent.y + self.mouse-y + 12px;
-                                }
                             }
                         }
                         Timer {
-                            interval: 120ms;
+                            interval: 80ms;
                             running: true;
                             triggered => {
-                                if (!tile_area.has-hover && thumbs_panel.tt_text == t.name) {
+                                if (tile_area.has-hover) {
+                                    // Odliczanie do wyświetlenia tooltipa
+                                    thumbs_panel.tt_hover_ticks = Math.min(100000, thumbs_panel.tt_hover_ticks + 1);
+                                    if (thumbs_panel.tt_hover_ticks >= thumbs_panel.tt_delay_ticks) {
+                                        thumbs_panel.tt_visible = true;
+                                        thumbs_panel.tt_text = t.path;
+                                        // Pozycjonowanie względem bieżącej pozycji myszy
+                                        thumbs_panel.tt_x = viewport.x + parent.x - scroll_view.viewport-x + tile_area.mouse-x + 12px;
+                                        thumbs_panel.tt_y = viewport.y + parent.y + tile_area.mouse-y + 12px;
+                                    }
+                                } else if (thumbs_panel.tt_text == t.path) {
                                     thumbs_panel.tt_visible = false;
+                                    thumbs_panel.tt_hover_ticks = 0;
                                 }
                                 self.running = true;
                             }
@@ -714,8 +724,8 @@ export component AppWindow inherits Window {
         // Overlay tooltip for the whole thumbnails panel
         panel_tooltip := Rectangle {
             visible: thumbs_panel.tt_visible;
-            width: min(420px, parent.width - 8px);
-            height: tooltip_text.height + 8px;
+            width: min(parent.width - 8px, tooltip_text.preferred-width + 12px);
+            height: min(parent.height - 8px, tooltip_text.preferred-height + 8px);
             x: min(parent.width - self.width - 4px, max(4px, thumbs_panel.tt_x));
             y: min(parent.height - self.height - 4px, max(4px, thumbs_panel.tt_y));
             background: Kolory.menu_tlo;
@@ -726,7 +736,8 @@ export component AppWindow inherits Window {
             z: 1000;
 
             tooltip_text := Text {
-                width: parent.width - 12px;
+                // Ogranicz maksymalną szerokość, a rozmiar wynikowy pobierz z preferred-size
+                max-width: 420px;
                 text: thumbs_panel.tt_text;
                 wrap: word-wrap;
                 color: Kolory.tekst;
