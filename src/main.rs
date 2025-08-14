@@ -13,6 +13,7 @@ mod progress;
 mod utils;
 mod color_processing;
 mod full_exr_cache;
+mod gpu_context;
 
 use std::sync::{Arc, Mutex};
 use crate::ui_handlers::push_console;
