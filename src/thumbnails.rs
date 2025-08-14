@@ -43,7 +43,16 @@ pub fn generate_exr_thumbnails_in_dir(
 ) -> anyhow::Result<Vec<ExrThumbnailInfo>> {
     let files = list_exr_files(directory)?;
     let total_files = files.len();
-    if let Some(p) = progress { p.set(0.0, Some(&format!("Processing {} files...", total_files))); }
+    
+    // Natychmiastowe powiadomienie o liczbie plików
+    if let Some(p) = progress { 
+        if total_files > 0 {
+            p.set(0.0, Some(&format!("Found {} files, processing...", total_files))); 
+        } else {
+            p.finish(Some("No EXR files found"));
+            return Ok(Vec::new());
+        }
+    }
 
     if total_files == 0 {
         if let Some(p) = progress { p.finish(Some("No EXR files")); }
@@ -53,12 +62,12 @@ pub fn generate_exr_thumbnails_in_dir(
     // 1) Równolegle generuj dane miniaturek w typie bezpiecznym dla wątków (bez slint::Image)
     let completed = AtomicUsize::new(0);
     let works: Vec<ExrThumbWork> = files
-        .par_iter()
+        .into_par_iter() // Użyj into_par_iter zamiast par_iter dla lepszej wydajności
         .filter_map(|path| {
             // Spróbuj z cache LRU
             let cached_opt = {
                 if let Ok(mut guard) = get_thumb_cache().lock() {
-                    c_get(&mut *guard, path, thumb_height, exposure, gamma, tonemap_mode)
+                    c_get(&mut *guard, &path, thumb_height, exposure, gamma, tonemap_mode)
                 } else {
                     None
                 }
@@ -67,12 +76,13 @@ pub fn generate_exr_thumbnails_in_dir(
                 let n = completed.fetch_add(1, Ordering::Relaxed) + 1;
                 if let Some(p) = progress {
                     let frac = (n as f32) / (total_files as f32);
-                    p.set(frac, Some(&format!("{} / {}", n, total_files)));
+                    // Dodaj więcej informacji w statusie
+                    p.set(frac, Some(&format!("Cached: {}/{} {}", n, total_files, path.file_name().and_then(|n| n.to_str()).unwrap_or("?"))));
                 }
                 return Some(cached);
             }
 
-            let res = generate_single_exr_thumbnail_work(path, thumb_height, exposure, gamma, tonemap_mode)
+            let res = generate_single_exr_thumbnail_work(&path, thumb_height, exposure, gamma, tonemap_mode)
                 .map(|work| {
                     // Zapisz do cache
                     put_thumb_cache(&work, thumb_height, exposure, gamma, tonemap_mode);
@@ -81,7 +91,8 @@ pub fn generate_exr_thumbnails_in_dir(
             let n = completed.fetch_add(1, Ordering::Relaxed) + 1;
             if let Some(p) = progress {
                 let frac = (n as f32) / (total_files as f32);
-                p.set(frac, Some(&format!("{} / {}", n, total_files)));
+                // Dodaj więcej informacji w statusie
+                p.set(frac, Some(&format!("Processed: {}/{} {}", n, total_files, path.file_name().and_then(|n| n.to_str()).unwrap_or("?"))));
             }
             match res {
                 Ok(work) => Some(work),
@@ -91,6 +102,7 @@ pub fn generate_exr_thumbnails_in_dir(
         .collect();
 
     // 2) Na głównym wątku skonstruuj slint::Image (nie jest Send)
+    let works_count = works.len(); // Zapisz długość przed przeniesieniem
     let thumbnails: Vec<ExrThumbnailInfo> = works
         .into_iter()
         .map(|w| {
@@ -113,7 +125,9 @@ pub fn generate_exr_thumbnails_in_dir(
         })
         .collect();
 
-    if let Some(p) = progress { p.finish(Some("Thumbnails ready")); }
+    if let Some(p) = progress { 
+        p.finish(Some(&format!("Thumbnails loaded: {} files processed", works_count))); 
+    }
     Ok(thumbnails)
 }
 
@@ -136,6 +150,7 @@ fn list_exr_files(dir: &Path) -> anyhow::Result<Vec<PathBuf>> {
     Ok(out)
 }
 
+#[derive(Clone)]
 struct ExrThumbWork {
     path: PathBuf,
     file_name: String,
@@ -252,14 +267,18 @@ fn generate_single_exr_thumbnail_work(
         let mut pixels: Vec<u8> = vec![0; (thumb_w as usize) * (thumb_h as usize) * 4];
         let raw_width = width as usize;
         let m = color_matrix_rgb_to_srgb;
+        
+        // Zoptymalizowane przetwarzanie z SIMD
         let total = (thumb_w as usize) * (thumb_h as usize);
-        let par_pixels: Vec<u8> = (0..(total / 4)).into_par_iter().flat_map(|block| {
-            let base = block * 4;
-            let mut rr = [0.0f32; 4];
-            let mut gg = [0.0f32; 4];
-            let mut bb = [0.0f32; 4];
-            let mut aa = [1.0f32; 4];
-            for lane in 0..4 {
+        
+        // Użyj większego bloku SIMD dla lepszej wydajności
+        let par_pixels: Vec<u8> = (0..(total / 8)).into_par_iter().flat_map(|block| {
+            let base = block * 8;
+            let mut rr = [0.0f32; 8];
+            let mut gg = [0.0f32; 8];
+            let mut bb = [0.0f32; 8];
+            let mut aa = [1.0f32; 8];
+            for lane in 0..8 {
                 let i = base + lane;
                 let x = (i as u32) % thumb_w;
                 let y = (i as u32) / thumb_w;
@@ -274,26 +293,49 @@ fn generate_single_exr_thumbnail_work(
                 rr[lane] = r; gg[lane] = g; bb[lane] = b; aa[lane] = a;
             }
             let (r8, g8, b8) = crate::image_processing::tone_map_and_gamma_simd(
-                f32x4::from_array(rr), f32x4::from_array(gg), f32x4::from_array(bb), exposure, gamma, tonemap_mode);
-            let a8 = f32x4::from_array(aa).simd_clamp(Simd::splat(0.0), Simd::splat(1.0));
-            let ra: [f32; 4] = r8.into();
-            let ga: [f32; 4] = g8.into();
-            let ba: [f32; 4] = b8.into();
-            let aa: [f32; 4] = a8.into();
+                f32x4::from_array([rr[0], rr[1], rr[2], rr[3]]), 
+                f32x4::from_array([gg[0], gg[1], gg[2], gg[3]]), 
+                f32x4::from_array([bb[0], bb[1], bb[2], bb[3]]), 
+                exposure, gamma, tonemap_mode);
+            let a8_1 = f32x4::from_array([aa[0], aa[1], aa[2], aa[3]]).simd_clamp(Simd::splat(0.0), Simd::splat(1.0));
             
-            let mut chunk = Vec::with_capacity(16);
-            for lane in 0..4 {
-                chunk.push((ra[lane] * 255.0).round().clamp(0.0, 255.0) as u8);
-                chunk.push((ga[lane] * 255.0).round().clamp(0.0, 255.0) as u8);
-                chunk.push((ba[lane] * 255.0).round().clamp(0.0, 255.0) as u8);
-                chunk.push((aa[lane] * 255.0).round().clamp(0.0, 255.0) as u8);
+            let (r8_2, g8_2, b8_2) = crate::image_processing::tone_map_and_gamma_simd(
+                f32x4::from_array([rr[4], rr[5], rr[6], rr[7]]), 
+                f32x4::from_array([gg[4], gg[5], gg[6], gg[7]]), 
+                f32x4::from_array([bb[4], bb[5], bb[6], bb[7]]), 
+                exposure, gamma, tonemap_mode);
+            let a8_2 = f32x4::from_array([aa[4], aa[5], aa[6], aa[7]]).simd_clamp(Simd::splat(0.0), Simd::splat(1.0));
+            
+            let ra1: [f32; 4] = r8.into();
+            let ga1: [f32; 4] = g8.into();
+            let ba1: [f32; 4] = b8.into();
+            let aa1: [f32; 4] = a8_1.into();
+            
+            let ra2: [f32; 4] = r8_2.into();
+            let ga2: [f32; 4] = g8_2.into();
+            let ba2: [f32; 4] = b8_2.into();
+            let aa2: [f32; 4] = a8_2.into();
+            
+            let mut chunk = Vec::with_capacity(32);
+            for i in 0..4 {
+                chunk.push((ra1[i] * 255.0).round().clamp(0.0, 255.0) as u8);
+                chunk.push((ga1[i] * 255.0).round().clamp(0.0, 255.0) as u8);
+                chunk.push((ba1[i] * 255.0).round().clamp(0.0, 255.0) as u8);
+                chunk.push((aa1[i] * 255.0).round().clamp(0.0, 255.0) as u8);
+            }
+            for i in 0..4 {
+                chunk.push((ra2[i] * 255.0).round().clamp(0.0, 255.0) as u8);
+                chunk.push((ga2[i] * 255.0).round().clamp(0.0, 255.0) as u8);
+                chunk.push((ba2[i] * 255.0).round().clamp(0.0, 255.0) as u8);
+                chunk.push((aa2[i] * 255.0).round().clamp(0.0, 255.0) as u8);
             }
             chunk
         }).collect();
 
         pixels[..par_pixels.len()].copy_from_slice(&par_pixels);
 
-        for i in (total / 4 * 4)..total {
+        // Obsłuż pozostałe piksele (resztę z dzielenia)
+        for i in (total / 8 * 8)..total {
             let x = (i as u32) % thumb_w;
             let y = (i as u32) / thumb_w;
             let src_x = ((x as f32 / scale) as u32).min(width.saturating_sub(1));

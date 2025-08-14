@@ -20,7 +20,8 @@ pub struct UiProgress {
 
 impl UiProgress {
     pub fn new(ui: slint::Weak<AppWindow>) -> Self {
-        Self { ui, last_update: Arc::new(Mutex::new(Instant::now() - Duration::from_millis(100))), min_interval: Duration::from_millis(80) }
+        // Zmniejszamy throttling z 80ms do 30ms dla lepszej responsywności
+        Self { ui, last_update: Arc::new(Mutex::new(Instant::now() - Duration::from_millis(100))), min_interval: Duration::from_millis(30) }
     }
 
     fn do_update(&self, progress: f32, message: Option<String>) {
@@ -55,8 +56,8 @@ impl ProgressSink for UiProgress {
     fn set(&self, progress_0_1: f32, message: Option<&str>) {
         let clamped = progress_0_1.clamp(0.0, 1.0);
         let msg = message.map(|s| s.to_string());
-        // Jeżeli to duży skok lub jest komunikat – aktualizuj natychmiast, inaczej throttling
-        let force = msg.is_some() || clamped >= 0.99 || clamped <= 0.01;
+        // Aktualizuj częściej - co 1% postępu lub przy wiadomościach
+        let force = msg.is_some() || (clamped * 100.0).round() != ((clamped - 0.01) * 100.0).round();
         if force {
             self.do_update(clamped, msg.clone());
             *self.last_update.lock().unwrap() = Instant::now();
@@ -68,10 +69,10 @@ impl ProgressSink for UiProgress {
     fn finish(&self, message: Option<&str>) {
         let msg = message.map(|s| s.to_string());
         self.do_update(1.0, msg);
-        // krótki reset po 400ms
+        // Resetuj progress po 200ms zamiast 400ms
         let weak = self.ui.clone();
         let _ = invoke_from_event_loop(move || {
-            slint::Timer::single_shot(std::time::Duration::from_millis(400), move || {
+            slint::Timer::single_shot(std::time::Duration::from_millis(200), move || {
                 if let Some(ui2) = weak.upgrade() {
                     ui2.set_progress_value(0.0);
                 }
