@@ -316,7 +316,7 @@ pub fn load_thumbnails_for_directory(
         
         // Uruchom progress bar natychmiast
         let prog = UiProgress::new(ui.as_weak());
-        prog.start_indeterminate(Some("Preparing thumbnail generation..."));
+        prog.start_indeterminate(Some("🔍 Scanning folder for EXR files..."));
         
         // Pobierz parametry UI w głównym wątku
         let exposure = ui.get_exposure_value();
@@ -340,7 +340,7 @@ pub fn load_thumbnails_for_directory(
                     let ui_weak_clone = ui_weak.clone();
                     slint::invoke_from_event_loop(move || {
                         if let Some(ui) = ui_weak_clone.upgrade() {
-                            ui.set_status_text(format!("Error listing files: {}", e).into());
+                            ui.set_status_text(format!("❌ Error scanning folder: {}", e).into());
                             prog.reset();
                         }
                     }).unwrap();
@@ -348,12 +348,26 @@ pub fn load_thumbnails_for_directory(
                 }
             };
             
+            // Sprawdź czy folder nie jest pusty
+            let total_files = files.len();
+            if total_files == 0 {
+                let ui_weak_clone = ui_weak.clone();
+                slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = ui_weak_clone.upgrade() {
+                        ui.set_status_text("⚠️ No EXR files found in selected folder".into());
+                        prog.finish(Some("⚠️ No EXR files found"));
+                    }
+                }).unwrap();
+                return;
+            }
+            
             // Generuj miniaturki z cache w osobnym wątku - ale bez slint::Image
             let mut thumbnail_works = Vec::new();
             
+            prog.set(0.1, Some(&format!("📁 Found {} EXR files, starting processing...", total_files)));
+            
             for (idx, path) in files.iter().enumerate() {
-                let frac = (idx as f32) / (files.len() as f32);
-                prog.set(frac, Some(&format!("Processing {}/{} {}", idx + 1, files.len(), path.file_name().and_then(|n| n.to_str()).unwrap_or("?"))));
+                let frac = 0.1 + (idx as f32) / (total_files as f32) * 0.8; // 10% - 90%
                 
                 // Spróbuj z cache LRU
                 let cached_opt = {
@@ -366,10 +380,13 @@ pub fn load_thumbnails_for_directory(
                 
                 if let Some(cached) = cached_opt {
                     thumbnail_works.push(cached);
+                    prog.set(frac, Some(&format!("✅ Cached: {}/{} {}", idx + 1, total_files, path.file_name().and_then(|n| n.to_str()).unwrap_or("?"))));
                     continue;
                 }
                 
                 // Generuj nową miniaturkę
+                prog.set(frac, Some(&format!("🔄 Processing: {}/{} {}", idx + 1, total_files, path.file_name().and_then(|n| n.to_str()).unwrap_or("?"))));
+                
                 match crate::thumbnails::generate_single_exr_thumbnail_work(
                     path, 150, exposure, gamma, tonemap_mode
                 ) {
@@ -380,11 +397,13 @@ pub fn load_thumbnails_for_directory(
                     }
                     Err(e) => {
                         eprintln!("Failed to generate thumbnail for {}: {}", path.display(), e);
+                        prog.set(frac, Some(&format!("❌ Failed: {}/{} {}", idx + 1, total_files, path.file_name().and_then(|n| n.to_str()).unwrap_or("?"))));
                     }
                 }
             }
             
             // Sortuj miniaturki
+            prog.set(0.9, Some("📊 Sorting thumbnails alphabetically..."));
             thumbnail_works.sort_by(|a, b| a.file_name.to_lowercase().cmp(&b.file_name.to_lowercase()));
             
             let count = thumbnail_works.len();
@@ -397,7 +416,7 @@ pub fn load_thumbnails_for_directory(
             
             slint::invoke_from_event_loop(move || {
                 if let Some(ui) = ui_weak_clone.upgrade() {
-                    prog.set(0.95, Some("Creating UI thumbnails..."));
+                    prog.set(0.95, Some("🎨 Converting thumbnails to UI format..."));
                     
                     // Konwertuj miniaturki do formatu UI w głównym wątku
                     let items: Vec<ThumbItem> = thumbnail_works
@@ -436,7 +455,7 @@ pub fn load_thumbnails_for_directory(
                     ui.set_bottom_panel_visible(true);
                     
                     ui.set_status_text("Thumbnails loaded".into());
-                    prog.finish(Some("Thumbnails loaded"));
+                    prog.finish(Some(&format!("✅ Successfully loaded {} thumbnails in {} ms", count_clone, ms_clone)));
                     
                     // Log do konsoli w osobnym wywołaniu - używamy prostego status text
                     ui.set_status_text(format!("[folder] {} EXR files | thumbnails in {} ms", count_clone, ms_clone).into());
