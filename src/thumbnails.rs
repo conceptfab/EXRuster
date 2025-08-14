@@ -18,8 +18,9 @@ use glam::Vec3;
 use std::sync::{Mutex, OnceLock};
 use lru::LruCache;
 
-// Dodaj import dla GPU context
+// Dodaj import dla GPU context i processor
 use crate::gpu_context::GpuContext;
+use crate::gpu_thumbnails::GpuThumbnailProcessor;
 
 /// Zwięzła reprezentacja miniaturki EXR do wyświetlenia w UI
 pub struct ExrThumbnailInfo {
@@ -33,6 +34,7 @@ pub struct ExrThumbnailInfo {
 }
 
 /// GPU-accelerated version: generuje miniaturki z wykorzystaniem GPU jeśli dostępne
+#[allow(dead_code)]
 pub fn generate_exr_thumbnails_in_dir_gpu(
     directory: &Path,
     thumb_height: u32,
@@ -76,7 +78,8 @@ pub fn generate_exr_thumbnails_in_dir_gpu(
     }
 }
 
-/// Sprawdza czy warto użyć GPU dla miniaturek (duże pliki, wiele plików)
+/// Sprawdza czy warto użyć GPU dla generowania miniaturek
+#[allow(dead_code)]
 fn should_use_gpu_for_thumbnails(files: &[PathBuf]) -> bool {
     if files.len() < 3 {
         return false; // Za mało plików, overhead GPU nie opłaca się
@@ -92,6 +95,7 @@ fn should_use_gpu_for_thumbnails(files: &[PathBuf]) -> bool {
 }
 
 /// Generuje miniaturki używając GPU acceleration
+#[allow(dead_code)]
 fn generate_thumbnails_gpu(
     files: Vec<PathBuf>,
     thumb_height: u32,
@@ -99,14 +103,78 @@ fn generate_thumbnails_gpu(
     gamma: f32,
     tonemap_mode: i32,
     progress: Option<&dyn ProgressSink>,
-    _gpu_context: &GpuContext, // Dodaj underscore żeby oznaczyć jako nieużywaną
+    gpu_context: &GpuContext,
 ) -> anyhow::Result<Vec<ExrThumbnailInfo>> {
-    // TODO: Implementacja GPU acceleration
-    // Na razie fallback do CPU
+    let total_files = files.len();
+    
     if let Some(p) = progress { 
-        p.set(0.2, Some("GPU path not yet implemented, falling back to CPU")); 
+        p.set(0.15, Some("GPU: Preparing batch processing...")); 
     }
-    generate_thumbnails_cpu(files, thumb_height, exposure, gamma, tonemap_mode, progress)
+    
+    // 1) Przygotuj dane dla GPU - wczytaj wszystkie pliki do pamięci
+    let mut thumbnail_works = Vec::new();
+    
+    for (idx, path) in files.iter().enumerate() {
+        if let Some(p) = progress {
+            let frac = 0.15 + (idx as f32 / total_files as f32) * 0.3; // 15% - 45%
+            p.set(frac, Some(&format!("GPU: Loading {}/{} {}", idx + 1, total_files, path.file_name().and_then(|n| n.to_str()).unwrap_or("?"))));
+        }
+        
+        // Wczytaj dane pliku EXR
+        match load_exr_data_for_gpu(path, thumb_height) {
+            Ok(exr_data) => {
+                thumbnail_works.push(exr_data);
+            }
+            Err(e) => {
+                // Log błąd ale kontynuuj z innymi plikami
+                eprintln!("GPU: Failed to load {}: {}", path.display(), e);
+            }
+        }
+    }
+    
+    if thumbnail_works.is_empty() {
+        if let Some(p) = progress { 
+            p.set(0.5, Some("GPU: No files loaded, falling back to CPU")); 
+        }
+        return generate_thumbnails_cpu(files, thumb_height, exposure, gamma, tonemap_mode, progress);
+    }
+    
+    if let Some(p) = progress { 
+        p.set(0.5, Some(&format!("GPU: Processing {} files in batch...", thumbnail_works.len()))); 
+    }
+    
+    // 2) Przetwórz wszystkie miniaturki na GPU w jednym batch
+    match process_thumbnails_batch_gpu(
+        &mut thumbnail_works, 
+        exposure, 
+        gamma, 
+        tonemap_mode, 
+        gpu_context,
+        progress
+    ) {
+        Ok(processed_works) => {
+            if let Some(p) = progress { 
+                p.set(0.9, Some("GPU: Converting to UI format...")); 
+            }
+            
+            // 3) Konwertuj wyniki GPU do formatu UI
+            let thumbnails = convert_gpu_works_to_ui(processed_works);
+            
+            if let Some(p) = progress { 
+                p.finish(Some(&format!("GPU: {} thumbnails processed successfully", thumbnails.len()))); 
+            }
+            
+            Ok(thumbnails)
+        }
+        Err(e) => {
+            if let Some(p) = progress { 
+                p.set(0.6, Some("GPU failed, falling back to CPU...")); 
+            }
+            // Fallback do CPU w przypadku błędu GPU
+            eprintln!("GPU processing failed: {}, falling back to CPU", e);
+            generate_thumbnails_cpu(files, thumb_height, exposure, gamma, tonemap_mode, progress)
+        }
+    }
 }
 
 /// Generuje miniaturki używając CPU (oryginalna implementacja)
@@ -541,4 +609,263 @@ fn put_thumb_cache(work: &ExrThumbWork, thumb_h: u32, exposure: f32, gamma: f32,
         pixels: work.pixels.clone(),
     };
     if let Ok(mut c) = get_thumb_cache().lock() { c.put(key, val); }
+}
+
+/// Struktura danych EXR przygotowana dla GPU
+#[allow(dead_code)]
+struct ExrDataForGpu {
+    path: PathBuf,
+    file_name: String,
+    file_size_bytes: u64,
+    width: u32,
+    height: u32,
+    num_layers: usize,
+    raw_pixels: Vec<f32>, // RGBA jako płaskie f32
+    color_matrix: Option<[[f32; 3]; 3]>, // Macierz RGB→sRGB
+    target_width: u32,
+    target_height: u32,
+}
+
+/// Wczytuje dane EXR przygotowane dla GPU
+#[allow(dead_code)]
+fn load_exr_data_for_gpu(
+    path: &Path, 
+    thumb_height: u32
+) -> anyhow::Result<ExrDataForGpu> {
+    let path_buf = path.to_path_buf();
+    
+    // Wczytaj metadane
+    let layers_info = extract_layers_info(&path_buf)
+        .with_context(|| format!("Błąd odczytu EXR: {}", path.display()))?;
+    
+    // Znajdź najlepszą warstwę
+    let best_layer_name = find_best_layer(&layers_info);
+    
+    // Wczytaj dane pikseli
+    let (raw_pixels, width, height, _current_layer) = load_specific_layer(&path_buf, &best_layer_name, None)
+        .with_context(|| format!("Błąd wczytania warstwy \"{}\": {}", best_layer_name, path.display()))?;
+    
+    // Macierz kolorów
+    let color_matrix = compute_rgb_to_srgb_matrix_from_file_for_layer(&path_buf.as_path(), &best_layer_name)
+        .ok()
+        .map(|mat3| {
+            // Konwertuj glam::Mat3 na [[f32; 3]; 3]
+            [
+                [mat3.x_axis.x, mat3.x_axis.y, mat3.x_axis.z],
+                [mat3.y_axis.x, mat3.y_axis.y, mat3.y_axis.z],
+                [mat3.z_axis.x, mat3.z_axis.y, mat3.z_axis.z],
+            ]
+        });
+    
+    // Oblicz wymiary miniatury
+    let scale = thumb_height as f32 / height as f32;
+    let thumb_h = thumb_height.max(1);
+    let thumb_w = ((width as f32) * scale).max(1.0).round() as u32;
+    
+    // Konwertuj piksele do płaskiego formatu f32
+    let flat_pixels: Vec<f32> = raw_pixels.iter()
+        .flat_map(|(r, g, b, a)| vec![*r, *g, *b, *a])
+        .collect();
+    
+    let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("?").to_string();
+    let file_size_bytes = fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+    
+    Ok(ExrDataForGpu {
+        path: path_buf,
+        file_name,
+        file_size_bytes,
+        width,
+        height,
+        num_layers: layers_info.len(),
+        raw_pixels: flat_pixels,
+        color_matrix,
+        target_width: thumb_w,
+        target_height: thumb_h,
+    })
+}
+
+/// Przetwarza wszystkie miniaturki na GPU w jednym batch
+#[allow(dead_code)]
+fn process_thumbnails_batch_gpu(
+    thumbnail_works: &mut [ExrDataForGpu],
+    exposure: f32,
+    gamma: f32,
+    tonemap_mode: i32,
+    gpu_context: &GpuContext,
+    progress: Option<&dyn ProgressSink>,
+) -> anyhow::Result<Vec<ExrThumbWork>> {
+    // Sprawdź czy GPU jest dostępne
+    if let Some(p) = progress { 
+        p.set(0.55, Some("GPU: Initializing GPU processor...")); 
+    }
+    
+    // Utwórz GPU processor
+    let gpu_processor = match GpuThumbnailProcessor::new(gpu_context.clone()) {
+        Ok(processor) => processor,
+        Err(e) => {
+            eprintln!("GPU: Failed to create processor: {}", e);
+            if let Some(p) = progress { 
+                p.set(0.6, Some("GPU failed, falling back to CPU...")); 
+            }
+            return Err(anyhow::anyhow!("GPU processor creation failed: {}", e));
+        }
+    };
+    
+    if let Some(p) = progress { 
+        p.set(0.6, Some(&format!("GPU: Processing {} files in batch...", thumbnail_works.len()))); 
+    }
+    
+    let mut results = Vec::new();
+    let total = thumbnail_works.len();
+    
+    for (idx, work) in thumbnail_works.iter().enumerate() {
+        if let Some(p) = progress {
+            let frac = 0.6 + (idx as f32 / total as f32) * 0.25; // 60% - 85%
+            p.set(frac, Some(&format!("GPU: Processing {}/{} {}", idx + 1, total, work.file_name)));
+        }
+        
+        // Przetwórz na GPU
+        match gpu_processor.process_thumbnail(
+            &work.raw_pixels,
+            work.width,
+            work.height,
+            work.target_width,
+            work.target_height,
+            exposure,
+            gamma,
+            tonemap_mode as u32,
+            work.color_matrix,
+        ) {
+            Ok(gpu_pixels) => {
+                // Konwertuj wyniki GPU do formatu ExrThumbWork
+                let pixels = convert_gpu_pixels_to_rgba8(&gpu_pixels);
+                
+                let processed_work = ExrThumbWork {
+                    path: work.path.clone(),
+                    file_name: work.file_name.clone(),
+                    file_size_bytes: work.file_size_bytes,
+                    width: work.target_width,
+                    height: work.target_height,
+                    num_layers: work.num_layers,
+                    pixels,
+                };
+                
+                results.push(processed_work);
+            }
+            Err(e) => {
+                eprintln!("GPU: Failed to process {}: {}, falling back to CPU", work.file_name, e);
+                
+                // Fallback do CPU dla tego pliku
+                let processed_work = process_single_thumbnail_cpu(work, exposure, gamma, tonemap_mode)?;
+                results.push(processed_work);
+            }
+        }
+    }
+    
+    Ok(results)
+}
+
+/// Konwertuje piksele GPU (u32) do formatu RGBA8 (Vec<u8>)
+#[allow(dead_code)]
+fn convert_gpu_pixels_to_rgba8(gpu_pixels: &[u32]) -> Vec<u8> {
+    let mut rgba8_pixels = Vec::with_capacity(gpu_pixels.len() * 4);
+    
+    for &pixel in gpu_pixels {
+        // Rozpakuj RGBA z u32 (format: AABBGGRR)
+        let r = (pixel & 0xFF) as u8;
+        let g = ((pixel >> 8) & 0xFF) as u8;
+        let b = ((pixel >> 16) & 0xFF) as u8;
+        let a = ((pixel >> 24) & 0xFF) as u8;
+        
+        rgba8_pixels.push(r);
+        rgba8_pixels.push(g);
+        rgba8_pixels.push(b);
+        rgba8_pixels.push(a);
+    }
+    
+    rgba8_pixels
+}
+
+/// Przetwarza pojedynczą miniaturkę na CPU (fallback dla GPU)
+#[allow(dead_code)]
+fn process_single_thumbnail_cpu(
+    work: &ExrDataForGpu,
+    exposure: f32,
+    gamma: f32,
+    tonemap_mode: i32,
+) -> anyhow::Result<ExrThumbWork> {
+    let total_pixels = (work.target_width * work.target_height) as usize;
+    let mut pixels = vec![0u8; total_pixels * 4];
+    
+    // Proste skalowanie nearest neighbor
+    let scale_x = work.width as f32 / work.target_width as f32;
+    let scale_y = work.height as f32 / work.target_height as f32;
+    
+    for y in 0..work.target_height {
+        for x in 0..work.target_width {
+            let src_x = ((x as f32 * scale_x) as u32).min(work.width.saturating_sub(1));
+            let src_y = ((y as f32 * scale_y) as u32).min(work.height.saturating_sub(1));
+            let src_idx = (src_y as usize * work.width as usize + src_x as usize) * 4;
+            let dst_idx = (y as usize * work.target_width as usize + x as usize) * 4;
+            
+            if src_idx + 3 < work.raw_pixels.len() && dst_idx + 3 < pixels.len() {
+                let mut r = work.raw_pixels[src_idx];
+                let mut g = work.raw_pixels[src_idx + 1];
+                let mut b = work.raw_pixels[src_idx + 2];
+                let a = work.raw_pixels[src_idx + 3];
+                
+                // Zastosuj macierz kolorów
+                if let Some(matrix) = work.color_matrix {
+                    let new_r = matrix[0][0] * r + matrix[0][1] * g + matrix[0][2] * b;
+                    let new_g = matrix[1][0] * r + matrix[1][1] * g + matrix[1][2] * b;
+                    let new_b = matrix[2][0] * r + matrix[2][1] * g + matrix[2][2] * b;
+                    r = new_r; g = new_g; b = new_b;
+                }
+                
+                // Tone mapping i gamma
+                let px = process_pixel(r, g, b, a, exposure, gamma, tonemap_mode);
+                
+                pixels[dst_idx] = px.r;
+                pixels[dst_idx + 1] = px.g;
+                pixels[dst_idx + 2] = px.b;
+                pixels[dst_idx + 3] = px.a;
+            }
+        }
+    }
+    
+    Ok(ExrThumbWork {
+        path: work.path.clone(),
+        file_name: work.file_name.clone(),
+        file_size_bytes: work.file_size_bytes,
+        width: work.target_width,
+        height: work.target_height,
+        num_layers: work.num_layers,
+        pixels,
+    })
+}
+
+/// Konwertuje wyniki GPU do formatu UI
+#[allow(dead_code)]
+fn convert_gpu_works_to_ui(works: Vec<ExrThumbWork>) -> Vec<ExrThumbnailInfo> {
+    works.into_iter()
+        .map(|w| {
+            let mut buffer = SharedPixelBuffer::<Rgba8Pixel>::new(w.width, w.height);
+            let slice = buffer.make_mut_slice();
+            
+            // Skopiuj piksele do bufora Slint
+            for (dst, chunk) in slice.iter_mut().zip(w.pixels.chunks_exact(4)) {
+                *dst = Rgba8Pixel { r: chunk[0], g: chunk[1], b: chunk[2], a: chunk[3] };
+            }
+            
+            ExrThumbnailInfo {
+                path: w.path,
+                file_name: w.file_name,
+                file_size_bytes: w.file_size_bytes,
+                num_layers: w.num_layers,
+                width: w.width,
+                height: w.height,
+                image: Image::from_rgba8(buffer),
+            }
+        })
+        .collect()
 }

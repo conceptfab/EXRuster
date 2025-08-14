@@ -6,6 +6,7 @@ use anyhow::Result;
 use wgpu::util::DeviceExt;
 
 /// Kontekst GPU zarządzający stanem wgpu
+#[derive(Clone)]
 #[allow(dead_code)]
 pub struct GpuContext {
     pub instance: Instance,

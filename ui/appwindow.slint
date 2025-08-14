@@ -1221,10 +1221,12 @@ export component AppWindow inherits Window {
                     background: Kolory.suwak_tlo;
                     border-radius: 4px;
 
-                    // fill
+                    // fill - naprawione: wypełnienie rośnie od lewej do prawej
                     if root.progress-value >= 0.0: Rectangle {
                         width: parent.width * max(0.0, min(1.0, root.progress-value));
                         height: parent.height;
+                        x: 0px; // Zawsze od lewej strony
+                        y: 0px;
                         background: Kolory.progress_fill;
                         border-radius: 4px;
                     }
