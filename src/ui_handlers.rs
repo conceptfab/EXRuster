@@ -320,7 +320,7 @@ pub fn load_thumbnails_for_directory(
         
         // Sprawdź czy GPU acceleration jest dostępne
         // TODO: Naprawić problem z lifetime'ami dla GPU context
-        let gpu_context = None; // Na razie wyłączone
+        let gpu_context = None; // Na razie wyłączone żeby uniknąć błędów kompilacji
         
         match crate::thumbnails::generate_exr_thumbnails_in_dir_gpu(
             directory, 150, exposure, gamma, tonemap_mode, Some(&prog), gpu_context

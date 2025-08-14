@@ -80,18 +80,10 @@ pub fn generate_exr_thumbnails_in_dir_gpu(
 
 /// Sprawdza czy warto użyć GPU dla generowania miniaturek
 #[allow(dead_code)]
-fn should_use_gpu_for_thumbnails(files: &[PathBuf]) -> bool {
-    if files.len() < 3 {
-        return false; // Za mało plików, overhead GPU nie opłaca się
-    }
-    
-    // Sprawdź rozmiary plików
-    let total_size: u64 = files.iter()
-        .filter_map(|path| fs::metadata(path).ok().map(|m| m.len()))
-        .sum();
-    
-    // Użyj GPU jeśli łączny rozmiar > 100MB lub więcej niż 10 plików
-    total_size > 100 * 1024 * 1024 || files.len() > 10
+fn should_use_gpu_for_thumbnails(_files: &[PathBuf]) -> bool {
+    // GPU ma być używane zawsze gdy jest dostępne!
+    // Usuwamy ograniczenia rozmiaru plików - GPU acceleration dla wszystkich plików EXR
+    true
 }
 
 /// Generuje miniaturki używając GPU acceleration
