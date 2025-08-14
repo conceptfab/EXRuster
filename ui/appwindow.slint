@@ -51,11 +51,6 @@ export component AppWindow inherits Window {
     property <bool> view-menu-timer-running: false;
     property <bool> gpu-menu-timer-running: false;
     
-    // Menu state tracking
-    property <bool> file-menu-just-opened: false;
-    property <bool> view-menu-just-opened: false;
-    property <bool> gpu-menu-just-opened: false;
-    
     // Status bar properties
     in-out property <string> status-text: "Ready";
     in-out property <string> gpu-status-text: "GPU: inicjalizacja...";
@@ -172,27 +167,13 @@ export component AppWindow inherits Window {
                 }
                 
                 file-menu-area := TouchArea {
-                    width: parent.width;
-                    height: parent.height;
-                    z: 1000;
                     clicked => {
                         file-menu-open = !file-menu-open;
                         view-menu-open = false; // Zamknij inne menu
                         gpu-menu-open = false; // Zamknij inne menu
-                        
-                        // Track if menu was just opened
-                        if file-menu-open {
-                            file-menu-just-opened = true;
-                            file-menu-timer-running = true;
-                        } else {
-                            file-menu-just-opened = false;
-                            file-menu-timer-running = false;
-                        }
                     }
                 }
             }
-            
-
             
             // View Menu Button
             Rectangle {
@@ -210,27 +191,13 @@ export component AppWindow inherits Window {
                 }
                 
                 view-menu-area := TouchArea {
-                    width: parent.width;
-                    height: parent.height;
-                    z: 1000;
                     clicked => {
                         view-menu-open = !view-menu-open;
                         file-menu-open = false; // Zamknij inne menu
                         gpu-menu-open = false; // Zamknij inne menu
-                        
-                        // Track if menu was just opened
-                        if view-menu-open {
-                            view-menu-just-opened = true;
-                            view-menu-timer-running = true;
-                        } else {
-                            view-menu-just-opened = false;
-                            view-menu-timer-running = false;
-                        }
                     }
                 }
             }
-            
-
             
             // GPU Menu Button
             Rectangle {
@@ -248,27 +215,13 @@ export component AppWindow inherits Window {
                 }
                 
                 gpu-menu-area := TouchArea {
-                    width: parent.width;
-                    height: parent.height;
-                    z: 1000;
                     clicked => {
                         gpu-menu-open = !gpu-menu-open;
                         file-menu-open = false; // Zamknij inne menu
                         view-menu-open = false; // Zamknij inne menu
-                        
-                        // Track if menu was just opened
-                        if gpu-menu-open {
-                            gpu-menu-just-opened = true;
-                            gpu-menu-timer-running = true;
-                        } else {
-                            gpu-menu-just-opened = false;
-                            gpu-menu-timer-running = false;
-                        }
                     }
                 }
             }
-            
-
         }
 
         // Image aligned with the right panel region in the menu bar
@@ -299,52 +252,19 @@ export component AppWindow inherits Window {
             padding: 0px;
             spacing: 0px;
             
-            PozycjaMenu { width: 100px; text: "Open EXR"; clicked => { file-menu-open = false; file-menu-timer-running = false; open-exr(); } }
-            PozycjaMenu { width: 100px; text: "Exit"; clicked => { file-menu-open = false; file-menu-timer-running = false; exit(); } }
+            PozycjaMenu { width: 100px; text: "Open EXR"; clicked => { file-menu-open = false; open-exr(); } }
+            PozycjaMenu { width: 100px; text: "Exit"; clicked => { file-menu-open = false; exit(); } }
         }
         
         // Auto-close timer for File menu
         Timer {
             interval: 2000ms;
-            running: file-menu-timer-running && !file-menu-hover-area.has-hover;
+            running: file-menu-timer-running;
             triggered => { 
                 file-menu-open = false; 
                 file-menu-timer-running = false;
             }
         }
-        
-        // Click outside to close menu and stop timer (lower priority)
-        TouchArea {
-            x: -1000px;
-            y: -1000px;
-            width: 2000px;
-            height: 2000px;
-            clicked => { 
-                file-menu-open = false; 
-                file-menu-timer-running = false;
-            }
-            z: -1; // Lower priority than menu items
-        }
-        
-        // Hover area to pause timer when mouse is over menu
-        file-menu-hover-area := TouchArea {
-            x: 0px;
-            y: 0px;
-            width: parent.width;
-            height: parent.height;
-        }
-        
-
-        
-
-        
-
-        
-
-        
-
-        
-
     }
     
     // View Dropdown Menu
@@ -362,11 +282,11 @@ export component AppWindow inherits Window {
             padding: 0px;
             spacing: 0px;
             
-            PozycjaMenu { text: root.show-left-panel ? "Hide Left Panel" : "Show Left Panel"; clicked => { show-left-panel = !show-left-panel; view-menu-open = false; view-menu-timer-running = false; } }
-            PozycjaMenu { text: root.show-right-panel ? "Hide Right Panel" : "Show Right Panel"; clicked => { show-right-panel = !show-right-panel; view-menu-open = false; view-menu-timer-running = false; } }
-            PozycjaMenu { text: "Reset View"; clicked => { show-left-panel = true; show-right-panel = true; view-menu-open = false; view-menu-timer-running = false; } }
-            PozycjaMenu { text: "Open Console"; clicked => { internal-console-visible = true; view-menu-open = false; view-menu-timer-running = false; } }
-            PozycjaMenu { text: "Open Meta"; clicked => { internal-meta-visible = true; view-menu-open = false; view-menu-timer-running = false; } }
+            PozycjaMenu { text: root.show-left-panel ? "Hide Left Panel" : "Show Left Panel"; clicked => { show-left-panel = !show-left-panel; view-menu-open = false; } }
+            PozycjaMenu { text: root.show-right-panel ? "Hide Right Panel" : "Show Right Panel"; clicked => { show-right-panel = !show-right-panel; view-menu-open = false; } }
+            PozycjaMenu { text: "Reset View"; clicked => { show-left-panel = true; show-right-panel = true; view-menu-open = false; } }
+            PozycjaMenu { text: "Open Console"; clicked => { internal-console-visible = true; view-menu-open = false; } }
+            PozycjaMenu { text: "Open Meta"; clicked => { internal-meta-visible = true; view-menu-open = false; } }
         }
         
         // Auto-close timer for View menu
@@ -378,26 +298,6 @@ export component AppWindow inherits Window {
                 view-menu-timer-running = false;
             }
         }
-        
-        // Click outside to close menu and stop timer
-        TouchArea {
-            x: -1000px;
-            y: -1000px;
-            width: 2000px;
-            height: 2000px;
-            clicked => { 
-                view-menu-open = false; 
-                view-menu-timer-running = false;
-            }
-        }
-        
-
-        
-
-        
-
-        
-
     }
     
     // GPU Dropdown Menu
@@ -415,38 +315,9 @@ export component AppWindow inherits Window {
             padding: 0px;
             spacing: 0px;
             
-            PozycjaMenu { text: "Check GPU Status"; clicked => { gpu-menu-open = false; gpu-menu-timer-running = false; check-gpu-availability(); } }
-            PozycjaMenu { text: "Refresh GPU Info"; clicked => { gpu-menu-open = false; gpu-menu-timer-running = false; gpu-status-changed(); } }
+            PozycjaMenu { text: "Check GPU Status"; clicked => { gpu-menu-open = false; check-gpu-availability(); } }
+            PozycjaMenu { text: "Refresh GPU Info"; clicked => { gpu-menu-open = false; gpu-status-changed(); } }
         }
-        
-        // Auto-close timer for GPU menu
-        Timer {
-            interval: 2000ms;
-            running: gpu-menu-timer-running;
-            triggered => { 
-                gpu-menu-open = false; 
-                gpu-menu-timer-running = false;
-            }
-        }
-        
-        // Click outside to close menu and stop timer (lower priority)
-        TouchArea {
-            x: -1000px;
-            y: -1000px;
-            width: 2000px;
-            height: 2000px;
-            clicked => { 
-                gpu-menu-open = false; 
-                gpu-menu-timer-running = false;
-            }
-            z: -1; // Lower priority than menu items
-        }
-        
-
-        
-
-        
-
     }
         
     // Main content area with three resizable columns
