@@ -318,6 +318,16 @@ export component AppWindow inherits Window {
             PozycjaMenu { text: "Check GPU Status"; clicked => { gpu-menu-open = false; check-gpu-availability(); } }
             PozycjaMenu { text: "Refresh GPU Info"; clicked => { gpu-menu-open = false; gpu-status-changed(); } }
         }
+        
+        // Auto-close timer for GPU menu
+        Timer {
+            interval: 2000ms;
+            running: gpu-menu-timer-running;
+            triggered => { 
+                gpu-menu-open = false; 
+                gpu-menu-timer-running = false;
+            }
+        }
     }
         
     // Main content area with three resizable columns
