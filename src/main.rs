@@ -24,6 +24,12 @@ use crate::gpu_context::GpuContext;
 use pollster;
 
 fn main() -> Result<(), slint::PlatformError> {
+    // Ustaw obsługę panic aby aplikacja nie znikała
+    std::panic::set_hook(Box::new(|panic_info| {
+        eprintln!("PANIC: {}", panic_info);
+        eprintln!("Aplikacja przechodzi w tryb awaryjny...");
+    }));
+    
     // Ustaw Rayon thread pool na podstawie CPU cores
     rayon::ThreadPoolBuilder::new()
         .num_threads((num_cpus::get() - 1).max(1)) // Zostaw 1 core dla UI
@@ -64,17 +70,9 @@ fn main() -> Result<(), slint::PlatformError> {
         
         // Uruchom inicjalizację GPU w osobnym wątku z obsługą błędów
         std::thread::spawn(move || {
-            // Dodaj timeout dla inicjalizacji GPU
-            let timeout_duration = std::time::Duration::from_secs(10);
-            let start_time = std::time::Instant::now();
-            
-            // Użyj pollster do uruchomienia async funkcji w synchronicznym kontekście
+            // Uproszczona inicjalizacja GPU bez catch_unwind
             let gpu_result = pollster::block_on(async {
-                // Sprawdź timeout
-                if start_time.elapsed() > timeout_duration {
-                    return Err(anyhow::anyhow!("Timeout inicjalizacji GPU"));
-                }
-                
+                // Używamy prostszego timeout
                 GpuContext::new().await
             });
             

@@ -16,27 +16,44 @@ struct Params {
 // Bufor wejściowy (piksele HDR jako vec4<f32>)
 @group(0) @binding(1) var<storage, read> input_pixels: array<vec4<f32>>;
 
-// Bufor wyjściowy (piksele 8-bitowe jako vec4<u8>)
-@group(0) @binding(2) var<storage, write> output_pixels: array<vec4<u8>>;
+// Bufor wyjściowy (piksele jako u32 - NAPRAWIONE: bardziej kompatybilne)
+@group(0) @binding(2) var<storage, write> output_pixels: array<u32>;
 
 // Uniformy
 @group(0) @binding(0) var<uniform> params: Params;
 
-// ACES tone mapping - znacznie lepszy od Reinhard
+// ACES tone mapping - znacznie lepszy od Reinhard (bezpieczniejsza wersja)
 fn aces_tonemap(x: f32) -> f32 {
+    // Sprawdź czy wejście jest poprawne
+    if (x != x || x < 0.0) {
+        return 0.0; // NaN lub ujemne -> 0
+    }
+    
     let a = 2.51;
     let b = 0.03;
     let c = 2.43;
     let d = 0.59;
     let e = 0.14;
-    let result = (x * (a * x + b)) / (x * (c * x + d) + e);
-    return select(0.0, select(1.0, result, result < 1.0), result > 0.0);
+    let denominator = x * (c * x + d) + e;
+    
+    // Sprawdź dzielenie przez zero
+    if (abs(denominator) < 1e-10) {
+        return 0.0;
+    }
+    
+    let result = (x * (a * x + b)) / denominator;
+    return clamp(result, 0.0, 1.0);
 }
 
-// Reinhard tone mapping: x / (1 + x)
+// Reinhard tone mapping: x / (1 + x) (bezpieczniejsza wersja)
 fn reinhard_tonemap(x: f32) -> f32 {
+    // Sprawdź czy wejście jest poprawne
+    if (x != x || x < 0.0) {
+        return 0.0; // NaN lub ujemne -> 0
+    }
+    
     let result = x / (1.0 + x);
-    return select(0.0, select(1.0, result, result < 1.0), result > 0.0);
+    return clamp(result, 0.0, 1.0);
 }
 
 // Prawdziwa krzywa sRGB (OETF), zastosowana do wartości w [0,1]
@@ -67,10 +84,10 @@ fn tone_map_and_gamma(
 ) -> vec3<f32> {
     let exposure_multiplier = pow(2.0, exposure);
 
-    // Sprawdzenie NaN/Inf i clamp do sensownych wartości
-    let safe_r = select(0.0, max(r, 0.0), isFinite(r));
-    let safe_g = select(0.0, max(g, 0.0), isFinite(g));
-    let safe_b = select(0.0, max(b, 0.0), isFinite(b));
+    // Sprawdzenie NaN/Inf i clamp do sensownych wartości (bezpieczniejsze)
+    let safe_r = select(0.0, max(r, 0.0), r == r && r != r * 0.5); // sprawdź czy nie NaN
+    let safe_g = select(0.0, max(g, 0.0), g == g && g != g * 0.5);
+    let safe_b = select(0.0, max(b, 0.0), b == b && b != b * 0.5);
 
     // Zastosowanie ekspozycji
     let exposed_r = safe_r * exposure_multiplier;
@@ -142,14 +159,15 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         params.tonemap_mode
     );
     
-    // Konwersja finalnego koloru f32 (w zakresie 0-1) na u8 (0-255)
-    let output_color = vec4<u8>(
-        u8(select(0.0, select(255.0, processed_color.r * 255.0, processed_color.r * 255.0 < 255.0), processed_color.r * 255.0 > 0.0)),
-        u8(select(0.0, select(255.0, processed_color.g * 255.0, processed_color.g * 255.0 < 255.0), processed_color.g * 255.0 > 0.0)),
-        u8(select(0.0, select(255.0, processed_color.b * 255.0, processed_color.b * 255.0 < 255.0), processed_color.b * 255.0 > 0.0)),
-        u8(select(0.0, select(255.0, input_pixel.a * 255.0, input_pixel.a * 255.0 < 255.0), input_pixel.a * 255.0 > 0.0))  // Alpha bez zmian
-    );
+    // NAPRAWIONE: Konwersja do u32 (4 bajty RGBA packed)
+    let r_u8 = u32(clamp(processed_color.r * 255.0, 0.0, 255.0));
+    let g_u8 = u32(clamp(processed_color.g * 255.0, 0.0, 255.0));
+    let b_u8 = u32(clamp(processed_color.b * 255.0, 0.0, 255.0));
+    let a_u8 = u32(clamp(input_pixel.a * 255.0, 0.0, 255.0));
+    
+    // Pakuj 4 bajty do u32: RGBA
+    let packed_color = (r_u8) | (g_u8 << 8u) | (b_u8 << 16u) | (a_u8 << 24u);
     
     // Zapisz wynik do bufora wyjściowego
-    output_pixels[pixel_index] = output_color;
+    output_pixels[pixel_index] = packed_color;
 }

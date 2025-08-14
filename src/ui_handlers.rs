@@ -194,7 +194,14 @@ pub fn handle_layer_tree_click(
                 let channel_short = normalize_channel_display_to_short(&channel_short);
                 // NIE normalizujemy nazw — używamy 1:1 z pliku; jedynie tryb Depth rozpoznamy później po wzorcu
 
-                let path = file_path.unwrap();
+                let path = match file_path {
+                    Some(p) => p,
+                    None => {
+                        ui.set_status_text("Błąd: brak ścieżki do pliku".into());
+                        push_console(&ui, &console, "[error] brak ścieżki do pliku".to_string());
+                        return;
+                    }
+                };
                 // Brak specjalnego traktowania Cryptomatte – kanały jak w każdej warstwie
 
                 let prog = UiProgress::new(ui.as_weak());

@@ -247,31 +247,92 @@ impl ImageCache {
     
     /// Przetwarza obraz na GPU z użyciem compute shadera
     pub fn process_to_image_gpu(&self, exposure: f32, gamma: f32, tonemap_mode: i32) -> Result<Image, Box<dyn std::error::Error>> {
+        println!("GPU: Rozpoczynam przetwarzanie obrazu {}x{} pikseli", self.width, self.height);
+        
+        // Wrap całą funkcję w catch_unwind dla bezpieczeństwa
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.process_to_image_gpu_internal(exposure, gamma, tonemap_mode)
+        }));
+        
+        match result {
+            Ok(res) => res,
+            Err(_) => {
+                println!("GPU: PANIC wykryty w przetwarzaniu GPU! Fallback do CPU.");
+                Err("Panic w przetwarzaniu GPU - fallback do CPU".into())
+            }
+        }
+    }
+    
+    /// Wewnętrzna funkcja przetwarzania GPU (bez catch_unwind)
+    fn process_to_image_gpu_internal(&self, exposure: f32, gamma: f32, tonemap_mode: i32) -> Result<Image, Box<dyn std::error::Error>> {
+        
         // Sprawdź czy kontekst GPU jest dostępny
         let gpu_context = match &self.gpu_context {
             Some(ctx) => ctx,
-            None => return Err("Kontekst GPU nie jest dostępny".into()),
+            None => {
+                println!("GPU: Błąd - kontekst GPU nie jest dostępny");
+                return Err("Kontekst GPU nie jest dostępny".into());
+            }
         };
         
-        let gpu_guard = gpu_context.lock().map_err(|_| "Nie można uzyskać dostępu do kontekstu GPU")?;
+        let gpu_guard = gpu_context.lock().map_err(|e| {
+            println!("GPU: Błąd - nie można uzyskać dostępu do kontekstu GPU: {:?}", e);
+            "Nie można uzyskać dostępu do kontekstu GPU"
+        })?;
         let gpu_context = match gpu_guard.as_ref() {
             Some(ctx) => ctx,
-            None => return Err("Kontekst GPU nie został zainicjalizowany".into()),
+            None => {
+                println!("GPU: Błąd - kontekst GPU nie został zainicjalizowany");
+                return Err("Kontekst GPU nie został zainicjalizowany".into());
+            }
         };
         
         // Dodatkowe sprawdzenie dostępności GPU
         if !gpu_context.is_available() {
+            println!("GPU: Błąd - urządzenie GPU nie jest dostępne");
             return Err("Urządzenie GPU nie jest dostępne".into());
         }
         
         // Sprawdź rozmiar obrazu
         if self.width == 0 || self.height == 0 {
+            println!("GPU: Błąd - nieprawidłowe wymiary obrazu: {}x{}", self.width, self.height);
             return Err("Nieprawidłowe wymiary obrazu".into());
         }
         
         if self.raw_pixels.is_empty() {
+            println!("GPU: Błąd - brak danych obrazu do przetworzenia");
             return Err("Brak danych obrazu do przetworzenia".into());
         }
+        
+        // Sprawdź czy rozmiar pikseli odpowiada wymiarom obrazu
+        let expected_pixels = (self.width * self.height) as usize;
+        if self.raw_pixels.len() != expected_pixels {
+            println!("GPU: Błąd - niezgodność rozmiaru: oczekiwano {} pikseli, mam {}", 
+                     expected_pixels, self.raw_pixels.len());
+            return Err("Niezgodność rozmiaru pikseli z wymiarami obrazu".into());
+        }
+        
+        // Sprawdź czy wymiary nie są zbyt duże dla GPU
+        const MAX_DIMENSION: u32 = 16384; // 16K max
+        if self.width > MAX_DIMENSION || self.height > MAX_DIMENSION {
+            println!("GPU: Błąd - obraz zbyt duży: {}x{} (max {}x{})", 
+                     self.width, self.height, MAX_DIMENSION, MAX_DIMENSION);
+            return Err("Obraz zbyt duży dla przetwarzania GPU".into());
+        }
+        
+        // Sprawdź limity GPU
+        let (_, limits) = gpu_context.get_device_info();
+        let max_buffer_size = limits.max_buffer_size;
+        let input_size = (self.raw_pixels.len() * std::mem::size_of::<[f32; 4]>()) as u64;
+        let output_size = (self.width * self.height * 4) as u64;
+        
+        if input_size > max_buffer_size || output_size > max_buffer_size {
+            println!("GPU: Błąd - bufory zbyt duże dla GPU: input {} MB, output {} MB (max {} MB)", 
+                     input_size / 1024 / 1024, output_size / 1024 / 1024, max_buffer_size / 1024 / 1024);
+            return Err("Bufory zbyt duże dla GPU".into());
+        }
+        
+        println!("GPU: Parametry - exposure: {}, gamma: {}, tonemap: {}", exposure, gamma, tonemap_mode);
         
         // Parametry uniformów
         #[repr(C)]
@@ -292,30 +353,45 @@ impl ImageCache {
             height: self.height,
         };
         
-        // Utworzenie buforów
+        // Utworzenie buforów z logowaniem
+        println!("GPU: Tworzę bufory - wejściowy: {} bajtów, wyjściowy: {} bajtów", 
+                 self.raw_pixels.len() * std::mem::size_of::<[f32; 4]>(),
+                 self.width * self.height * 4);
+        
         let input_buffer = gpu_context.create_storage_buffer(
             "input_pixels",
             (self.raw_pixels.len() * std::mem::size_of::<[f32; 4]>()) as u64,
             true, // read_only
         );
         
+        // NAPRAWIONE: Bufory dla u32 (4 bajty na piksel) - poprawione typy
         let output_buffer = gpu_context.create_storage_buffer(
             "output_pixels",
-            (self.width * self.height * 4) as u64,
+            self.width as u64 * self.height as u64 * std::mem::size_of::<u32>() as u64,
             false, // write_only
         );
         
         let staging_buffer = gpu_context.create_staging_buffer(
             "staging_buffer",
-            (self.width * self.height * 4) as u64,
+            self.width as u64 * self.height as u64 * std::mem::size_of::<u32>() as u64,
         );
         
         let uniform_buffer = gpu_context.create_uniform_buffer("params", &params);
         
         // Wypełnienie bufora wejściowego danymi
+        println!("GPU: Przygotowuję dane wejściowe - {} pikseli", self.raw_pixels.len());
         let input_data: Vec<[f32; 4]> = self.raw_pixels.iter()
             .map(|(r, g, b, a)| [*r, *g, *b, *a])
             .collect();
+        
+        // Sprawdź dane wejściowe na problematyczne wartości
+        let problematic_pixels = input_data.iter().enumerate().take(10).filter(|(_, pixel)| {
+            !pixel[0].is_finite() || !pixel[1].is_finite() || !pixel[2].is_finite() || !pixel[3].is_finite()
+        }).count();
+        
+        if problematic_pixels > 0 {
+            println!("GPU: Ostrzeżenie - znaleziono {} problematycznych pikseli (NaN/Inf) w pierwszych 10", problematic_pixels);
+        }
         
         gpu_context.queue.write_buffer(&input_buffer, 0, bytemuck::cast_slice(&input_data));
         
@@ -401,6 +477,7 @@ impl ImageCache {
         });
         
         // Wysłanie komend do GPU
+        println!("GPU: Przygotowuję komendy przetwarzania");
         let mut encoder = gpu_context.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("image_processing_encoder"),
         });
@@ -419,16 +496,26 @@ impl ImageCache {
             let workgroups_x = (self.width + workgroup_size - 1) / workgroup_size;
             let workgroups_y = (self.height + workgroup_size - 1) / workgroup_size;
             
+            println!("GPU: Uruchamiam compute shader - grupy robocze: {}x{} (workgroup_size: {})", 
+                     workgroups_x, workgroups_y, workgroup_size);
+            
             compute_pass.dispatch_workgroups(workgroups_x, workgroups_y, 1);
         }
         
         // Kopiowanie wyników do staging buffer
-        encoder.copy_buffer_to_buffer(&output_buffer, 0, &staging_buffer, 0, (self.width * self.height * 4) as u64);
+        println!("GPU: Kopiuję wyniki do staging buffer");
+        encoder.copy_buffer_to_buffer(&output_buffer, 0, &staging_buffer, 0, self.width as u64 * self.height as u64 * std::mem::size_of::<u32>() as u64);
         
         // Wysłanie komend
+        println!("GPU: Wysyłam komendy do wykonania");
         gpu_context.queue.submit(std::iter::once(encoder.finish()));
         
-        // Odczyt wyników - POPRAWIONE: bezpieczna obsługa błędów z timeout
+        // Sprawdź stan urządzenia po wysłaniu komend
+        if !gpu_context.is_available() {
+            return Err("Urządzenie GPU zostało utracone podczas przetwarzania".into());
+        }
+        
+        // Odczyt wyników - NAPRAWIONE: prawidłowa kolejność operacji
         let buffer_slice = staging_buffer.slice(..);
         let (tx, rx) = std::sync::mpsc::channel();
         
@@ -437,36 +524,38 @@ impl ImageCache {
             let _ = tx.send(result);
         });
         
-        // Oczekiwanie na zakończenie operacji GPU z timeout
-        let mut timeout_counter = 0;
-        const MAX_TIMEOUT: u32 = 1000; // 1000 iteracji
+        // Najpierw poczekaj na zakończenie wszystkich operacji GPU
+        let start_time = std::time::Instant::now();
+        const MAX_WAIT_TIME: std::time::Duration = std::time::Duration::from_secs(5);
         
-        while timeout_counter < MAX_TIMEOUT {
+        // NAPRAWIONE: bezpieczniejsze oczekiwanie na mapowanie
+        loop {
+            // Krótki poll zamiast Wait - unikamy zablokowania
             let _ = gpu_context.device.poll(wgpu::PollType::Wait);
             
-            // Sprawdź czy bufor jest zmapowany
-            if buffer_slice.get_mapped_range().len() > 0 {
-                break;
-            }
-            
-            timeout_counter += 1;
-            std::thread::sleep(std::time::Duration::from_millis(1));
-        }
-        
-        if timeout_counter >= MAX_TIMEOUT {
-            return Err("Timeout podczas oczekiwania na operację GPU".into());
-        }
-        
-        // Sprawdź czy mapowanie się powiodło - POPRAWIONE: prawidłowa obsługa TryRecvError
-        match rx.try_recv() {
-            Ok(_) => {
-                // Mapowanie się powiodło
-            },
-            Err(std::sync::mpsc::TryRecvError::Empty) => {
-                // Bufor nie jest jeszcze gotowy - to normalne
-            },
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                return Err("Błąd komunikacji podczas mapowania bufora GPU".into());
+            // Sprawdź czy otrzymaliśmy odpowiedź z mapowania
+            match rx.try_recv() {
+                Ok(Ok(())) => {
+                    println!("GPU: Mapowanie bufora zakończone pomyślnie");
+                    break;
+                },
+                Ok(Err(e)) => {
+                    println!("GPU: Błąd mapowania bufora: {:?}", e);
+                    return Err(format!("Błąd mapowania bufora GPU: {:?}", e).into());
+                },
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    // Jeszcze czekamy
+                    if start_time.elapsed() > MAX_WAIT_TIME {
+                        println!("GPU: Timeout podczas mapowania bufora");
+                        return Err("Timeout podczas oczekiwania na mapowanie bufora GPU".into());
+                    }
+                    // Dłuższy sleep aby nie zabijać CPU
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                },
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    println!("GPU: Kanał komunikacji został zamknięty");
+                    return Err("Błąd komunikacji podczas mapowania bufora GPU".into());
+                }
             }
         }
         
@@ -476,32 +565,37 @@ impl ImageCache {
             return Err("Bufor GPU jest pusty".into());
         }
         
-        let output_data: Vec<u8> = data.iter().copied().collect();
-        drop(data);
+        // NAPRAWIONE: Odczyt danych jako u32 (packed RGBA)
+        let data_u32: &[u32] = bytemuck::cast_slice(&data);
         
         // Sprawdzenie rozmiaru danych
-        if output_data.len() != (self.width * self.height * 4) as usize {
+        if data_u32.len() != (self.width * self.height) as usize {
             return Err(format!(
-                "Nieprawidłowy rozmiar danych GPU: oczekiwano {}, otrzymano {}", 
-                self.width * self.height * 4, 
-                output_data.len()
+                "Nieprawidłowy rozmiar danych GPU: oczekiwano {} pikseli u32, otrzymano {}", 
+                self.width * self.height, 
+                data_u32.len()
             ).into());
         }
+        
+        println!("GPU: Odczytano {} pikseli z bufora", data_u32.len());
         
         // Stworzenie SharedPixelBuffer
         let mut buffer = SharedPixelBuffer::<Rgba8Pixel>::new(self.width, self.height);
         let out_slice = buffer.make_mut_slice();
         
-        for (i, pixel_data) in output_data.chunks_exact(4).enumerate() {
+        // Rozpakuj u32 do RGBA
+        for (i, &packed_pixel) in data_u32.iter().enumerate() {
             if i < out_slice.len() {
                 out_slice[i] = Rgba8Pixel {
-                    r: pixel_data[0],
-                    g: pixel_data[1],
-                    b: pixel_data[2],
-                    a: pixel_data[3],
+                    r: (packed_pixel & 0xFF) as u8,
+                    g: ((packed_pixel >> 8) & 0xFF) as u8,
+                    b: ((packed_pixel >> 16) & 0xFF) as u8,
+                    a: ((packed_pixel >> 24) & 0xFF) as u8,
                 };
             }
         }
+        
+        drop(data);
         
         // Unmapowanie bufora
         staging_buffer.unmap();
@@ -1143,10 +1237,9 @@ fn compose_composite_from_channels(layer_channels: &LayerChannels) -> Vec<(f32, 
         layer_channels.channel_names.iter().position(|n| n.to_ascii_uppercase().starts_with(prefix))
     };
 
-    let r_idx = pick_exact_index("R").or_else(|| pick_prefix_index('R')).or_else(|| Some(0));
-    let r_idx = r_idx.expect("Brak kanału R do kompozytu");
-    let g_idx = pick_exact_index("G").or_else(|| pick_prefix_index('G')).or(Some(r_idx)).unwrap();
-    let b_idx = pick_exact_index("B").or_else(|| pick_prefix_index('B')).or(Some(g_idx)).or(Some(r_idx)).unwrap();
+    let r_idx = pick_exact_index("R").or_else(|| pick_prefix_index('R')).unwrap_or(0);
+    let g_idx = pick_exact_index("G").or_else(|| pick_prefix_index('G')).unwrap_or(r_idx);
+    let b_idx = pick_exact_index("B").or_else(|| pick_prefix_index('B')).unwrap_or(g_idx);
     let a_idx = pick_exact_index("A").or_else(|| pick_prefix_index('A'));
 
     let base_r = r_idx * pixel_count;
