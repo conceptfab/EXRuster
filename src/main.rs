@@ -17,9 +17,10 @@ mod gpu_context;
 
 use std::sync::{Arc, Mutex};
 use crate::ui_handlers::push_console;
-use ui_handlers::{ImageCacheType, CurrentFilePathType, FullExrCache};
+use ui_handlers::{ImageCacheType, CurrentFilePathType, FullExrCache, GpuContextType};
 use slint::{VecModel, SharedString, Model};
 use std::rc::Rc;
+use crate::gpu_context::GpuContext;
 
 fn main() -> Result<(), slint::PlatformError> {
     // Ustaw Rayon thread pool na podstawie CPU cores
@@ -52,12 +53,51 @@ fn main() -> Result<(), slint::PlatformError> {
         });
     }
     
+    // Inicjalizacja kontekstu GPU
+    let gpu_context: GpuContextType = Arc::new(Mutex::new(None));
+    
+    // Asynchroniczna inicjalizacja GPU w osobnym bloku
+    {
+        let gpu_context_clone = gpu_context.clone();
+        let ui_weak = ui.as_weak();
+        
+        // Uruchom inicjalizację GPU w osobnym wątku
+        std::thread::spawn(move || {
+            // Użyj pollster do uruchomienia async funkcji w synchronicznym kontekście
+            match pollster::block_on(GpuContext::new()) {
+                Ok(context) => {
+                    let adapter_info = context.get_adapter_info();
+                    println!("GPU: {} - inicjalizacja pomyślna", adapter_info.name);
+                    
+                    // Zaktualizuj kontekst GPU
+                    if let Ok(mut guard) = gpu_context_clone.lock() {
+                        *guard = Some(context);
+                    }
+                    
+                    // Zaktualizuj UI z informacją o GPU
+                    if let Some(ui) = ui_weak.upgrade() {
+                        ui.set_status_text(format!("GPU: {} - dostępny", adapter_info.name).into());
+                    }
+                }
+                Err(e) => {
+                    println!("GPU: inicjalizacja nieudana - {}", e);
+                    println!("Aplikacja będzie działać w trybie CPU");
+                    
+                    // Zaktualizuj UI z informacją o braku GPU
+                    if let Some(ui) = ui_weak.upgrade() {
+                        ui.set_status_text("GPU: niedostępny (tryb CPU)".into());
+                    }
+                }
+            }
+        });
+    }
+    
     let image_cache: ImageCacheType = Arc::new(Mutex::new(None));
     let current_file_path: CurrentFilePathType = Arc::new(Mutex::new(None));
     let full_exr_cache: FullExrCache = Arc::new(Mutex::new(None));
 
     // Setup UI callbacks...
-    let console_model = setup_ui_callbacks(&ui, image_cache.clone(), current_file_path.clone(), full_exr_cache.clone());
+    let console_model = setup_ui_callbacks(&ui, image_cache.clone(), current_file_path.clone(), full_exr_cache.clone(), gpu_context.clone());
 
     // Obsługa argumentów uruchomieniowych: otwórz wskazany plik EXR i ewentualnie wczytaj miniatury folderu
     {
@@ -190,6 +230,7 @@ fn setup_menu_callbacks(
     image_cache: ImageCacheType,
     console_model: Rc<VecModel<SharedString>>,
     full_exr_cache: FullExrCache,
+    _gpu_context: GpuContextType,
 ) {
     ui.on_clear_console({
         let ui_handle = ui.as_weak();
@@ -262,6 +303,7 @@ fn setup_image_control_callbacks(
     image_cache: ImageCacheType,
     current_file_path: CurrentFilePathType,
     console_model: Rc<VecModel<SharedString>>,
+    _gpu_context: GpuContextType,
 ) {
     let ui_weak_for_throttle = ui.as_weak();
     let cache_weak_for_throttle = image_cache.clone();
@@ -401,6 +443,7 @@ fn setup_panel_callbacks(
     image_cache: ImageCacheType,
     console_model: Rc<VecModel<SharedString>>,
     full_exr_cache: FullExrCache,
+    _gpu_context: GpuContextType,
 ) {
     // Debug klawiszy: wypisz do statusu i konsoli
     ui.on_key_pressed_debug({
@@ -530,13 +573,14 @@ fn setup_ui_callbacks(
     image_cache: ImageCacheType,
     current_file_path: CurrentFilePathType,
     full_exr_cache: FullExrCache,
+    gpu_context: GpuContextType,
 ) -> Rc<VecModel<SharedString>> {
     let console_model: Rc<VecModel<SharedString>> = Rc::new(VecModel::from(vec![]));
     ui.set_console_text(SharedString::from(""));
 
-    setup_menu_callbacks(ui, current_file_path.clone(), image_cache.clone(), console_model.clone(), full_exr_cache.clone());
-    setup_image_control_callbacks(ui, image_cache.clone(), current_file_path.clone(), console_model.clone());
-    setup_panel_callbacks(ui, current_file_path.clone(), image_cache.clone(), console_model.clone(), full_exr_cache.clone());
+    setup_menu_callbacks(ui, current_file_path.clone(), image_cache.clone(), console_model.clone(), full_exr_cache.clone(), gpu_context.clone());
+    setup_image_control_callbacks(ui, image_cache.clone(), current_file_path.clone(), console_model.clone(), gpu_context.clone());
+    setup_panel_callbacks(ui, current_file_path.clone(), image_cache.clone(), console_model.clone(), full_exr_cache.clone(), gpu_context.clone());
 
     console_model
 }

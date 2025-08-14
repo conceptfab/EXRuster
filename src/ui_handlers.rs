@@ -25,6 +25,7 @@ use crate::ThumbItem;
 pub type ImageCacheType = Arc<Mutex<Option<ImageCache>>>;
 pub type CurrentFilePathType = Arc<Mutex<Option<PathBuf>>>;
 pub type ConsoleModel = Rc<VecModel<SharedString>>;
+pub type GpuContextType = Arc<Mutex<Option<crate::gpu_context::GpuContext>>>;
 use crate::full_exr_cache::{FullExrCacheData, FullLayer, build_full_exr_cache};
 pub type FullExrCache = Arc<Mutex<Option<std::sync::Arc<FullExrCacheData>>>>;
 
