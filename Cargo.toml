@@ -58,10 +58,10 @@ codegen-units = 16
 [profile.release]
 lto = "thin"
 codegen-units = 1
-panic = "abort"
-opt-level = 3
+panic = "unwind"  # ZMIENIONE: unwind zamiast abort dla lepszej obsługi błędów GPU
+opt-level = 3     # ZMIENIONE: mniej agresywne optymalizacje 
 strip = true
-overflow-checks = false
+overflow-checks = true  # WŁĄCZONE: dla bezpieczeństwa GPU
 debug = false
 
 [profile.release-with-debug]

@@ -510,6 +510,10 @@ impl ImageCache {
         println!("GPU: Wysyłam komendy do wykonania");
         gpu_context.queue.submit(std::iter::once(encoder.finish()));
         
+        // RELEASE MODE: Force sync przed mapowaniem
+        println!("GPU: Synchronizuję operacje GPU...");
+        let _ = gpu_context.device.poll(wgpu::PollType::Wait);
+        
         // Sprawdź stan urządzenia po wysłaniu komend
         if !gpu_context.is_available() {
             return Err("Urządzenie GPU zostało utracone podczas przetwarzania".into());
@@ -526,7 +530,7 @@ impl ImageCache {
         
         // Najpierw poczekaj na zakończenie wszystkich operacji GPU
         let start_time = std::time::Instant::now();
-        const MAX_WAIT_TIME: std::time::Duration = std::time::Duration::from_secs(5);
+        const MAX_WAIT_TIME: std::time::Duration = std::time::Duration::from_secs(30); // ZWIĘKSZONY TIMEOUT dla release
         
         // NAPRAWIONE: bezpieczniejsze oczekiwanie na mapowanie
         loop {
@@ -549,8 +553,8 @@ impl ImageCache {
                         println!("GPU: Timeout podczas mapowania bufora");
                         return Err("Timeout podczas oczekiwania na mapowanie bufora GPU".into());
                     }
-                    // Dłuższy sleep aby nie zabijać CPU
-                    std::thread::sleep(std::time::Duration::from_millis(10));
+                    // RELEASE MODE: jeszcze dłuższy sleep dla stabilności
+                    std::thread::sleep(std::time::Duration::from_millis(50));
                 },
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                     println!("GPU: Kanał komunikacji został zamknięty");
