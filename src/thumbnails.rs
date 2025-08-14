@@ -18,6 +18,9 @@ use glam::Vec3;
 use std::sync::{Mutex, OnceLock};
 use lru::LruCache;
 
+// Dodaj import dla GPU context
+use crate::gpu_context::GpuContext;
+
 /// Zwięzła reprezentacja miniaturki EXR do wyświetlenia w UI
 pub struct ExrThumbnailInfo {
     pub path: PathBuf,
@@ -29,17 +32,15 @@ pub struct ExrThumbnailInfo {
     pub image: Image,
 }
 
-/// Główny interfejs: generuje miniaturki dla wszystkich plików .exr w katalogu (bez rekursji).
-/// - Przetwarzanie odbywa się równolegle (Rayon)
-/// - Miniaturki powstają z kompozytu kanałów R, G, B z "najlepszej" warstwy (wybór scentralizowany w `image_cache`)
-/// - Transformacje zgodne z podglądem (ACES + gamma) przez `process_pixel`, z przekazanymi parametrami
-pub fn generate_exr_thumbnails_in_dir(
+/// GPU-accelerated version: generuje miniaturki z wykorzystaniem GPU jeśli dostępne
+pub fn generate_exr_thumbnails_in_dir_gpu(
     directory: &Path,
     thumb_height: u32,
     exposure: f32,
     gamma: f32,
     tonemap_mode: i32,
     progress: Option<&dyn ProgressSink>,
+    gpu_context: Option<&GpuContext>,
 ) -> anyhow::Result<Vec<ExrThumbnailInfo>> {
     let files = list_exr_files(directory)?;
     let total_files = files.len();
@@ -58,6 +59,66 @@ pub fn generate_exr_thumbnails_in_dir(
         if let Some(p) = progress { p.finish(Some("No EXR files")); }
         return Ok(Vec::new());
     }
+
+    // Sprawdź czy GPU jest dostępne i czy warto go użyć
+    let use_gpu = gpu_context.is_some() && should_use_gpu_for_thumbnails(&files);
+    
+    if use_gpu {
+        if let Some(p) = progress { 
+            p.set(0.1, Some("GPU acceleration enabled for thumbnails")); 
+        }
+        generate_thumbnails_gpu(files, thumb_height, exposure, gamma, tonemap_mode, progress, gpu_context.unwrap())
+    } else {
+        if let Some(p) = progress { 
+            p.set(0.1, Some("Using CPU for thumbnail generation")); 
+        }
+        generate_thumbnails_cpu(files, thumb_height, exposure, gamma, tonemap_mode, progress)
+    }
+}
+
+/// Sprawdza czy warto użyć GPU dla miniaturek (duże pliki, wiele plików)
+fn should_use_gpu_for_thumbnails(files: &[PathBuf]) -> bool {
+    if files.len() < 3 {
+        return false; // Za mało plików, overhead GPU nie opłaca się
+    }
+    
+    // Sprawdź rozmiary plików
+    let total_size: u64 = files.iter()
+        .filter_map(|path| fs::metadata(path).ok().map(|m| m.len()))
+        .sum();
+    
+    // Użyj GPU jeśli łączny rozmiar > 100MB lub więcej niż 10 plików
+    total_size > 100 * 1024 * 1024 || files.len() > 10
+}
+
+/// Generuje miniaturki używając GPU acceleration
+fn generate_thumbnails_gpu(
+    files: Vec<PathBuf>,
+    thumb_height: u32,
+    exposure: f32,
+    gamma: f32,
+    tonemap_mode: i32,
+    progress: Option<&dyn ProgressSink>,
+    _gpu_context: &GpuContext, // Dodaj underscore żeby oznaczyć jako nieużywaną
+) -> anyhow::Result<Vec<ExrThumbnailInfo>> {
+    // TODO: Implementacja GPU acceleration
+    // Na razie fallback do CPU
+    if let Some(p) = progress { 
+        p.set(0.2, Some("GPU path not yet implemented, falling back to CPU")); 
+    }
+    generate_thumbnails_cpu(files, thumb_height, exposure, gamma, tonemap_mode, progress)
+}
+
+/// Generuje miniaturki używając CPU (oryginalna implementacja)
+fn generate_thumbnails_cpu(
+    files: Vec<PathBuf>,
+    thumb_height: u32,
+    exposure: f32,
+    gamma: f32,
+    tonemap_mode: i32,
+    progress: Option<&dyn ProgressSink>,
+) -> anyhow::Result<Vec<ExrThumbnailInfo>> {
+    let total_files = files.len();
 
     // 1) Równolegle generuj dane miniaturek w typie bezpiecznym dla wątków (bez slint::Image)
     let completed = AtomicUsize::new(0);

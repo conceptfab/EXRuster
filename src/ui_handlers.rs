@@ -317,7 +317,14 @@ pub fn load_thumbnails_for_directory(
         let t0 = Instant::now();
         let prog = UiProgress::new(ui.as_weak());
         let tonemap_mode = ui.get_tonemap_mode() as i32;
-        match crate::thumbnails::generate_exr_thumbnails_in_dir(directory, 150, exposure, gamma, tonemap_mode, Some(&prog)) {
+        
+        // Sprawdź czy GPU acceleration jest dostępne
+        // TODO: Naprawić problem z lifetime'ami dla GPU context
+        let gpu_context = None; // Na razie wyłączone
+        
+        match crate::thumbnails::generate_exr_thumbnails_in_dir_gpu(
+            directory, 150, exposure, gamma, tonemap_mode, Some(&prog), gpu_context
+        ) {
             Ok(mut thumbs) => {
                 prog.set(0.95, Some("Sorting thumbnails..."));
                 thumbs.sort_by(|a, b| a.file_name.to_lowercase().cmp(&b.file_name.to_lowercase()));
