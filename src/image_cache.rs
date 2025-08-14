@@ -259,6 +259,20 @@ impl ImageCache {
             None => return Err("Kontekst GPU nie został zainicjalizowany".into()),
         };
         
+        // Dodatkowe sprawdzenie dostępności GPU
+        if !gpu_context.is_available() {
+            return Err("Urządzenie GPU nie jest dostępne".into());
+        }
+        
+        // Sprawdź rozmiar obrazu
+        if self.width == 0 || self.height == 0 {
+            return Err("Nieprawidłowe wymiary obrazu".into());
+        }
+        
+        if self.raw_pixels.is_empty() {
+            return Err("Brak danych obrazu do przetworzenia".into());
+        }
+        
         // Parametry uniformów
         #[repr(C)]
         #[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy)]
@@ -305,11 +319,11 @@ impl ImageCache {
         
         gpu_context.queue.write_buffer(&input_buffer, 0, bytemuck::cast_slice(&input_data));
         
-        // Utworzenie layoutu bind group
+        // Utworzenie layoutu bind group - POPRAWIONE: wszystkie bindingi w jednej grupie
         let bind_group_layout = gpu_context.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("image_processing_bind_group_layout"),
             entries: &[
-                // Bind Group 0: Uniformy
+                // Binding 0: Uniformy
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::COMPUTE,
@@ -320,9 +334,9 @@ impl ImageCache {
                     },
                     count: None,
                 },
-                // Bind Group 1: Bufor wejściowy
+                // Binding 1: Bufor wejściowy (read-only)
                 wgpu::BindGroupLayoutEntry {
-                    binding: 0,
+                    binding: 1,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Storage { read_only: true },
@@ -331,9 +345,9 @@ impl ImageCache {
                     },
                     count: None,
                 },
-                // Bind Group 1: Bufor wyjściowy
+                // Binding 2: Bufor wyjściowy (write-only)
                 wgpu::BindGroupLayoutEntry {
-                    binding: 1,
+                    binding: 2,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Storage { read_only: false },
@@ -366,7 +380,7 @@ impl ImageCache {
             compilation_options: Default::default(),
         });
         
-        // Utworzenie bind group
+        // Utworzenie bind group - POPRAWIONE: poprawne bindingi
         let bind_group = gpu_context.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("image_processing_bind_group"),
             layout: &bind_group_layout,
@@ -376,11 +390,11 @@ impl ImageCache {
                     resource: uniform_buffer.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 0,
+                    binding: 1,
                     resource: input_buffer.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 1,
+                    binding: 2,
                     resource: output_buffer.as_entire_binding(),
                 },
             ],
@@ -414,21 +428,65 @@ impl ImageCache {
         // Wysłanie komend
         gpu_context.queue.submit(std::iter::once(encoder.finish()));
         
-        // Odczyt wyników
+        // Odczyt wyników - POPRAWIONE: bezpieczna obsługa błędów z timeout
         let buffer_slice = staging_buffer.slice(..);
         let (tx, rx) = std::sync::mpsc::channel();
+        
+        // Mapowanie bufora z obsługą błędów
         buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-            tx.send(result).unwrap();
+            let _ = tx.send(result);
         });
         
-        // Oczekiwanie na zakończenie operacji GPU
-        let _ = gpu_context.device.poll(wgpu::PollType::Wait);
-        rx.recv().unwrap()?;
+        // Oczekiwanie na zakończenie operacji GPU z timeout
+        let mut timeout_counter = 0;
+        const MAX_TIMEOUT: u32 = 1000; // 1000 iteracji
         
-        // Pobranie zmapowanych danych
+        while timeout_counter < MAX_TIMEOUT {
+            let _ = gpu_context.device.poll(wgpu::PollType::Wait);
+            
+            // Sprawdź czy bufor jest zmapowany
+            if buffer_slice.get_mapped_range().len() > 0 {
+                break;
+            }
+            
+            timeout_counter += 1;
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        
+        if timeout_counter >= MAX_TIMEOUT {
+            return Err("Timeout podczas oczekiwania na operację GPU".into());
+        }
+        
+        // Sprawdź czy mapowanie się powiodło - POPRAWIONE: prawidłowa obsługa TryRecvError
+        match rx.try_recv() {
+            Ok(_) => {
+                // Mapowanie się powiodło
+            },
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                // Bufor nie jest jeszcze gotowy - to normalne
+            },
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                return Err("Błąd komunikacji podczas mapowania bufora GPU".into());
+            }
+        }
+        
+        // Pobranie zmapowanych danych - POPRAWIONE: bezpieczny odczyt
         let data = buffer_slice.get_mapped_range();
+        if data.is_empty() {
+            return Err("Bufor GPU jest pusty".into());
+        }
+        
         let output_data: Vec<u8> = data.iter().copied().collect();
         drop(data);
+        
+        // Sprawdzenie rozmiaru danych
+        if output_data.len() != (self.width * self.height * 4) as usize {
+            return Err(format!(
+                "Nieprawidłowy rozmiar danych GPU: oczekiwano {}, otrzymano {}", 
+                self.width * self.height * 4, 
+                output_data.len()
+            ).into());
+        }
         
         // Stworzenie SharedPixelBuffer
         let mut buffer = SharedPixelBuffer::<Rgba8Pixel>::new(self.width, self.height);

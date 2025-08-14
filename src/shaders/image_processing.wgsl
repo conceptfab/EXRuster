@@ -12,11 +12,12 @@ struct Params {
     // color_matrix: mat3x3<f32>,
 }
 
-// Bind Group 1: Bufor wejściowy (piksele HDR jako vec4<f32>)
-@group(1) @binding(0) var<storage, read> input_pixels: array<vec4<f32>>;
+// Wszystkie bindingi w jednej grupie (group 0)
+// Bufor wejściowy (piksele HDR jako vec4<f32>)
+@group(0) @binding(1) var<storage, read> input_pixels: array<vec4<f32>>;
 
-// Bind Group 1: Bufor wyjściowy (piksele 8-bitowe jako vec4<u8>)
-@group(1) @binding(1) var<storage, write> output_pixels: array<vec4<u8>>;
+// Bufor wyjściowy (piksele 8-bitowe jako vec4<u8>)
+@group(0) @binding(2) var<storage, write> output_pixels: array<vec4<u8>>;
 
 // Uniformy
 @group(0) @binding(0) var<uniform> params: Params;
@@ -28,17 +29,19 @@ fn aces_tonemap(x: f32) -> f32 {
     let c = 2.43;
     let d = 0.59;
     let e = 0.14;
-    return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0);
+    let result = (x * (a * x + b)) / (x * (c * x + d) + e);
+    return select(0.0, select(1.0, result, result < 1.0), result > 0.0);
 }
 
 // Reinhard tone mapping: x / (1 + x)
 fn reinhard_tonemap(x: f32) -> f32 {
-    return clamp(x / (1.0 + x), 0.0, 1.0);
+    let result = x / (1.0 + x);
+    return select(0.0, select(1.0, result, result < 1.0), result > 0.0);
 }
 
 // Prawdziwa krzywa sRGB (OETF), zastosowana do wartości w [0,1]
 fn srgb_oetf(x: f32) -> f32 {
-    let x = clamp(x, 0.0, 1.0);
+    let x = select(0.0, select(1.0, x, x < 1.0), x > 0.0);
     if (x <= 0.0031308) {
         return 12.92 * x;
     } else {
@@ -48,7 +51,7 @@ fn srgb_oetf(x: f32) -> f32 {
 
 // Niestandardowa korekcja gamma
 fn apply_gamma(x: f32, gamma_inv: f32) -> f32 {
-    let x = clamp(x, 0.0, 1.0);
+    let x = select(0.0, select(1.0, x, x < 1.0), x > 0.0);
     return pow(x, gamma_inv);
 }
 
@@ -86,9 +89,9 @@ fn tone_map_and_gamma(
         tm_b = reinhard_tonemap(exposed_b);
     } else if (tonemap_mode == 2u) {
         // Linear: brak tone-map, tylko clamp do [0,1] po ekspozycji
-        tm_r = clamp(exposed_r, 0.0, 1.0);
-        tm_g = clamp(exposed_g, 0.0, 1.0);
-        tm_b = clamp(exposed_b, 0.0, 1.0);
+        tm_r = select(0.0, select(1.0, exposed_r, exposed_r < 1.0), exposed_r > 0.0);
+        tm_g = select(0.0, select(1.0, exposed_g, exposed_g < 1.0), exposed_g > 0.0);
+        tm_b = select(0.0, select(1.0, exposed_b, exposed_b < 1.0), exposed_b > 0.0);
     } else {
         // ACES (domyślny)
         tm_r = aces_tonemap(exposed_r);
@@ -141,10 +144,10 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     
     // Konwersja finalnego koloru f32 (w zakresie 0-1) na u8 (0-255)
     let output_color = vec4<u8>(
-        u8(clamp(processed_color.r * 255.0, 0.0, 255.0)),
-        u8(clamp(processed_color.g * 255.0, 0.0, 255.0)),
-        u8(clamp(processed_color.b * 255.0, 0.0, 255.0)),
-        u8(clamp(input_pixel.a * 255.0, 0.0, 255.0))  // Alpha bez zmian
+        u8(select(0.0, select(255.0, processed_color.r * 255.0, processed_color.r * 255.0 < 255.0), processed_color.r * 255.0 > 0.0)),
+        u8(select(0.0, select(255.0, processed_color.g * 255.0, processed_color.g * 255.0 < 255.0), processed_color.g * 255.0 > 0.0)),
+        u8(select(0.0, select(255.0, processed_color.b * 255.0, processed_color.b * 255.0 < 255.0), processed_color.b * 255.0 > 0.0)),
+        u8(select(0.0, select(255.0, input_pixel.a * 255.0, input_pixel.a * 255.0 < 255.0), input_pixel.a * 255.0 > 0.0))  // Alpha bez zmian
     );
     
     // Zapisz wynik do bufora wyjściowego

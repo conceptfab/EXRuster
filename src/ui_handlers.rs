@@ -1341,12 +1341,21 @@ pub fn process_image_with_gpu_fallback(
     let gpu_enabled = get_global_gpu_acceleration();
     
     if gpu_enabled {
-        // Spróbuj użyć GPU
+        // Spróbuj użyć GPU z lepszą obsługą błędów
         match cache.process_to_image_gpu(exposure, gamma, tonemap_mode) {
-            Ok(image) => image,
+            Ok(image) => {
+                println!("Obraz przetworzony pomyślnie na GPU");
+                image
+            },
             Err(e) => {
                 // Fallback do CPU w przypadku błędu GPU
                 eprintln!("GPU processing failed: {}, falling back to CPU", e);
+                println!("Przełączam na tryb CPU...");
+                
+                // Automatycznie wyłącz GPU acceleration po błędzie
+                set_global_gpu_acceleration(false);
+                
+                // Użyj CPU jako fallback
                 cache.process_to_image(exposure, gamma, tonemap_mode)
             }
         }

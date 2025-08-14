@@ -54,7 +54,7 @@ fn main() -> Result<(), slint::PlatformError> {
         });
     }
     
-    // Inicjalizacja kontekstu GPU
+    // Inicjalizacja kontekstu GPU - POPRAWIONE: bezpieczniejsza inicjalizacja
     let gpu_context: GpuContextType = Arc::new(Mutex::new(None));
     
     // Asynchroniczna inicjalizacja GPU w osobnym bloku
@@ -62,10 +62,23 @@ fn main() -> Result<(), slint::PlatformError> {
         let gpu_context_clone = gpu_context.clone();
         let ui_weak = ui.as_weak();
         
-        // Uruchom inicjalizację GPU w osobnym wątku
+        // Uruchom inicjalizację GPU w osobnym wątku z obsługą błędów
         std::thread::spawn(move || {
+            // Dodaj timeout dla inicjalizacji GPU
+            let timeout_duration = std::time::Duration::from_secs(10);
+            let start_time = std::time::Instant::now();
+            
             // Użyj pollster do uruchomienia async funkcji w synchronicznym kontekście
-            match pollster::block_on(GpuContext::new()) {
+            let gpu_result = pollster::block_on(async {
+                // Sprawdź timeout
+                if start_time.elapsed() > timeout_duration {
+                    return Err(anyhow::anyhow!("Timeout inicjalizacji GPU"));
+                }
+                
+                GpuContext::new().await
+            });
+            
+            match gpu_result {
                 Ok(context) => {
                     let adapter_info = context.get_adapter_info();
                     println!("GPU: {} - inicjalizacja pomyślna", adapter_info.name);

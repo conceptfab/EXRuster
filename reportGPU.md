@@ -73,6 +73,14 @@ Połączenie `GpuContext` i shadera z istniejącym kodem w `image_cache.rs`.
 1.  **Rozszerzenie `ImageCache`**:
     *   Dodanie pola `gpu_context: Arc<Mutex<Option<GpuContext>>>` do struktury `ImageCache`.
 
+
+
+
+
+
+
+
+
 2.  **Stworzenie nowej metody `process_to_image_gpu`**:
     *   Metoda ta będzie alternatywą dla `process_to_image`.
     *   **Kroki wewnątrz metody**:
