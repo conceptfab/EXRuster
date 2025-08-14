@@ -1,5 +1,6 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use slint::invoke_from_event_loop;
 
 // Import komponentów Slint
 use crate::AppWindow;
@@ -22,14 +23,24 @@ impl UiProgress {
         Self { ui, last_update: Arc::new(Mutex::new(Instant::now() - Duration::from_millis(100))), min_interval: Duration::from_millis(80) }
     }
 
-    fn maybe_update<F: FnOnce(&AppWindow)>(&self, f: F) {
-        if let Some(ui) = self.ui.upgrade() {
-            let mut last = self.last_update.lock().unwrap();
-            let now = Instant::now();
-            if now.duration_since(*last) >= self.min_interval {
-                f(&ui);
-                *last = now;
+    fn do_update(&self, progress: f32, message: Option<String>) {
+        let ui_weak = self.ui.clone();
+        let _ = invoke_from_event_loop(move || {
+            if let Some(ui) = ui_weak.upgrade() {
+                ui.set_progress_value(progress);
+                if let Some(m) = message {
+                    ui.set_status_text(m.into());
+                }
             }
+        });
+    }
+
+    fn maybe_update(&self, progress: f32, message: Option<String>) {
+        let mut last = self.last_update.lock().unwrap();
+        let now = Instant::now();
+        if now.duration_since(*last) >= self.min_interval {
+            self.do_update(progress, message);
+            *last = now;
         }
     }
 }
@@ -37,50 +48,38 @@ impl UiProgress {
 impl ProgressSink for UiProgress {
     fn start_indeterminate(&self, message: Option<&str>) {
         // Natychmiastowa aktualizacja (bez throttlingu), aby użytkownik zobaczył pasek od razu
-        if let Some(ui) = self.ui.upgrade() {
-            ui.set_progress_value(-1.0);
-            if let Some(m) = message { ui.set_status_text(m.into()); }
-            *self.last_update.lock().unwrap() = Instant::now();
-        }
+        self.do_update(-1.0, message.map(|s| s.to_string()));
+        *self.last_update.lock().unwrap() = Instant::now();
     }
 
     fn set(&self, progress_0_1: f32, message: Option<&str>) {
         let clamped = progress_0_1.clamp(0.0, 1.0);
+        let msg = message.map(|s| s.to_string());
         // Jeżeli to duży skok lub jest komunikat – aktualizuj natychmiast, inaczej throttling
-        let force = message.is_some() || clamped >= 0.99 || clamped <= 0.01;
+        let force = msg.is_some() || clamped >= 0.99 || clamped <= 0.01;
         if force {
-            if let Some(ui) = self.ui.upgrade() {
-                ui.set_progress_value(clamped);
-                if let Some(m) = message { ui.set_status_text(m.into()); }
-                *self.last_update.lock().unwrap() = Instant::now();
-            }
+            self.do_update(clamped, msg.clone());
+            *self.last_update.lock().unwrap() = Instant::now();
         } else {
-            self.maybe_update(|ui| {
-                ui.set_progress_value(clamped);
-                if let Some(m) = message { ui.set_status_text(m.into()); }
-            });
+            self.maybe_update(clamped, msg);
         }
     }
 
     fn finish(&self, message: Option<&str>) {
-        if let Some(ui) = self.ui.upgrade() {
-            ui.set_progress_value(1.0);
-            if let Some(m) = message { ui.set_status_text(m.into()); }
-            // krótki reset po 400ms
-            let weak = self.ui.clone();
+        let msg = message.map(|s| s.to_string());
+        self.do_update(1.0, msg);
+        // krótki reset po 400ms
+        let weak = self.ui.clone();
+        let _ = invoke_from_event_loop(move || {
             slint::Timer::single_shot(std::time::Duration::from_millis(400), move || {
                 if let Some(ui2) = weak.upgrade() {
                     ui2.set_progress_value(0.0);
                 }
             });
-        }
+        });
     }
 
     fn reset(&self) {
-        if let Some(ui) = self.ui.upgrade() {
-            ui.set_progress_value(0.0);
-        }
+        self.do_update(0.0, None);
     }
 }
-
-// NoopProgress usunięty – nieużywany
