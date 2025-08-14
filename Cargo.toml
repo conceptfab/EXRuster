@@ -20,7 +20,10 @@ rfd = { version = "0.15", features = ["file-handle-inner"] }
 anyhow = "1.0"
 rayon = "1.11"
 num_cpus = "1.17"
-image = { version = "0.25.6", default-features = false, features = ["png", "tiff", "jpeg"] }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "hdr", "tiff", "webp", "bmp", "ico", "pnm", "tga", "dds", "exr"] }
+wgpu = "26.0.1"
+pollster = "0.4.0"
+bytemuck = { version = "1.23.2", features = ["derive"] }
 tiff = "0.10.0"
 cfg-if = "1.0"
 glam = "0.30.5"
