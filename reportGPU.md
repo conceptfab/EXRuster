@@ -32,7 +32,7 @@ W tym etapie przygotujemy fundament pod komunikację z GPU.
     *   Przechowywać kontekst w `Arc<Mutex<Option<GpuContext>>>`, aby był dostępny globalnie i bezpieczny wątkowo, podobnie jak `ImageCache`.
     *   W przypadku niepowodzenia inicjalizacji, aplikacja powinna kontynuować działanie w trybie CPU, informując o tym użytkownika w konsoli.
 
-4.  **Informowanie użytkownika o stanie GPU**:
+
     *   W `main.rs`, po inicjalizacji, pobrać nazwę wybranego adaptera (`adapter.get_info().name`).
     *   Dodać do UI (`appwindow.slint`) nową etykietę w status barze, np. `gpu_status_text`.
     *   W `ui_handlers.rs` stworzyć funkcję aktualizującą tę etykietę, np. "GPU: NVIDIA GeForce RTX 3080" lub "GPU: Not available (CPU fallback)".
