@@ -1237,3 +1237,40 @@ pub fn handle_export_channels(
     }
 }
 
+/// Aktualizuje status GPU w interfejsie użytkownika
+pub fn update_gpu_status(ui: &AppWindow, gpu_context: &GpuContextType) {
+    if let Ok(guard) = gpu_context.lock() {
+        if let Some(ref context) = *guard {
+            let adapter_info = context.get_adapter_info();
+            let status_text = format!("GPU: {} - dostępny", adapter_info.name);
+            ui.set_gpu_status_text(status_text.into());
+        } else {
+            ui.set_gpu_status_text("GPU: niedostępny (tryb CPU)".into());
+        }
+    } else {
+        ui.set_gpu_status_text("GPU: błąd dostępu".into());
+    }
+}
+
+/// Sprawdza czy GPU jest dostępne i aktualizuje status
+pub fn check_gpu_availability(ui: &AppWindow, gpu_context: &GpuContextType) -> bool {
+    if let Ok(guard) = gpu_context.lock() {
+        if let Some(ref context) = *guard {
+            if context.is_available() {
+                let adapter_info = context.get_adapter_info();
+                ui.set_gpu_status_text(format!("GPU: {} - aktywny", adapter_info.name).into());
+                return true;
+            } else {
+                ui.set_gpu_status_text("GPU: błąd urządzenia".into());
+                return false;
+            }
+        } else {
+            ui.set_gpu_status_text("GPU: niedostępny (tryb CPU)".into());
+            return false;
+        }
+    } else {
+        ui.set_gpu_status_text("GPU: błąd dostępu".into());
+        return false;
+    }
+}
+

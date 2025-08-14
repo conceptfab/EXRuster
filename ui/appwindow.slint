@@ -44,9 +44,16 @@ export component AppWindow inherits Window {
     // Menu state
     in-out property <bool> file-menu-open: false;
     in-out property <bool> view-menu-open: false;
+    in-out property <bool> gpu-menu-open: false;
+    
+    // Menu auto-close timers
+    property <bool> file-menu-timer-running: false;
+    property <bool> view-menu-timer-running: false;
+    property <bool> gpu-menu-timer-running: false;
     
     // Status bar properties
     in-out property <string> status-text: "Ready";
+    in-out property <string> gpu-status-text: "GPU: inicjalizacja...";
     in-out property <float> progress-value: 0.0;
     
     in-out property <image> exr-image;
@@ -125,6 +132,10 @@ export component AppWindow inherits Window {
      callback export-convert();
      callback export-beauty();
      callback export-channels();
+     
+     // GPU status callback
+     callback gpu-status-changed();
+     callback check-gpu-availability();
 
     // Menu Bar
       Rectangle {
@@ -159,6 +170,7 @@ export component AppWindow inherits Window {
                     clicked => {
                         file-menu-open = !file-menu-open;
                         view-menu-open = false; // Zamknij inne menu
+                        gpu-menu-open = false; // Zamknij inne menu
                     }
                 }
             }
@@ -182,6 +194,31 @@ export component AppWindow inherits Window {
                     clicked => {
                         view-menu-open = !view-menu-open;
                         file-menu-open = false; // Zamknij inne menu
+                        gpu-menu-open = false; // Zamknij inne menu
+                    }
+                }
+            }
+            
+            // GPU Menu Button
+            Rectangle {
+                width: 40px;
+                height: 22px;
+                background: gpu-menu-area.has-hover || gpu-menu-open ? Kolory.hover : Kolory.przezroczysty;
+                
+                Text {
+                    text: "GPU";
+                    color: Kolory.tekst;
+                    font-size: 12px;
+                    font-family: "Geist";
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+                
+                gpu-menu-area := TouchArea {
+                    clicked => {
+                        gpu-menu-open = !gpu-menu-open;
+                        file-menu-open = false; // Zamknij inne menu
+                        view-menu-open = false; // Zamknij inne menu
                     }
                 }
             }
@@ -218,6 +255,16 @@ export component AppWindow inherits Window {
             PozycjaMenu { width: 100px; text: "Open EXR"; clicked => { file-menu-open = false; open-exr(); } }
             PozycjaMenu { width: 100px; text: "Exit"; clicked => { file-menu-open = false; exit(); } }
         }
+        
+        // Auto-close timer for File menu
+        Timer {
+            interval: 2000ms;
+            running: file-menu-timer-running;
+            triggered => { 
+                file-menu-open = false; 
+                file-menu-timer-running = false;
+            }
+        }
     }
     
     // View Dropdown Menu
@@ -240,6 +287,36 @@ export component AppWindow inherits Window {
             PozycjaMenu { text: "Reset View"; clicked => { show-left-panel = true; show-right-panel = true; view-menu-open = false; } }
             PozycjaMenu { text: "Open Console"; clicked => { internal-console-visible = true; view-menu-open = false; } }
             PozycjaMenu { text: "Open Meta"; clicked => { internal-meta-visible = true; view-menu-open = false; } }
+        }
+        
+        // Auto-close timer for View menu
+        Timer {
+            interval: 2000ms;
+            running: view-menu-timer-running;
+            triggered => { 
+                view-menu-open = false; 
+                view-menu-timer-running = false;
+            }
+        }
+    }
+    
+    // GPU Dropdown Menu
+    if gpu-menu-open: Rectangle {
+        y: 30px;
+        x: 4px + 80px; // align under the GPU button (after File's 40px + View's 40px)
+        width: 160px;
+        height: 78px; // 3 items * 26px
+        background: Kolory.menu_tlo;
+        border-color: Kolory.menu_obramowanie;
+        border-width: 1px;
+        z: 10000;
+        
+        VerticalBox {
+            padding: 0px;
+            spacing: 0px;
+            
+            PozycjaMenu { text: "Check GPU Status"; clicked => { gpu-menu-open = false; check-gpu-availability(); } }
+            PozycjaMenu { text: "Refresh GPU Info"; clicked => { gpu-menu-open = false; gpu-status-changed(); } }
         }
     }
         
@@ -1053,7 +1130,7 @@ export component AppWindow inherits Window {
              
              // Column 1 - status text (lewa strona)
              Rectangle {
-                width: root.width/2 - 12px;
+                width: root.width/3 - 12px;
 
                  Text {
                      horizontal-alignment: TextHorizontalAlignment.left;
@@ -1065,9 +1142,23 @@ export component AppWindow inherits Window {
                  }
              }
              
-             // Column 2 - progress (right side)
+             // Column 2 - GPU status (środek)
              Rectangle {
-                width: root.width/2 - 12px;
+                width: root.width/3 - 12px;
+
+                 Text {
+                     horizontal-alignment: TextHorizontalAlignment.center;
+                     font-size: 10px;
+                     text: gpu-status-text;
+                      font-family: "Geist";
+                     x:15px;
+
+                 }
+             }
+             
+             // Column 3 - progress (right side)
+             Rectangle {
+                width: root.width/3 - 12px;
 
                 // Progress bar anchored to the right
                 Rectangle {

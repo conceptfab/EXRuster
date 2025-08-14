@@ -21,6 +21,7 @@ use ui_handlers::{ImageCacheType, CurrentFilePathType, FullExrCache, GpuContextT
 use slint::{VecModel, SharedString, Model};
 use std::rc::Rc;
 use crate::gpu_context::GpuContext;
+use pollster;
 
 fn main() -> Result<(), slint::PlatformError> {
     // Ustaw Rayon thread pool na podstawie CPU cores
@@ -76,7 +77,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     
                     // Zaktualizuj UI z informacją o GPU
                     if let Some(ui) = ui_weak.upgrade() {
-                        ui.set_status_text(format!("GPU: {} - dostępny", adapter_info.name).into());
+                        ui.set_gpu_status_text(format!("GPU: {} - dostępny", adapter_info.name).into());
                     }
                 }
                 Err(e) => {
@@ -85,7 +86,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     
                     // Zaktualizuj UI z informacją o braku GPU
                     if let Some(ui) = ui_weak.upgrade() {
-                        ui.set_status_text("GPU: niedostępny (tryb CPU)".into());
+                        ui.set_gpu_status_text("GPU: niedostępny (tryb CPU)".into());
                     }
                 }
             }
@@ -581,6 +582,34 @@ fn setup_ui_callbacks(
     setup_menu_callbacks(ui, current_file_path.clone(), image_cache.clone(), console_model.clone(), full_exr_cache.clone(), gpu_context.clone());
     setup_image_control_callbacks(ui, image_cache.clone(), current_file_path.clone(), console_model.clone(), gpu_context.clone());
     setup_panel_callbacks(ui, current_file_path.clone(), image_cache.clone(), console_model.clone(), full_exr_cache.clone(), gpu_context.clone());
+    
+    // Setup GPU status callback
+    setup_gpu_status_callback(ui, gpu_context.clone());
 
     console_model
+}
+
+fn setup_gpu_status_callback(
+    ui: &AppWindow,
+    gpu_context: GpuContextType,
+) {
+    ui.on_gpu_status_changed({
+        let ui_handle = ui.as_weak();
+        let gpu_context = gpu_context.clone();
+        move || {
+            if let Some(ui) = ui_handle.upgrade() {
+                ui_handlers::update_gpu_status(&ui, &gpu_context);
+            }
+        }
+    });
+    
+    ui.on_check_gpu_availability({
+        let ui_handle = ui.as_weak();
+        let gpu_context = gpu_context.clone();
+        move || {
+            if let Some(ui) = ui_handle.upgrade() {
+                ui_handlers::check_gpu_availability(&ui, &gpu_context);
+            }
+        }
+    });
 }
