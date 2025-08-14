@@ -415,7 +415,7 @@ pub fn handle_open_exr_from_path(
         // Asynchroniczne wczytanie: wybór ścieżki FULL vs LIGHT
         let file_size_bytes = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
         let force_light = std::env::var("EXRUSTER_LIGHT_OPEN").ok().as_deref() == Some("1");
-        let use_light = force_light || file_size_bytes > 300 * 1024 * 1024; // >300MB ⇒ light
+        let use_light = force_light || file_size_bytes > 700 * 1024 * 1024; // >700MB ⇒ light
 
         prog.set(0.22, Some(if use_light { "Reading EXR (light)..." } else { "Reading EXR (full)..." }));
         ui.set_progress_value(-1.0);
