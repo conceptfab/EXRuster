@@ -23,6 +23,7 @@ use crate::gpu_context::GpuContext;
 use crate::gpu_thumbnails::GpuThumbnailProcessor;
 
 /// Zwięzła reprezentacja miniaturki EXR do wyświetlenia w UI
+#[allow(dead_code)]
 pub struct ExrThumbnailInfo {
     pub path: PathBuf,
     pub file_name: String,
@@ -170,7 +171,7 @@ fn generate_thumbnails_gpu(
 }
 
 /// Generuje miniaturki używając CPU (oryginalna implementacja)
-fn generate_thumbnails_cpu(
+pub fn generate_thumbnails_cpu(
     files: Vec<PathBuf>,
     thumb_height: u32,
     exposure: f32,
@@ -252,7 +253,7 @@ fn generate_thumbnails_cpu(
     Ok(thumbnails)
 }
 
-fn list_exr_files(dir: &Path) -> anyhow::Result<Vec<PathBuf>> {
+pub fn list_exr_files(dir: &Path) -> anyhow::Result<Vec<PathBuf>> {
     let entries = fs::read_dir(dir)
         .with_context(|| format!("Nie można odczytać katalogu: {}", dir.display()))?;
 
@@ -272,17 +273,17 @@ fn list_exr_files(dir: &Path) -> anyhow::Result<Vec<PathBuf>> {
 }
 
 #[derive(Clone)]
-struct ExrThumbWork {
-    path: PathBuf,
-    file_name: String,
-    file_size_bytes: u64,
-    width: u32,
-    height: u32,
-    num_layers: usize,
-    pixels: Vec<u8>, // RGBA8 interleaved
+pub struct ExrThumbWork {
+    pub path: PathBuf,
+    pub file_name: String,
+    pub file_size_bytes: u64,
+    pub width: u32,
+    pub height: u32,
+    pub num_layers: usize,
+    pub pixels: Vec<u8>, // RGBA8 interleaved
 }
 
-fn generate_single_exr_thumbnail_work(
+pub fn generate_single_exr_thumbnail_work(
     path: &Path,
     thumb_height: u32,
     exposure: f32,
@@ -522,7 +523,7 @@ struct ThumbPresetKey {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-struct ThumbKey {
+pub struct ThumbKey {
     path: PathBuf,
     modified: u64,
     preset: ThumbPresetKey,
@@ -530,7 +531,7 @@ struct ThumbKey {
 
 // Przechowujemy wyłącznie gotowe piksele RGBA8 i podstawowe metadane
 #[derive(Clone)]
-struct ThumbValue {
+pub struct ThumbValue {
     width: u32,
     height: u32,
     num_layers: usize,
@@ -564,11 +565,11 @@ fn file_mtime_u64(path: &Path) -> u64 {
 
 static THUMB_CACHE: OnceLock<Mutex<LruCache<ThumbKey, ThumbValue>>> = OnceLock::new();
 
-fn get_thumb_cache() -> &'static Mutex<LruCache<ThumbKey, ThumbValue>> {
+pub fn get_thumb_cache() -> &'static Mutex<LruCache<ThumbKey, ThumbValue>> {
     THUMB_CACHE.get_or_init(|| Mutex::new(LruCache::new(std::num::NonZeroUsize::new(256).unwrap())))
 }
 
-fn c_get(
+pub fn c_get(
     cache: &mut LruCache<ThumbKey, ThumbValue>,
     path: &Path,
     thumb_h: u32,
@@ -589,7 +590,7 @@ fn c_get(
     })
 }
 
-fn put_thumb_cache(work: &ExrThumbWork, thumb_h: u32, exposure: f32, gamma: f32, tonemap_mode: i32) {
+pub fn put_thumb_cache(work: &ExrThumbWork, thumb_h: u32, exposure: f32, gamma: f32, tonemap_mode: i32) {
     let preset = make_preset(thumb_h, exposure, gamma, tonemap_mode);
     let key = ThumbKey { path: work.path.clone(), modified: file_mtime_u64(&work.path), preset };
     let val = ThumbValue {

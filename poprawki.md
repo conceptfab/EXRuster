@@ -1,10 +1,19 @@
+Potrzebuję zmodyfikować kod, aby:
 
-3. Hybrydowe podejście
-GPU dla dużych plików (>100MB)
-CPU dla małych plików (<100MB)
-Automatyczne przełączanie w zależności od dostępności GPU
-�� Oczekiwane przyspieszenie:
-Małe pliki (1-10MB): 2-5x szybsze
-Średnie pliki (10-100MB): 5-10x szybsze
-Duże pliki (100MB+): 10-20x szybsze
-Czy chcesz, żebym zaimplementował GPU acceleration dla miniaturek? To może znacząco przyspieszyć proces generowania miniaturek, szczególnie dla dużych plików EXR
+Wczytywanie folderu odbywało się asynchronicznie
+
+Progress bar był aktualizowany w czasie rzeczywistym
+
+UI pozostawało responsywne podczas procesu
+
+Czy mogę wprowadzić te zmiany? Oto co planuję zrobić:
+
+Zmodyfikować load_thumbnails_for_directory aby działała asynchronicznie
+
+Poprawić system progress aby był bardziej responsywny
+
+Dodać lepsze aktualizacje UI podczas wczytywania
+
+Zoptymalizować throttling w progress.rs
+
+Czy mogę przystąpić do wprowadzania tych zmian?

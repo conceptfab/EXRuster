@@ -304,6 +304,7 @@ pub fn handle_exit(ui_handle: Weak<AppWindow>) {
 
 /// Wspólna funkcja do wczytywania miniatur dla wskazanego katalogu i aktualizacji UI.
 /// Używana zarówno przy starcie aplikacji (po argumencie pliku), jak i po wyborze folderu z UI.
+/// Teraz działa asynchronicznie w osobnym wątku, aby nie blokować UI.
 pub fn load_thumbnails_for_directory(
     ui_handle: Weak<AppWindow>,
     directory: &Path,
@@ -312,48 +313,136 @@ pub fn load_thumbnails_for_directory(
     if let Some(ui) = ui_handle.upgrade() {
         push_console(&ui, &console, format!("[folder] loading thumbnails: {}", directory.display()));
         ui.set_status_text(format!("Loading thumbnails: {}", directory.display()).into());
+        
+        // Uruchom progress bar natychmiast
+        let prog = UiProgress::new(ui.as_weak());
+        prog.start_indeterminate(Some("Preparing thumbnail generation..."));
+        
+        // Pobierz parametry UI w głównym wątku
         let exposure = ui.get_exposure_value();
         let gamma = ui.get_gamma_value();
-        let t0 = Instant::now();
-        let prog = UiProgress::new(ui.as_weak());
         let tonemap_mode = ui.get_tonemap_mode() as i32;
         
-        // Sprawdź czy GPU acceleration jest dostępne
-        // TODO: Naprawić problem z lifetime'ami dla GPU context
-        let gpu_context = None; // Na razie wyłączone żeby uniknąć błędów kompilacji
+        // GPU acceleration jest wyłączone na razie
         
-        match crate::thumbnails::generate_exr_thumbnails_in_dir_gpu(
-            directory, 150, exposure, gamma, tonemap_mode, Some(&prog), gpu_context
-        ) {
-            Ok(mut thumbs) => {
-                prog.set(0.95, Some("Sorting thumbnails..."));
-                thumbs.sort_by(|a, b| a.file_name.to_lowercase().cmp(&b.file_name.to_lowercase()));
-                let items: Vec<ThumbItem> = thumbs
-                    .into_iter()
-                    .map(|t| ThumbItem {
-                        img: t.image,
-                        name: t.file_name.into(),
-                        size: human_size(t.file_size_bytes).into(),
-                        layers: format!("{} layers", t.num_layers).into(),
-                        path: t.path.display().to_string().into(),
-                        width: t.width as i32,
-                        height: t.height as i32,
-                    })
-                    .collect();
-                let count = items.len();
-                ui.set_thumbnails(ModelRc::new(VecModel::from(items)));
-                ui.set_bottom_panel_visible(true);
-                let ms = t0.elapsed().as_millis();
-                ui.set_status_text("Thumbnails loaded".into());
-                prog.finish(Some("Thumbnails loaded"));
-                push_console(&ui, &console, format!("[folder] {} EXR files | thumbnails in {} ms", count, ms));
+        // Generuj miniaturki w głównym wątku (bezpieczniejsze i z cache)
+        let ui_weak = ui.as_weak();
+        let directory_path = directory.to_path_buf();
+        
+        // Generuj miniaturki w tle z cache - używamy prostszego podejścia
+        std::thread::spawn(move || {
+            let t0 = Instant::now();
+            
+            // Generuj miniaturki w osobnym wątku używając istniejącej funkcji z cache
+            let files = match crate::thumbnails::list_exr_files(&directory_path) {
+                Ok(files) => files,
+                Err(e) => {
+                    let ui_weak_clone = ui_weak.clone();
+                    slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = ui_weak_clone.upgrade() {
+                            ui.set_status_text(format!("Error listing files: {}", e).into());
+                            prog.reset();
+                        }
+                    }).unwrap();
+                    return;
+                }
+            };
+            
+            // Generuj miniaturki z cache w osobnym wątku - ale bez slint::Image
+            let mut thumbnail_works = Vec::new();
+            
+            for (idx, path) in files.iter().enumerate() {
+                let frac = (idx as f32) / (files.len() as f32);
+                prog.set(frac, Some(&format!("Processing {}/{} {}", idx + 1, files.len(), path.file_name().and_then(|n| n.to_str()).unwrap_or("?"))));
+                
+                // Spróbuj z cache LRU
+                let cached_opt = {
+                    if let Ok(mut guard) = crate::thumbnails::get_thumb_cache().lock() {
+                        crate::thumbnails::c_get(&mut *guard, path, 150, exposure, gamma, tonemap_mode)
+                    } else {
+                        None
+                    }
+                };
+                
+                if let Some(cached) = cached_opt {
+                    thumbnail_works.push(cached);
+                    continue;
+                }
+                
+                // Generuj nową miniaturkę
+                match crate::thumbnails::generate_single_exr_thumbnail_work(
+                    path, 150, exposure, gamma, tonemap_mode
+                ) {
+                    Ok(work) => {
+                        // Zapisz do cache
+                        crate::thumbnails::put_thumb_cache(&work, 150, exposure, gamma, tonemap_mode);
+                        thumbnail_works.push(work);
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to generate thumbnail for {}: {}", path.display(), e);
+                    }
+                }
             }
-            Err(e) => {
-                ui.set_status_text(format!("Error loading thumbnails: {}", e).into());
-                push_console(&ui, &console, format!("[error][folder] {}", e));
-                prog.reset();
-            }
-        }
+            
+            // Sortuj miniaturki
+            thumbnail_works.sort_by(|a, b| a.file_name.to_lowercase().cmp(&b.file_name.to_lowercase()));
+            
+            let count = thumbnail_works.len();
+            let ms = t0.elapsed().as_millis();
+            
+            // Aktualizuj UI w głównym wątku przez invoke_from_event_loop
+            let ui_weak_clone = ui_weak.clone();
+            let count_clone = count;
+            let ms_clone = ms;
+            
+            slint::invoke_from_event_loop(move || {
+                if let Some(ui) = ui_weak_clone.upgrade() {
+                    prog.set(0.95, Some("Creating UI thumbnails..."));
+                    
+                    // Konwertuj miniaturki do formatu UI w głównym wątku
+                    let items: Vec<ThumbItem> = thumbnail_works
+                        .into_iter()
+                        .map(|w| {
+                            // Konwertuj surowe piksele RGBA8 do slint::Image
+                            let mut buffer = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(w.width, w.height);
+                            let slice = buffer.make_mut_slice();
+                            
+                            // Skopiuj piksele RGBA8
+                            for (dst, chunk) in slice.iter_mut().zip(w.pixels.chunks_exact(4)) {
+                                *dst = slint::Rgba8Pixel { 
+                                    r: chunk[0], 
+                                    g: chunk[1], 
+                                    b: chunk[2], 
+                                    a: chunk[3] 
+                                };
+                            }
+                            
+                            let image = slint::Image::from_rgba8(buffer);
+                            
+                            ThumbItem {
+                                img: image,
+                                name: w.file_name.into(),
+                                size: human_size(w.file_size_bytes).into(),
+                                layers: format!("{} layers", w.num_layers).into(),
+                                path: w.path.display().to_string().into(),
+                                width: w.width as i32,
+                                height: w.height as i32,
+                            }
+                        })
+                        .collect();
+                    
+                    // Aktualizuj UI
+                    ui.set_thumbnails(ModelRc::new(VecModel::from(items)));
+                    ui.set_bottom_panel_visible(true);
+                    
+                    ui.set_status_text("Thumbnails loaded".into());
+                    prog.finish(Some("Thumbnails loaded"));
+                    
+                    // Log do konsoli w osobnym wywołaniu - używamy prostego status text
+                    ui.set_status_text(format!("[folder] {} EXR files | thumbnails in {} ms", count_clone, ms_clone).into());
+                }
+            }).unwrap();
+        });
     }
 }
 
