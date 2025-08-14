@@ -56,6 +56,9 @@ export component AppWindow inherits Window {
     in-out property <string> gpu-status-text: "GPU: inicjalizacja...";
     in-out property <float> progress-value: 0.0;
     
+    // GPU acceleration state
+    in-out property <bool> gpu-acceleration-enabled: false;
+    
     in-out property <image> exr-image;
     // Usunięto system zakładek
     in-out property <[string]> layers-model: [];
@@ -136,6 +139,7 @@ export component AppWindow inherits Window {
      // GPU status callback
      callback gpu-status-changed();
      callback check-gpu-availability();
+     callback toggle-gpu-acceleration();
 
     // Menu Bar
       Rectangle {
@@ -305,7 +309,7 @@ export component AppWindow inherits Window {
         y: 30px;
         x: 4px + 80px; // align under the GPU button (after File's 40px + View's 40px)
         width: 160px;
-        height: 78px; // 3 items * 26px
+        height: 104px; // 4 items * 26px
         background: Kolory.menu_tlo;
         border-color: Kolory.menu_obramowanie;
         border-width: 1px;
@@ -317,6 +321,7 @@ export component AppWindow inherits Window {
             
             PozycjaMenu { text: "Check GPU Status"; clicked => { gpu-menu-open = false; check-gpu-availability(); } }
             PozycjaMenu { text: "Refresh GPU Info"; clicked => { gpu-menu-open = false; gpu-status-changed(); } }
+            PozycjaMenu { text: gpu-acceleration-enabled ? "Disable GPU Acceleration" : "Enable GPU Acceleration"; clicked => { gpu-menu-open = false; toggle-gpu-acceleration(); } }
         }
     }
         

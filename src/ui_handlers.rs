@@ -59,6 +59,14 @@ static ITEM_TO_LAYER: std::sync::LazyLock<std::sync::Mutex<HashMap<String, Strin
 static DISPLAY_TO_REAL_LAYER: std::sync::LazyLock<std::sync::Mutex<HashMap<String, String>>> =
     std::sync::LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
 
+// Globalny dostęp do kontekstu GPU
+static GPU_CONTEXT: std::sync::LazyLock<std::sync::Mutex<Option<Arc<Mutex<Option<crate::gpu_context::GpuContext>>>>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(None));
+
+// Globalny stan akceleracji GPU
+static GPU_ACCELERATION_ENABLED: std::sync::LazyLock<std::sync::Mutex<bool>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(false));
+
 // Normalizacja nazw kanałów do skrótu R/G/B/A
 #[inline]
 fn normalize_channel_display_to_short(channel_display: &str) -> String { normalize_channel_name(channel_display) }
@@ -442,10 +450,16 @@ pub fn handle_open_exr_from_path(
                                     if let Some(ui2) = ui_weak.upgrade() {
                                         { let mut g = lock_or_recover(&full_exr_cache_c); *g = Some(full.clone()); }
                                         { let mut cg = lock_or_recover(&image_cache_c); *cg = Some(cache); }
+                                        // Ustaw kontekst GPU w ImageCache
+                                        set_gpu_context_in_cache_global(&image_cache_c);
                                         // Generuj obraz na wątku UI
                                         let img = {
                                             let guard = lock_or_recover(&image_cache_c);
-                                            if let Some(ref c) = *guard { c.process_to_image(exposure0, gamma0, tonemap_mode0) } else { ui2.get_exr_image() }
+                                            if let Some(ref c) = *guard { 
+                                                process_image_with_gpu_fallback(c, exposure0, gamma0, tonemap_mode0)
+                                            } else { 
+                                                ui2.get_exr_image() 
+                                            }
                                         };
                                         ui2.set_exr_image(img);
 
@@ -513,12 +527,14 @@ pub fn handle_open_exr_from_path(
                                     if let Some(ui2) = ui_weak.upgrade() {
                                         { let mut g = lock_or_recover(&full_exr_cache_c); *g = Some(full.clone()); }
                                         { let mut cg = lock_or_recover(&image_cache_c); *cg = Some(cache); }
+                                        // Ustaw kontekst GPU w ImageCache
+                                        set_gpu_context_in_cache_global(&image_cache_c);
                                         // Wygeneruj obraz na wątku UI (Image nie jest Send)
                                         let (img, layers_info_len, layers_info_vec) = {
                                             let guard = lock_or_recover(&image_cache_c);
                                             if let Some(ref c) = *guard {
                                                 let li = c.layers_info.clone();
-                                                (c.process_to_image(exposure0, gamma0, tonemap_mode0), li.len(), li)
+                                                (process_image_with_gpu_fallback(c, exposure0, gamma0, tonemap_mode0), li.len(), li)
                                             } else {
                                                 (ui2.get_exr_image(), 0usize, Vec::new())
                                             }
@@ -604,7 +620,7 @@ pub fn handle_parameter_changed_throttled(
             let image = if cache.raw_pixels.len() > 2_000_000 {
                 cache.process_to_thumbnail(final_exposure, final_gamma, tonemap_mode, target)
             } else {
-                cache.process_to_image(final_exposure, final_gamma, tonemap_mode)
+                process_image_with_gpu_fallback(cache, final_exposure, final_gamma, tonemap_mode)
             };
             
             ui.set_exr_image(image);
@@ -1271,6 +1287,72 @@ pub fn check_gpu_availability(ui: &AppWindow, gpu_context: &GpuContextType) -> b
     } else {
         ui.set_gpu_status_text("GPU: błąd dostępu".into());
         return false;
+    }
+}
+
+/// Ustawia globalny kontekst GPU
+pub fn set_global_gpu_context(gpu_context: Arc<Mutex<Option<crate::gpu_context::GpuContext>>>) {
+    if let Ok(mut guard) = GPU_CONTEXT.lock() {
+        *guard = Some(gpu_context);
+    }
+}
+
+/// Ustawia globalny stan akceleracji GPU
+pub fn set_global_gpu_acceleration(enabled: bool) {
+    if let Ok(mut guard) = GPU_ACCELERATION_ENABLED.lock() {
+        *guard = enabled;
+    }
+}
+
+/// Pobiera globalny stan akceleracji GPU
+pub fn get_global_gpu_acceleration() -> bool {
+    if let Ok(guard) = GPU_ACCELERATION_ENABLED.lock() {
+        *guard
+    } else {
+        false
+    }
+}
+
+/// Ustawia kontekst GPU w ImageCache po jego utworzeniu
+pub fn set_gpu_context_in_cache(image_cache: &ImageCacheType, gpu_context: &GpuContextType) {
+    if let Ok(mut guard) = image_cache.lock() {
+        if let Some(ref mut cache) = *guard {
+            cache.set_gpu_context(gpu_context.clone());
+        }
+    }
+}
+
+/// Ustawia kontekst GPU w ImageCache używając globalnego kontekstu
+pub fn set_gpu_context_in_cache_global(image_cache: &ImageCacheType) {
+    if let Ok(guard) = GPU_CONTEXT.lock() {
+        if let Some(ref gpu_ctx) = *guard {
+            set_gpu_context_in_cache(image_cache, gpu_ctx);
+        }
+    }
+}
+
+/// Przetwarza obraz używając GPU lub CPU w zależności od ustawień
+pub fn process_image_with_gpu_fallback(
+    cache: &ImageCache,
+    exposure: f32,
+    gamma: f32,
+    tonemap_mode: i32,
+) -> slint::Image {
+    let gpu_enabled = get_global_gpu_acceleration();
+    
+    if gpu_enabled {
+        // Spróbuj użyć GPU
+        match cache.process_to_image_gpu(exposure, gamma, tonemap_mode) {
+            Ok(image) => image,
+            Err(e) => {
+                // Fallback do CPU w przypadku błędu GPU
+                eprintln!("GPU processing failed: {}, falling back to CPU", e);
+                cache.process_to_image(exposure, gamma, tonemap_mode)
+            }
+        }
+    } else {
+        // Użyj CPU
+        cache.process_to_image(exposure, gamma, tonemap_mode)
     }
 }
 

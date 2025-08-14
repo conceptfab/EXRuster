@@ -12,6 +12,8 @@ use std::sync::Arc;
 use crate::full_exr_cache::FullExrCacheData;
 use core::simd::{f32x4, Simd};
 use std::simd::prelude::SimdFloat;
+use wgpu;
+use std::sync::Mutex;
 
 /// Zwraca kanoniczny skrót kanału na podstawie aliasów/nazw przyjaznych.
 /// Np. "red"/"Red"/"RED"/"R"/"R8" → "R"; analogicznie dla G/B/A.
@@ -64,6 +66,8 @@ pub struct ImageCache {
     full_cache: Arc<FullExrCacheData>,
     // MIP cache: przeskalowane podglądy (float RGBA) do szybkiego preview
     mip_levels: Vec<MipLevel>,
+    // Kontekst GPU do akceleracji przetwarzania obrazów
+    gpu_context: Option<Arc<Mutex<Option<crate::gpu_context::GpuContext>>>>,
 }
 
 #[derive(Clone, Debug)]
@@ -140,6 +144,7 @@ impl ImageCache {
             current_layer_channels: Some(layer_channels),
             full_cache: full_cache,
             mip_levels,
+            gpu_context: None,
         })
     }
     
@@ -162,6 +167,11 @@ impl ImageCache {
 
     #[inline]
     pub fn color_matrix(&self) -> Option<Mat3> { self.color_matrix_rgb_to_srgb }
+    
+    /// Ustawia kontekst GPU dla akceleracji
+    pub fn set_gpu_context(&mut self, gpu_context: Arc<Mutex<Option<crate::gpu_context::GpuContext>>>) {
+        self.gpu_context = Some(gpu_context);
+    }
     
     pub fn process_to_image(&self, exposure: f32, gamma: f32, tonemap_mode: i32) -> Image {
         let mut buffer = SharedPixelBuffer::<Rgba8Pixel>::new(self.width, self.height);
@@ -233,6 +243,212 @@ impl ImageCache {
         }
 
         Image::from_rgba8(buffer)
+    }
+    
+    /// Przetwarza obraz na GPU z użyciem compute shadera
+    pub fn process_to_image_gpu(&self, exposure: f32, gamma: f32, tonemap_mode: i32) -> Result<Image, Box<dyn std::error::Error>> {
+        // Sprawdź czy kontekst GPU jest dostępny
+        let gpu_context = match &self.gpu_context {
+            Some(ctx) => ctx,
+            None => return Err("Kontekst GPU nie jest dostępny".into()),
+        };
+        
+        let gpu_guard = gpu_context.lock().map_err(|_| "Nie można uzyskać dostępu do kontekstu GPU")?;
+        let gpu_context = match gpu_guard.as_ref() {
+            Some(ctx) => ctx,
+            None => return Err("Kontekst GPU nie został zainicjalizowany".into()),
+        };
+        
+        // Parametry uniformów
+        #[repr(C)]
+        #[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy)]
+        struct Params {
+            exposure: f32,
+            gamma: f32,
+            tonemap_mode: u32,
+            width: u32,
+            height: u32,
+        }
+        
+        let params = Params {
+            exposure,
+            gamma,
+            tonemap_mode: tonemap_mode as u32,
+            width: self.width,
+            height: self.height,
+        };
+        
+        // Utworzenie buforów
+        let input_buffer = gpu_context.create_storage_buffer(
+            "input_pixels",
+            (self.raw_pixels.len() * std::mem::size_of::<[f32; 4]>()) as u64,
+            true, // read_only
+        );
+        
+        let output_buffer = gpu_context.create_storage_buffer(
+            "output_pixels",
+            (self.width * self.height * 4) as u64,
+            false, // write_only
+        );
+        
+        let staging_buffer = gpu_context.create_staging_buffer(
+            "staging_buffer",
+            (self.width * self.height * 4) as u64,
+        );
+        
+        let uniform_buffer = gpu_context.create_uniform_buffer("params", &params);
+        
+        // Wypełnienie bufora wejściowego danymi
+        let input_data: Vec<[f32; 4]> = self.raw_pixels.iter()
+            .map(|(r, g, b, a)| [*r, *g, *b, *a])
+            .collect();
+        
+        gpu_context.queue.write_buffer(&input_buffer, 0, bytemuck::cast_slice(&input_data));
+        
+        // Utworzenie layoutu bind group
+        let bind_group_layout = gpu_context.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("image_processing_bind_group_layout"),
+            entries: &[
+                // Bind Group 0: Uniformy
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // Bind Group 1: Bufor wejściowy
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // Bind Group 1: Bufor wyjściowy
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+        
+        // Utworzenie pipeline compute
+        let shader_module = gpu_context.create_shader_module(
+            "image_processing_shader",
+            include_str!("shaders/image_processing.wgsl")
+        );
+        
+        let pipeline_layout = gpu_context.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("image_processing_pipeline_layout"),
+            bind_group_layouts: &[&bind_group_layout],
+            push_constant_ranges: &[],
+        });
+        
+        let compute_pipeline = gpu_context.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("image_processing_pipeline"),
+            layout: Some(&pipeline_layout),
+            module: &shader_module,
+            entry_point: Some("main"),
+            cache: None,
+            compilation_options: Default::default(),
+        });
+        
+        // Utworzenie bind group
+        let bind_group = gpu_context.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("image_processing_bind_group"),
+            layout: &bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: input_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: output_buffer.as_entire_binding(),
+                },
+            ],
+        });
+        
+        // Wysłanie komend do GPU
+        let mut encoder = gpu_context.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("image_processing_encoder"),
+        });
+        
+        {
+            let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("image_processing_compute_pass"),
+                timestamp_writes: None,
+            });
+            
+            compute_pass.set_pipeline(&compute_pipeline);
+            compute_pass.set_bind_group(0, &bind_group, &[]);
+            
+            // Obliczenie liczby grup roboczych
+            let workgroup_size = 8;
+            let workgroups_x = (self.width + workgroup_size - 1) / workgroup_size;
+            let workgroups_y = (self.height + workgroup_size - 1) / workgroup_size;
+            
+            compute_pass.dispatch_workgroups(workgroups_x, workgroups_y, 1);
+        }
+        
+        // Kopiowanie wyników do staging buffer
+        encoder.copy_buffer_to_buffer(&output_buffer, 0, &staging_buffer, 0, (self.width * self.height * 4) as u64);
+        
+        // Wysłanie komend
+        gpu_context.queue.submit(std::iter::once(encoder.finish()));
+        
+        // Odczyt wyników
+        let buffer_slice = staging_buffer.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
+            tx.send(result).unwrap();
+        });
+        
+        // Oczekiwanie na zakończenie operacji GPU
+        let _ = gpu_context.device.poll(wgpu::PollType::Wait);
+        rx.recv().unwrap()?;
+        
+        // Pobranie zmapowanych danych
+        let data = buffer_slice.get_mapped_range();
+        let output_data: Vec<u8> = data.iter().copied().collect();
+        drop(data);
+        
+        // Stworzenie SharedPixelBuffer
+        let mut buffer = SharedPixelBuffer::<Rgba8Pixel>::new(self.width, self.height);
+        let out_slice = buffer.make_mut_slice();
+        
+        for (i, pixel_data) in output_data.chunks_exact(4).enumerate() {
+            if i < out_slice.len() {
+                out_slice[i] = Rgba8Pixel {
+                    r: pixel_data[0],
+                    g: pixel_data[1],
+                    b: pixel_data[2],
+                    a: pixel_data[3],
+                };
+            }
+        }
+        
+        // Unmapowanie bufora
+        staging_buffer.unmap();
+        
+        Ok(Image::from_rgba8(buffer))
     }
 
     pub fn process_to_composite(&self, exposure: f32, gamma: f32, tonemap_mode: i32, lighting_rgb: bool) -> Image {

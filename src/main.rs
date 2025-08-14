@@ -75,6 +75,9 @@ fn main() -> Result<(), slint::PlatformError> {
                         *guard = Some(context);
                     }
                     
+                    // Ustaw globalny kontekst GPU w ui_handlers
+                    ui_handlers::set_global_gpu_context(gpu_context_clone.clone());
+                    
                     // Zaktualizuj UI z informacją o GPU
                     if let Some(ui) = ui_weak.upgrade() {
                         ui.set_gpu_status_text(format!("GPU: {} - dostępny", adapter_info.name).into());
@@ -609,6 +612,27 @@ fn setup_gpu_status_callback(
         move || {
             if let Some(ui) = ui_handle.upgrade() {
                 ui_handlers::check_gpu_availability(&ui, &gpu_context);
+            }
+        }
+    });
+    
+    ui.on_toggle_gpu_acceleration({
+        let ui_handle = ui.as_weak();
+        move || {
+            if let Some(ui) = ui_handle.upgrade() {
+                let current_state = ui.get_gpu_acceleration_enabled();
+                ui.set_gpu_acceleration_enabled(!current_state);
+                
+                // Zaktualizuj globalny stan w ui_handlers
+                ui_handlers::set_global_gpu_acceleration(!current_state);
+                
+                // Zaktualizuj status
+                let new_status = if !current_state {
+                    "GPU: akceleracja włączona"
+                } else {
+                    "GPU: akceleracja wyłączona"
+                };
+                ui.set_gpu_status_text(new_status.into());
             }
         }
     });
