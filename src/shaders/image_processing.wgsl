@@ -1,0 +1,152 @@
+// Compute shader do przetwarzania obrazów EXR na GPU
+// Implementuje: ekspozycja → tone mapping → gamma correction
+
+// Bind Group 0: Uniformy (parametry przetwarzania)
+struct Params {
+    exposure: f32,           // Korekcja ekspozycji
+    gamma: f32,              // Wartość gamma
+    tonemap_mode: u32,       // Tryb tone mapping: 0=ACES, 1=Reinhard, 2=Linear
+    width: u32,              // Szerokość obrazu
+    height: u32,             // Wysokość obrazu
+    // Opcjonalna macierz transformacji kolorów (może być dodana później)
+    // color_matrix: mat3x3<f32>,
+}
+
+// Bind Group 1: Bufor wejściowy (piksele HDR jako vec4<f32>)
+@group(1) @binding(0) var<storage, read> input_pixels: array<vec4<f32>>;
+
+// Bind Group 1: Bufor wyjściowy (piksele 8-bitowe jako vec4<u8>)
+@group(1) @binding(1) var<storage, write> output_pixels: array<vec4<u8>>;
+
+// Uniformy
+@group(0) @binding(0) var<uniform> params: Params;
+
+// ACES tone mapping - znacznie lepszy od Reinhard
+fn aces_tonemap(x: f32) -> f32 {
+    let a = 2.51;
+    let b = 0.03;
+    let c = 2.43;
+    let d = 0.59;
+    let e = 0.14;
+    return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0);
+}
+
+// Reinhard tone mapping: x / (1 + x)
+fn reinhard_tonemap(x: f32) -> f32 {
+    return clamp(x / (1.0 + x), 0.0, 1.0);
+}
+
+// Prawdziwa krzywa sRGB (OETF), zastosowana do wartości w [0,1]
+fn srgb_oetf(x: f32) -> f32 {
+    let x = clamp(x, 0.0, 1.0);
+    if (x <= 0.0031308) {
+        return 12.92 * x;
+    } else {
+        return 1.055 * pow(x, 1.0 / 2.4) - 0.055;
+    }
+}
+
+// Niestandardowa korekcja gamma
+fn apply_gamma(x: f32, gamma_inv: f32) -> f32 {
+    let x = clamp(x, 0.0, 1.0);
+    return pow(x, gamma_inv);
+}
+
+// Wspólny pipeline: ekspozycja → tone-map (wg trybu) → gamma/sRGB
+// Zwraca wartości w [0, 1] po korekcji gamma
+fn tone_map_and_gamma(
+    r: f32,
+    g: f32,
+    b: f32,
+    exposure: f32,
+    gamma: f32,
+    tonemap_mode: u32
+) -> vec3<f32> {
+    let exposure_multiplier = pow(2.0, exposure);
+
+    // Sprawdzenie NaN/Inf i clamp do sensownych wartości
+    let safe_r = select(0.0, max(r, 0.0), isFinite(r));
+    let safe_g = select(0.0, max(g, 0.0), isFinite(g));
+    let safe_b = select(0.0, max(b, 0.0), isFinite(b));
+
+    // Zastosowanie ekspozycji
+    let exposed_r = safe_r * exposure_multiplier;
+    let exposed_g = safe_g * exposure_multiplier;
+    let exposed_b = safe_b * exposure_multiplier;
+
+    // Tone mapping wg trybu
+    var tm_r: f32;
+    var tm_g: f32;
+    var tm_b: f32;
+
+    if (tonemap_mode == 1u) {
+        // Reinhard
+        tm_r = reinhard_tonemap(exposed_r);
+        tm_g = reinhard_tonemap(exposed_g);
+        tm_b = reinhard_tonemap(exposed_b);
+    } else if (tonemap_mode == 2u) {
+        // Linear: brak tone-map, tylko clamp do [0,1] po ekspozycji
+        tm_r = clamp(exposed_r, 0.0, 1.0);
+        tm_g = clamp(exposed_g, 0.0, 1.0);
+        tm_b = clamp(exposed_b, 0.0, 1.0);
+    } else {
+        // ACES (domyślny)
+        tm_r = aces_tonemap(exposed_r);
+        tm_g = aces_tonemap(exposed_g);
+        tm_b = aces_tonemap(exposed_b);
+    }
+
+    // Korekcja wyjściowa: preferuj prawdziwą krzywą sRGB (OETF) dla gamma ~2.2/2.4
+    let use_srgb = (abs(gamma - 2.2) < 0.2) || (abs(gamma - 2.4) < 0.2);
+    
+    if (use_srgb) {
+        return vec3<f32>(
+            srgb_oetf(tm_r),
+            srgb_oetf(tm_g),
+            srgb_oetf(tm_b)
+        );
+    } else {
+        let gamma_inv = 1.0 / max(gamma, 1e-4);
+        return vec3<f32>(
+            apply_gamma(tm_r, gamma_inv),
+            apply_gamma(tm_g, gamma_inv),
+            apply_gamma(tm_b, gamma_inv)
+        );
+    }
+}
+
+// Główna funkcja compute shadera
+@compute @workgroup_size(8, 8, 1)
+fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
+    // Sprawdź czy piksel jest w granicach obrazu
+    if (global_id.x >= params.width || global_id.y >= params.height) {
+        return;
+    }
+
+    // Przelicz ID na indeks piksela
+    let pixel_index = global_id.y * params.width + global_id.x;
+    
+    // Wczytaj piksel HDR z bufora wejściowego
+    let input_pixel = input_pixels[pixel_index];
+    
+    // Przetwórz piksel przez pipeline: ekspozycja → tone mapping → gamma
+    let processed_color = tone_map_and_gamma(
+        input_pixel.r,
+        input_pixel.g,
+        input_pixel.b,
+        params.exposure,
+        params.gamma,
+        params.tonemap_mode
+    );
+    
+    // Konwersja finalnego koloru f32 (w zakresie 0-1) na u8 (0-255)
+    let output_color = vec4<u8>(
+        u8(clamp(processed_color.r * 255.0, 0.0, 255.0)),
+        u8(clamp(processed_color.g * 255.0, 0.0, 255.0)),
+        u8(clamp(processed_color.b * 255.0, 0.0, 255.0)),
+        u8(clamp(input_pixel.a * 255.0, 0.0, 255.0))  // Alpha bez zmian
+    );
+    
+    // Zapisz wynik do bufora wyjściowego
+    output_pixels[pixel_index] = output_color;
+}

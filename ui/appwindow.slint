@@ -172,6 +172,9 @@ export component AppWindow inherits Window {
                 }
                 
                 file-menu-area := TouchArea {
+                    width: parent.width;
+                    height: parent.height;
+                    z: 1000;
                     clicked => {
                         file-menu-open = !file-menu-open;
                         view-menu-open = false; // Zamknij inne menu
@@ -189,6 +192,8 @@ export component AppWindow inherits Window {
                 }
             }
             
+
+            
             // View Menu Button
             Rectangle {
                 width: 40px;
@@ -205,6 +210,9 @@ export component AppWindow inherits Window {
                 }
                 
                 view-menu-area := TouchArea {
+                    width: parent.width;
+                    height: parent.height;
+                    z: 1000;
                     clicked => {
                         view-menu-open = !view-menu-open;
                         file-menu-open = false; // Zamknij inne menu
@@ -222,6 +230,8 @@ export component AppWindow inherits Window {
                 }
             }
             
+
+            
             // GPU Menu Button
             Rectangle {
                 width: 40px;
@@ -238,6 +248,9 @@ export component AppWindow inherits Window {
                 }
                 
                 gpu-menu-area := TouchArea {
+                    width: parent.width;
+                    height: parent.height;
+                    z: 1000;
                     clicked => {
                         gpu-menu-open = !gpu-menu-open;
                         file-menu-open = false; // Zamknij inne menu
@@ -254,6 +267,8 @@ export component AppWindow inherits Window {
                     }
                 }
             }
+            
+
         }
 
         // Image aligned with the right panel region in the menu bar
