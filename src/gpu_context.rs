@@ -235,6 +235,7 @@ impl GpuContext {
     }
 
     /// Czeka na zakończenie operacji GPU
+    #[allow(dead_code)]
     pub fn poll(&self) {
         // W wgpu 26.0.1 używamy device.poll() z PollType::Wait
         let _ = self.device.poll(PollType::Wait);
