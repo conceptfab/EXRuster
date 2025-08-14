@@ -824,6 +824,18 @@ export component AppWindow inherits Window {
         property <int> tt_delay_ticks: 3;
         // Który kafelek aktualnie kontroluje tooltip (ścieżka)
         property <string> tt_owner_path: "";
+        
+        // Debug tooltip state
+        Timer {
+            interval: 1000ms;
+            running: true;
+            triggered => {
+                if (tt_visible) {
+                    root.key-pressed-debug("TOOLTIP DEBUG: text='" + tt_text + "'");
+                }
+                self.running = true;
+            }
+        }
 
         // Context menu state (panel-level)
         property <bool> ctx_visible: false;
@@ -950,12 +962,14 @@ export component AppWindow inherits Window {
                                         parent.hover_ticks = Math.min(100000, parent.hover_ticks + 1);
                                         if (parent.hover_ticks >= thumbs_panel.tt_delay_ticks) {
                                             thumbs_panel.tt_visible = true;
-                                            // Pokaż tylko nazwę pliku (bez ścieżki)
+                                            // Pokaż tylko nazwę pliku
                                             thumbs_panel.tt_text = t.name;
                                             thumbs_panel.tt_owner_path = t.path;
                                             // aktualna pozycja kursora
                                             thumbs_panel.tt_x = viewport.x + parent.x - scroll_view.viewport-x + tile_area.mouse-x + 12px;
                                             thumbs_panel.tt_y = viewport.y + parent.y + tile_area.mouse-y + 12px;
+                                            // Debug tooltip
+                                            root.key-pressed-debug("TOOLTIP SHOW: " + t.name);
                                         }
                                     } else {
                                         // inny kafelek jest właścicielem – reset lokalnego licznika
@@ -1003,12 +1017,12 @@ export component AppWindow inherits Window {
             height: min(parent.height - 8px, tooltip_text.preferred-height + 8px);
             x: min(parent.width - self.width - 4px, max(4px, thumbs_panel.tt_x));
             y: min(parent.height - self.height - 4px, max(4px, thumbs_panel.tt_y));
-            background: Kolory.menu_tlo;
-            border-color: Kolory.menu_obramowanie;
-            border-width: 1px;
+            background: #ff0000; // Czerwone tło żeby było widać
+            border-color: #000000;
+            border-width: 2px;
             border-radius: 4px;
-            opacity: 0.98;
-            z: 1000;
+            opacity: 1.0;
+            z: 10000; // Większy z-index
 
             tooltip_text := Text {
                 // Ogranicz maksymalną szerokość, a rozmiar wynikowy pobierz z preferred-size

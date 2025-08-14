@@ -1,4 +1,4 @@
-0. wczytywanie miniturek trwa bardzo długo i nie jest wizualizowane przez progress bar
+0. optymalizacja
 
 1. Preferencje / GPU / progi plików
 2. About
