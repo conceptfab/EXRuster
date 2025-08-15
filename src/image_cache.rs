@@ -828,6 +828,13 @@ pub(crate) fn extract_layers_info(path: &PathBuf) -> anyhow::Result<Vec<LayerInf
 }
 
 pub(crate) fn find_best_layer(layers_info: &[LayerInfo]) -> String {
+    // DODAJĘ DEBUGOWANIE - może to jest źródło problemu z przesuniętymi liniami!
+    println!("DEBUG find_best_layer: {} warstw dostępnych", layers_info.len());
+    for (i, layer) in layers_info.iter().enumerate() {
+        println!("DEBUG layer {}: '{}' z kanałami: {:?}", 
+                 i, layer.name, layer.channels.iter().map(|c| &c.name).collect::<Vec<_>>());
+    }
+    
     // Plan A: Sprawdź czy istnieje warstwa pusta ("") z kanałami R, G, B
     // Ta warstwa zawiera główne kanały obrazu bez prefiksu
     if let Some(layer) = layers_info.iter().find(|l| l.name.is_empty()) {
@@ -841,6 +848,7 @@ pub(crate) fn find_best_layer(layers_info: &[LayerInfo]) -> String {
             else if n == "B" { has_b = true; }
         }
         if has_r && has_g && has_b {
+            println!("DEBUG find_best_layer: WYBRANO warstwę pustą '{}' (Plan A)", layer.name);
             return layer.name.clone();
         }
     }
@@ -851,11 +859,12 @@ pub(crate) fn find_best_layer(layers_info: &[LayerInfo]) -> String {
     // Sprawdź czy istnieje warstwa o priorytetowej nazwie
     for priority_name in &priority_names {
         if let Some(layer) = layers_info.iter().find(|l| l.name.to_lowercase().contains(&priority_name.to_lowercase())) {
+            println!("DEBUG find_best_layer: WYBRANO warstwę '{}' (Plan B - priority: {})", layer.name, priority_name);
             return layer.name.clone();
         }
     }
     
-    // Plan C: Znajdź pierwszą warstwę z kanałami R, G, B (porównanie dokładne krótkich nazw)
+    // Plan C: Znajdź pierwszą warstwę z kanałami R, G, B (porównanie dokładne krótkie nazwy)
     for layer in layers_info {
         let mut has_r = false;
         let mut has_g = false;
@@ -867,14 +876,18 @@ pub(crate) fn find_best_layer(layers_info: &[LayerInfo]) -> String {
             else if n == "B" { has_b = true; }
         }
         if has_r && has_g && has_b {
+            println!("DEBUG find_best_layer: WYBRANO warstwę '{}' (Plan C - ma R,G,B)", layer.name);
             return layer.name.clone();
         }
     }
     
     // Plan D (ostateczność): Pierwsza warstwa
-    layers_info.first()
+    let result = layers_info.first()
         .map(|l| l.name.clone())
-        .unwrap_or_else(|| "Layer 1".to_string())
+        .unwrap_or_else(|| "Layer 1".to_string());
+    
+    println!("DEBUG find_best_layer: WYBRANO warstwę '{}' (Plan D - pierwsza)", result);
+    result
 }
 
 pub(crate) fn load_specific_layer(path: &PathBuf, layer_name: &str, progress: Option<&dyn ProgressSink>) -> anyhow::Result<(Vec<(f32, f32, f32, f32)>, u32, u32, String)> {
@@ -936,16 +949,41 @@ pub(crate) fn load_specific_layer(path: &PathBuf, layer_name: &str, progress: Op
                 group_found = true;
                 group_indices.push(idx);
                 let su = short.to_ascii_uppercase();
+                
+                // DODAJĘ DEBUGOWANIE - sprawdzam wykrywanie kanałów R/G/B/A
+                println!("DEBUG channel detection: '{}' -> short='{}' -> su='{}'", full, short, su);
+                
                 match su.as_str() {
-                    "R" | "RED" => r_idx = Some(idx),
-                    "G" | "GREEN" => g_idx = Some(idx),
-                    "B" | "BLUE" => b_idx = Some(idx),
-                    "A" | "ALPHA" => a_idx = Some(idx),
+                    "R" | "RED" => {
+                        r_idx = Some(idx);
+                        println!("DEBUG: Znaleziono R kanał na indeksie {}", idx);
+                    }
+                    "G" | "GREEN" => {
+                        g_idx = Some(idx);
+                        println!("DEBUG: Znaleziono G kanał na indeksie {}", idx);
+                    }
+                    "B" | "BLUE" => {
+                        b_idx = Some(idx);
+                        println!("DEBUG: Znaleziono B kanał na indeksie {}", idx);
+                    }
+                    "A" | "ALPHA" => {
+                        a_idx = Some(idx);
+                        println!("DEBUG: Znaleziono A kanał na indeksie {}", idx);
+                    }
                     _ => {
                         // Dodatkowe heurystyki: nazwy zaczynające się od R/G/B
-                        if r_idx.is_none() && su.starts_with('R') { r_idx = Some(idx); }
-                        else if g_idx.is_none() && su.starts_with('G') { g_idx = Some(idx); }
-                        else if b_idx.is_none() && su.starts_with('B') { b_idx = Some(idx); }
+                        if r_idx.is_none() && su.starts_with('R') { 
+                            r_idx = Some(idx);
+                            println!("DEBUG: Znaleziono R kanał (heurystyka) na indeksie {}", idx);
+                        }
+                        else if g_idx.is_none() && su.starts_with('G') { 
+                            g_idx = Some(idx);
+                            println!("DEBUG: Znaleziono G kanał (heurystyka) na indeksie {}", idx);
+                        }
+                        else if b_idx.is_none() && su.starts_with('B') { 
+                            b_idx = Some(idx);
+                            println!("DEBUG: Znaleziono B kanał (heurystyka) na indeksie {}", idx);
+                        }
                     }
                 }
             }
@@ -953,15 +991,33 @@ pub(crate) fn load_specific_layer(path: &PathBuf, layer_name: &str, progress: Op
 
         if group_found {
             if let Some(p) = progress { p.set(0.4, Some("Processing pixels...")); }
+            
+            // DODAJĘ DEBUGOWANIE - sprawdzam mapowanie kanałów R/G/B/A
+            println!("DEBUG load_specific_layer: Znaleziono warstwę '{}'", layer_name);
+            println!("DEBUG load_specific_layer: r_idx={:?}, g_idx={:?}, b_idx={:?}, a_idx={:?}", 
+                     r_idx, g_idx, b_idx, a_idx);
+            println!("DEBUG load_specific_layer: group_indices={:?}", group_indices);
+            
+            // DODAJĘ DEBUGOWANIE - sprawdzam kolejność kanałów w pliku
+            println!("DEBUG load_specific_layer: Kolejność kanałów w pliku:");
+            for (idx, ch) in layer.channel_data.list.iter().enumerate() {
+                let full = ch.name.to_string();
+                let (lname, short) = split_layer_and_short(&full, base_attr.as_deref());
+                println!("DEBUG   [{}]: '{}' -> layer='{}', short='{}'", idx, full, lname, short);
+            }
+            
             // Zapewnij 3 kanały: jeśli brakuje, uzupełnij z listy kanałów grupy lub duplikuj poprzedni
             if r_idx.is_none() {
                 r_idx = group_indices.get(0).cloned();
+                println!("DEBUG load_specific_layer: Uzupełniono r_idx={:?}", r_idx);
             }
             if g_idx.is_none() {
                 g_idx = group_indices.get(1).cloned().or(r_idx);
+                println!("DEBUG load_specific_layer: Uzupełniono g_idx={:?}", g_idx);
             }
             if b_idx.is_none() {
                 b_idx = group_indices.get(2).cloned().or(g_idx).or(r_idx);
+                println!("DEBUG load_specific_layer: Uzupełniono b_idx={:?}", b_idx);
             }
 
             // Jeżeli nadal coś jest None (pusta grupa), zgłoś błąd
@@ -969,15 +1025,44 @@ pub(crate) fn load_specific_layer(path: &PathBuf, layer_name: &str, progress: Op
                 (Some(ri), Some(gi), Some(bi)) => (ri, gi, bi),
                 _ => anyhow::bail!("Warstwa '{}' nie zawiera kanałów do kompozytu", layer_name),
             };
+            
+            println!("DEBUG load_specific_layer: Finalne indeksy: r={}, g={}, b={}", ri, gi, bi);
 
             let mut out: Vec<(f32, f32, f32, f32)> = Vec::with_capacity(pixel_count);
+            
+            // DODAJĘ DEBUGOWANIE - sprawdzam kolejność pikseli w buforze
+            println!("DEBUG load_specific_layer: Rozpoczynam wczytywanie {} pikseli ({}x{})", 
+                     pixel_count, width, height);
+            
             for i in 0..pixel_count {
+                let x = i % width as usize;
+                let y = i / width as usize;
+                
+                // Debugowanie dla pierwszych kilku pikseli każdego wiersza
+                if x < 5 && y < 5 {
+                    println!("DEBUG pixel[{}]: pos=({},{})", i, x, y);
+                }
+                
                 let r = layer.channel_data.list[ri].sample_data.value_by_flat_index(i).to_f32();
                 let g = layer.channel_data.list[gi].sample_data.value_by_flat_index(i).to_f32();
                 let b = layer.channel_data.list[bi].sample_data.value_by_flat_index(i).to_f32();
                 let a = a_idx.map(|ci| layer.channel_data.list[ci].sample_data.value_by_flat_index(i).to_f32()).unwrap_or(1.0);
                 out.push((r, g, b, a));
             }
+            
+            // DODAJĘ DEBUGOWANIE - sprawdzam pierwsze kilka pikseli
+            if pixel_count > 0 {
+                println!("DEBUG load_specific_layer: Pierwszy piksel: R={:.3}, G={:.3}, B={:.3}, A={:.3}", 
+                         out[0].0, out[0].1, out[0].2, out[0].3);
+                
+                // Sprawdź czy ostatni piksel jest poprawny
+                let last_idx = pixel_count - 1;
+                let last_x = last_idx % width as usize;
+                let last_y = last_idx / width as usize;
+                println!("DEBUG load_specific_layer: Ostatni piksel[{}]: pos=({},{}) R={:.3}, G={:.3}, B={:.3}, A={:.3}", 
+                         last_idx, last_x, last_y, out[last_idx].0, out[last_idx].1, out[last_idx].2, out[last_idx].3);
+            }
+            
             if let Some(p) = progress { p.set(0.9, Some("Finalizing...")); }
             // Zwracamy żądaną nazwę jako aktualną, aby była spójna z UI
             return Ok((out, width, height, layer_name.to_string()));

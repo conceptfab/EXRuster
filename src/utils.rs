@@ -4,14 +4,27 @@ use crate::AppWindow;
 
 #[inline]
 pub(crate) fn split_layer_and_short(full: &str, base_attr: Option<&str>) -> (String, String) {
-    if let Some(base) = base_attr {
+    // DODAJĘ DEBUGOWANIE - może to jest źródło problemu z przesuniętymi liniami!
+    let result = if let Some(base) = base_attr {
         let short = full.rsplit('.').next().unwrap_or(full).to_string();
         (base.to_string(), short)
     } else if let Some(p) = full.rfind('.') {
         (full[..p].to_string(), full[p + 1..].to_string())
     } else {
         ("".to_string(), full.to_string())
+    };
+    
+    // Debugowanie dla pierwszych kilku kanałów
+    static mut DEBUG_COUNT: usize = 0;
+    unsafe {
+        if DEBUG_COUNT < 20 {
+            println!("DEBUG split_layer_and_short: '{}' + {:?} -> ('{}', '{}')", 
+                     full, base_attr, result.0, result.1);
+            DEBUG_COUNT += 1;
+        }
     }
+    
+    result
 }
 
 #[inline]

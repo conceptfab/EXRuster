@@ -354,68 +354,105 @@ pub fn generate_single_exr_thumbnail_work(
     let mut pixels: Vec<u8> = vec![0; (thumb_w as usize) * (thumb_h as usize) * 4];
     let m = color_matrix_rgb_to_srgb;
 
-    // Użyj zwykłego chunks_mut zamiast par_chunks_mut żeby uniknąć problemów z kolejnością
-    for (i, out) in pixels.chunks_mut(4).enumerate() {
-        let x = (i as u32) % thumb_w;
-        let y = (i as u32) / thumb_w;
+    // ALTERNATYWNE PODEJŚCIE: użyj indeksów bezpośrednio zamiast chunks_mut
+    // DODATKOWO: Użyj nearest neighbor zamiast bilinearnej interpolacji dla miniaturek
+    let use_nearest_neighbor = true; // Toggle dla testowania
+    
+    for y in 0..thumb_h {
+        for x in 0..thumb_w {
+            let i = (y as usize) * (thumb_w as usize) + (x as usize);
+            let buffer_idx = i * 4;
+            
+            // Dodaj debugowanie dla pierwszych kilku pikseli
+            if i < 20 {
+                println!("DEBUG: Pixel {}: pos=({},{}) -> buffer_idx={}", 
+                         i, x, y, buffer_idx);
+            }
+            
+            // Współrzędne źródłowe z częścią ułamkową - POPRAWIONE!
+            // Używamy odwrotności scale do mapowania współrzędnych
+            let src_x_f = (x as f32) * (width as f32) / (thumb_w as f32);
+            let src_y_f = (y as f32) * (height as f32) / (thumb_h as f32);
         
-        // Współrzędne źródłowe z częścią ułamkową - POPRAWIONE!
-        // Używamy odwrotności scale do mapowania współrzędnych
-        let src_x_f = (x as f32) * (width as f32) / (thumb_w as f32);
-        let src_y_f = (y as f32) * (height as f32) / (thumb_h as f32);
-        
-        // Dodaj debugowanie dla pierwszych kilku pikseli
-        if i < 10 {
-            println!("DEBUG: Pixel {}: pos=({},{}) -> src=({:.2},{:.2})", 
-                     i, x, y, src_x_f, src_y_f);
+            // Dodaj debugowanie dla pierwszych kilku pikseli
+            if i < 10 {
+                println!("DEBUG: Pixel {}: pos=({},{}) -> src=({:.2},{:.2})", 
+                         i, x, y, src_x_f, src_y_f);
+            }
+            
+            if use_nearest_neighbor {
+                // NEAREST NEIGHBOR - może rozwiązać problem z przesuniętymi liniami!
+                let src_x = src_x_f.round() as u32;
+                let src_y = src_y_f.round() as u32;
+                let src_x = src_x.min(width.saturating_sub(1));
+                let src_y = src_y.min(height.saturating_sub(1));
+                
+                let idx = (src_y as usize) * (width as usize) + (src_x as usize);
+                if idx < raw_pixels.len() {
+                    let (r, g, b, a) = raw_pixels[idx];
+                    
+                    // Reszta kodu pozostaje bez zmian (macierz kolorów i process_pixel)
+                    let mut final_r = r;
+                    let mut final_g = g;
+                    let mut final_b = b;
+                    
+                    if let Some(mat) = m {
+                        let v = mat * Vec3::new(final_r, final_g, final_b);
+                        final_r = v.x; final_g = v.y; final_b = v.z;
+                    }
+                    let px = process_pixel(final_r, final_g, final_b, a, exposure, gamma, tonemap_mode);
+                    pixels[buffer_idx] = px.r; pixels[buffer_idx + 1] = px.g; pixels[buffer_idx + 2] = px.b; pixels[buffer_idx + 3] = px.a;
+                }
+            } else {
+                // ORYGINALNA INTERPOLACJA BILINEARNA
+                let src_x0 = src_x_f.floor() as u32;
+                let src_y0 = src_y_f.floor() as u32;
+                let src_x1 = (src_x0 + 1).min(width.saturating_sub(1));
+                let src_y1 = (src_y0 + 1).min(height.saturating_sub(1));
+                
+                // Wagi interpolacji
+                let fx = src_x_f.fract();
+                let fy = src_y_f.fract();
+                
+                // Pobierz 4 sąsiednie piksele
+                let idx00 = (src_y0 as usize) * (width as usize) + (src_x0 as usize);
+                let idx10 = (src_y0 as usize) * (width as usize) + (src_x1 as usize);
+                let idx01 = (src_y1 as usize) * (width as usize) + (src_x0 as usize);
+                let idx11 = (src_y1 as usize) * (width as usize) + (src_x1 as usize);
+                
+                // Sprawdź czy indeksy są w zakresie
+                if idx11 >= raw_pixels.len() {
+                    println!("ERROR: Index out of bounds: idx11={}, len={}", idx11, raw_pixels.len());
+                    continue; // Pomiń problematyczny piksel zamiast return
+                }
+                
+                let (r00, g00, b00, a00) = raw_pixels[idx00];
+                let (r10, g10, b10, a10) = raw_pixels[idx10];
+                let (r01, g01, b01, a01) = raw_pixels[idx01];
+                let (r11, g11, b11, a11) = raw_pixels[idx11];
+                
+                // Interpolacja bilinearna - POPRAWIONE!
+                let (r, g, b, a) = precise_bilinear_interpolation(
+                    r00, r10, r01, r11,
+                    g00, g10, g01, g11,
+                    b00, b10, b01, b11,
+                    a00, a10, a01, a11,
+                    fx, fy
+                );
+                
+                // Reszta kodu pozostaje bez zmian (macierz kolorów i process_pixel)
+                let mut final_r = r;
+                let mut final_g = g;
+                let mut final_b = b;
+                
+                if let Some(mat) = m {
+                    let v = mat * Vec3::new(final_r, final_g, final_b);
+                    final_r = v.x; final_g = v.y; final_b = v.z;
+                }
+                let px = process_pixel(final_r, final_g, final_b, a, exposure, gamma, tonemap_mode);
+                pixels[buffer_idx] = px.r; pixels[buffer_idx + 1] = px.g; pixels[buffer_idx + 2] = px.b; pixels[buffer_idx + 3] = px.a;
+            }
         }
-        
-        let src_x0 = src_x_f.floor() as u32;
-        let src_y0 = src_y_f.floor() as u32;
-        let src_x1 = (src_x0 + 1).min(width.saturating_sub(1));
-        let src_y1 = (src_y0 + 1).min(height.saturating_sub(1));
-        
-        // Wagi interpolacji
-        let fx = src_x_f.fract();
-        let fy = src_y_f.fract();
-        
-        // Pobierz 4 sąsiednie piksele
-        let idx00 = (src_y0 as usize) * (width as usize) + (src_x0 as usize);
-        let idx10 = (src_y0 as usize) * (width as usize) + (src_x1 as usize);
-        let idx01 = (src_y1 as usize) * (width as usize) + (src_x0 as usize);
-        let idx11 = (src_y1 as usize) * (width as usize) + (src_x1 as usize);
-        
-        // Sprawdź czy indeksy są w zakresie
-        if idx11 >= raw_pixels.len() {
-            println!("ERROR: Index out of bounds: idx11={}, len={}", idx11, raw_pixels.len());
-            continue; // Pomiń problematyczny piksel zamiast return
-        }
-        
-        let (r00, g00, b00, a00) = raw_pixels[idx00];
-        let (r10, g10, b10, a10) = raw_pixels[idx10];
-        let (r01, g01, b01, a01) = raw_pixels[idx01];
-        let (r11, g11, b11, a11) = raw_pixels[idx11];
-        
-        // Interpolacja bilinearna - POPRAWIONE!
-        let (r, g, b, a) = precise_bilinear_interpolation(
-            r00, r10, r01, r11,
-            g00, g10, g01, g11,
-            b00, b10, b01, b11,
-            a00, a10, a01, a11,
-            fx, fy
-        );
-        
-        // Reszta kodu pozostaje bez zmian (macierz kolorów i process_pixel)
-        let mut final_r = r;
-        let mut final_g = g;
-        let mut final_b = b;
-        
-        if let Some(mat) = m {
-            let v = mat * Vec3::new(final_r, final_g, final_b);
-            final_r = v.x; final_g = v.y; final_b = v.z;
-        }
-        let px = process_pixel(final_r, final_g, final_b, a, exposure, gamma, tonemap_mode);
-        out[0] = px.r; out[1] = px.g; out[2] = px.b; out[3] = px.a;
     } // Zamykający nawias dla pętli for
 
     let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("?").to_string();
