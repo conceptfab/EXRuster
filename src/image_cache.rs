@@ -1027,12 +1027,58 @@ pub(crate) fn load_specific_layer(path: &PathBuf, layer_name: &str, progress: Op
             };
             
             println!("DEBUG load_specific_layer: Finalne indeksy: r={}, g={}, b={}", ri, gi, bi);
-
+            
+            // DODAJĘ DEBUGOWANIE - sprawdzam czy problem może być w złej kolejności kanałów
+            println!("DEBUG load_specific_layer: Sprawdzam czy problem może być w kolejności kanałów R/G/B:");
+            println!("DEBUG   Kanał R (indeks {}): '{}'", ri, layer.channel_data.list[ri].name);
+            println!("DEBUG   Kanał G (indeks {}): '{}'", gi, layer.channel_data.list[gi].name);
+            println!("DEBUG   Kanał B (indeks {}): '{}'", bi, layer.channel_data.list[bi].name);
+            
+            // DODAJĘ DEBUGOWANIE - sprawdzam pierwsze kilka pikseli każdego kanału osobno
+            println!("DEBUG load_specific_layer: Pierwsze 5 pikseli każdego kanału osobno:");
+            for i in 0..5.min(pixel_count) {
+                let r_val = layer.channel_data.list[ri].sample_data.value_by_flat_index(i).to_f32();
+                let g_val = layer.channel_data.list[gi].sample_data.value_by_flat_index(i).to_f32();
+                let b_val = layer.channel_data.list[bi].sample_data.value_by_flat_index(i).to_f32();
+                println!("DEBUG   Piksel[{}]: R={:.3}, G={:.3}, B={:.3}", i, r_val, g_val, b_val);
+            }
+            
             let mut out: Vec<(f32, f32, f32, f32)> = Vec::with_capacity(pixel_count);
             
             // DODAJĘ DEBUGOWANIE - sprawdzam kolejność pikseli w buforze
             println!("DEBUG load_specific_layer: Rozpoczynam wczytywanie {} pikseli ({}x{})", 
                      pixel_count, width, height);
+            
+            // DODAJĘ DEBUGOWANIE - sprawdzam czy problem może być w kolejności wierszy
+            println!("DEBUG load_specific_layer: Sprawdzam kolejność wierszy - czy plik ma odwrócone wiersze?");
+            println!("DEBUG load_specific_layer: Pierwsze 5 pikseli każdego z pierwszych 5 wierszy:");
+            
+            for y in 0..5.min(height as usize) {
+                for x in 0..5.min(width as usize) {
+                    let i = y * (width as usize) + x;
+                    if i < pixel_count {
+                        let r = layer.channel_data.list[ri].sample_data.value_by_flat_index(i).to_f32();
+                        let g = layer.channel_data.list[gi].sample_data.value_by_flat_index(i).to_f32();
+                        let b = layer.channel_data.list[bi].sample_data.value_by_flat_index(i).to_f32();
+                        println!("DEBUG   Wiersz {} (y={}), Kolumna {} (x={}): R={:.3}, G={:.3}, B={:.3}", 
+                                 y, y, x, x, r, g, b);
+                    }
+                }
+            }
+            
+            // DODAJĘ DEBUGOWANIE - sprawdzam ostatnie wiersze
+            println!("DEBUG load_specific_layer: Ostatnie 5 pikseli ostatniego wiersza:");
+            let last_y = (height as usize).saturating_sub(1);
+            for x in (width as usize).saturating_sub(5)..(width as usize) {
+                let i = last_y * (width as usize) + x;
+                if i < pixel_count {
+                    let r = layer.channel_data.list[ri].sample_data.value_by_flat_index(i).to_f32();
+                    let g = layer.channel_data.list[gi].sample_data.value_by_flat_index(i).to_f32();
+                    let b = layer.channel_data.list[bi].sample_data.value_by_flat_index(i).to_f32();
+                    println!("DEBUG   Ostatni wiersz (y={}), Kolumna {} (x={}): R={:.3}, G={:.3}, B={:.3}", 
+                             last_y, x, x, r, g, b);
+                }
+            }
             
             for i in 0..pixel_count {
                 let x = i % width as usize;

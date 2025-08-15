@@ -306,3 +306,52 @@ println!("DEBUG   [{}]: '{}' -> layer='{}', short='{}'", idx, full, lname, short
 4. **Błędne indeksowanie** kanałów
 
 **Status:** 🔍 SUPER KOMPLETNE DEBUGOWANIE - teraz zobaczymy WSZYSTKO!
+
+## DODATKOWE DEBUGOWANIE - Kolejność pikseli i kanałów:
+
+### **Nowe debugowanie dodane:**
+
+8. **Kolejność wierszy w pliku EXR:**
+```rust
+println!("DEBUG load_specific_layer: Sprawdzam kolejność wierszy - czy plik ma odwrócone wiersze?");
+println!("DEBUG   Wiersz {} (y={}), Kolumna {} (x={}): R={:.3}, G={:.3}, B={:.3}", y, y, x, x, r, g, b);
+```
+
+9. **Weryfikacja ostatnich wierszy:**
+```rust
+println!("DEBUG   Ostatni wiersz (y={}), Kolumna {} (x={}): R={:.3}, G={:.3}, B={:.3}", last_y, x, x, r, g, b);
+```
+
+10. **Kolejność kanałów R/G/B:**
+```rust
+println!("DEBUG   Kanał R (indeks {}): '{}'", ri, layer.channel_data.list[ri].name);
+println!("DEBUG   Kanał G (indeks {}): '{}'", gi, layer.channel_data.list[gi].name);
+println!("DEBUG   Kanał B (indeks {}): '{}'", bi, layer.channel_data.list[bi].name);
+```
+
+11. **Wartości pikseli każdego kanału osobno:**
+```rust
+println!("DEBUG   Piksel[{}]: R={:.3}, G={:.3}, B={:.3}", i, r_val, g_val, b_val);
+```
+
+### **Co to pokaże:**
+
+- **Czy wiersze są w poprawnej kolejności** (od góry do dołu)
+- **Czy kanały są w poprawnej kolejności** (R, G, B)
+- **Czy wartości pikseli są poprawne** dla każdego kanału
+- **Czy problem jest w kolejności** wierszy czy kanałów
+
+### **Potencjalne problemy do wykrycia:**
+
+1. **Odwrócona kolejność wierszy** w pliku EXR (od dołu do góry)
+2. **Kanały w złej kolejności** (B, G, R zamiast R, G, B)
+3. **Błędne wartości pikseli** w poszczególnych kanałach
+4. **Błędne mapowanie pozycji** (x, y)
+
+### **Co to rozwiąże:**
+
+- **Jeśli wiersze są odwrócone** - będziemy musieli odwrócić kolejność wierszy
+- **Jeśli kanały są w złej kolejności** - będziemy musieli zamienić kolejność kanałów
+- **Jeśli wartości są błędne** - będziemy musieli sprawdzić mapowanie pikseli
+
+**Status:** 🔍 MEGA KOMPLETNE DEBUGOWANIE - teraz zobaczymy ABSOLUTNIE WSZYSTKO!
