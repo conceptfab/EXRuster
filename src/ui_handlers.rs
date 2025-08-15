@@ -30,7 +30,7 @@ use crate::full_exr_cache::{FullExrCacheData, FullLayer, build_full_exr_cache};
 pub type FullExrCache = Arc<Mutex<Option<std::sync::Arc<FullExrCacheData>>>>;
 
 // Stała wysokości miniaturek - zmień tutaj aby dostosować rozdzielczość
-const THUMBNAIL_HEIGHT: u32 = 128;
+const THUMBNAIL_HEIGHT: u32 = 130;
 
 /// Dodaje linię do modelu konsoli i aktualizuje tekst w `TextEdit` (console-text)
 pub fn push_console(ui: &crate::AppWindow, console: &ConsoleModel, line: String) {
