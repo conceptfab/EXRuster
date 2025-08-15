@@ -527,12 +527,8 @@ pub fn handle_open_exr_from_path(
         // Zapisz ścieżkę do pliku
         { *lock_or_recover(&current_file_path) = Some(path.clone()); }
 
-        // Asynchroniczne wczytanie: wybór ścieżki FULL vs LIGHT
-        let file_size_bytes = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-        let force_light = std::env::var("EXRUSTER_LIGHT_OPEN").ok().as_deref() == Some("1");
-        let use_light = force_light || file_size_bytes > 700 * 1024 * 1024; // >700MB ⇒ light
-
-        prog.set(0.22, Some(if use_light { "Reading EXR (light)..." } else { "Reading EXR (full)..." }));
+        // Asynchroniczne wczytanie: zawsze używaj lekkiej metody
+        prog.set(0.22, Some("Reading EXR (light)..."));
         ui.set_progress_value(-1.0);
 
         // Pobierz aktualne parametry przetwarzania
@@ -544,8 +540,6 @@ pub fn handle_open_exr_from_path(
         let image_cache_c = image_cache.clone();
         let full_exr_cache_c = full_exr_cache.clone();
         let path_c = path.clone();
-
-        if use_light {
             rayon::spawn(move || {
                 let t_start = Instant::now();
                 // Odczytaj tylko najlepszą warstwę i zbuduj minimalny cache
@@ -634,80 +628,7 @@ pub fn handle_open_exr_from_path(
                     }
                 }
             });
-        } else {
-            // FULL ścieżka (dotychczasowa)
-            rayon::spawn(move || {
-                let t_start = Instant::now();
-                let full_res = build_full_exr_cache(&path_c, None).map(std::sync::Arc::new);
-                match full_res {
-                    Ok(full) => {
-                        let t_new = Instant::now();
-                        let cache_res = crate::image_cache::ImageCache::new_with_full_cache(&path_c, full.clone());
-                        match cache_res {
-                            Ok(cache) => {
-                                let _ = invoke_from_event_loop(move || {
-                                    if let Some(ui2) = ui_weak.upgrade() {
-                                        { let mut g = lock_or_recover(&full_exr_cache_c); *g = Some(full.clone()); }
-                                        { let mut cg = lock_or_recover(&image_cache_c); *cg = Some(cache); }
-                                        // Ustaw kontekst GPU w ImageCache
-                                        set_gpu_context_in_cache_global(&image_cache_c);
-                                        // Wygeneruj obraz na wątku UI (Image nie jest Send)
-                                        let (img, layers_info_len, layers_info_vec) = {
-                                            let guard = lock_or_recover(&image_cache_c);
-                                            if let Some(ref c) = *guard {
-                                                let li = c.layers_info.clone();
-                                                (process_image_with_gpu_fallback(c, exposure0, gamma0, tonemap_mode0), li.len(), li)
-                                            } else {
-                                                (ui2.get_exr_image(), 0usize, Vec::new())
-                                            }
-                                        };
-                                        ui2.set_exr_image(img);
-                                        if !layers_info_vec.is_empty() {
-                                            let (layers_model, layers_colors, layers_font_sizes) = create_layers_model(&layers_info_vec, &ui2);
-                                            ui2.set_layers_model(layers_model);
-                                            ui2.set_layers_colors(layers_colors);
-                                            ui2.set_layers_font_sizes(layers_font_sizes);
-                                        }
-                                        let mut log = ui2.get_console_text().to_string();
-                                        let mut append = |line: String| { if !log.is_empty() { log.push('\n'); } log.push_str(&line); };
-                                        append(format!("[cache] cache created ({} ms)", t_new.elapsed().as_millis()));
-                                        append(format!("[preview] image updated (exp: {:.2}, gamma: {:.2})", exposure0, gamma0));
-                                        append(format!("[layers] count: {}", layers_info_len));
-                                        ui2.set_console_text(log.into());
-                                        ui2.set_status_text(format!("Loaded in {} ms", t_start.elapsed().as_millis()).into());
-                                        ui2.set_progress_value(1.0);
-                                    }
-                                });
-                            }
-                            Err(e) => {
-                                let _ = invoke_from_event_loop(move || {
-                                    if let Some(ui2) = ui_weak.upgrade() {
-                                        ui2.set_status_text(format!("Read error '{}': {}", get_file_name(&path_c), e).into());
-                                        let mut log = ui2.get_console_text().to_string();
-                                        if !log.is_empty() { log.push('\n'); }
-                                        log.push_str(&format!("[error] reading file '{}': {}", get_file_name(&path_c), e));
-                                        ui2.set_console_text(log.into());
-                                        ui2.set_progress_value(0.0);
-                                    }
-                                });
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        let _ = invoke_from_event_loop(move || {
-                            if let Some(ui2) = ui_weak.upgrade() {
-                                ui2.set_status_text(format!("Read error '{}': {}", get_file_name(&path_c), e).into());
-                                let mut log = ui2.get_console_text().to_string();
-                                if !log.is_empty() { log.push('\n'); }
-                                log.push_str(&format!("[error] reading file '{}': {}", get_file_name(&path_c), e));
-                                ui2.set_console_text(log.into());
-                                ui2.set_progress_value(0.0);
-                            }
-                        });
-                    }
-                }
-            });
-        }
+
     }
 }
 

@@ -147,9 +147,54 @@ impl ImageCache {
             gpu_context: None,
         })
     }
+
+    /// Upewnia się, że dana warstwa jest załadowana w pamięci (doładuje jeśli trzeba)
+    fn ensure_layer_is_loaded(&mut self, path: &PathBuf, layer_name: &str, progress: Option<&dyn ProgressSink>) -> anyhow::Result<()> {
+        let layer_exists_in_cache = self.full_cache.layers.iter().any(|l| l.name == layer_name);
+
+        if layer_exists_in_cache {
+            return Ok(()); // Warstwa już jest w cache, nic nie rób
+        }
+
+        if let Some(p) = progress {
+            p.start_indeterminate(Some(&format!("Lazy loading layer: {}...", layer_name)));
+        }
+
+        // Wczytaj brakującą warstwę z dysku
+        let layer_channels = load_all_channels_for_layer(path, layer_name, progress)?;
+
+        // Stwórz nową FullLayer
+        let new_full_layer = crate::full_exr_cache::FullLayer {
+            name: layer_channels.layer_name,
+            width: layer_channels.width,
+            height: layer_channels.height,
+            channel_names: layer_channels.channel_names,
+            channel_data: layer_channels.channel_data.to_vec(), // Konwersja z Arc<[f32]>
+        };
+
+        // Dodaj ją do istniejącego cache
+        // Potrzebujemy mutowalnego dostępu, więc musimy obejść Arc
+        if let Some(mut_cache) = Arc::get_mut(&mut self.full_cache) {
+             mut_cache.layers.push(new_full_layer);
+        } else {
+            // Jeśli Arc jest współdzielony, musimy go sklonować i zastąpić
+            let mut new_cache_data = (*self.full_cache).clone();
+            new_cache_data.layers.push(new_full_layer);
+            self.full_cache = Arc::new(new_cache_data);
+        }
+
+        if let Some(p) = progress {
+            p.finish(Some("Layer loaded"));
+        }
+
+        Ok(())
+    }
     
     pub fn load_layer(&mut self, path: &PathBuf, layer_name: &str, progress: Option<&dyn ProgressSink>) -> anyhow::Result<()> {
-        // Jednorazowo wczytaj wszystkie kanały wybranej warstwy z pełnego cache i zbuduj kompozyt
+        // Krok 1: Upewnij się, że dane warstwy są w pamięci (doładuj jeśli trzeba)
+        self.ensure_layer_is_loaded(path, layer_name, progress)?;
+
+        // Krok 2: Kontynuuj jak wcześniej, wczytując dane z full_cache
         let layer_channels = load_all_channels_for_layer_from_full(&self.full_cache, layer_name, progress)?;
 
         self.width = layer_channels.width;
