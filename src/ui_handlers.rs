@@ -367,52 +367,37 @@ pub fn load_thumbnails_for_directory(
                 return;
             }
             
-            // Generuj miniaturki z cache w osobnym wątku - ale bez slint::Image
-            let mut thumbnail_works = Vec::new();
-            
+            // Użyj nowej, wydajnej funkcji do generowania miniaturek
             prog.set(0.1, Some(&format!("📁 Found {} EXR files, starting processing...", total_files)));
             
-            for (idx, path) in files.iter().enumerate() {
-                let frac = 0.1 + (idx as f32) / (total_files as f32) * 0.8; // 10% - 90%
-                
-                // Spróbuj z cache LRU
-                let cached_opt = {
-                    if let Ok(mut guard) = crate::thumbnails::get_thumb_cache().lock() {
-                        crate::thumbnails::c_get(&mut *guard, path, THUMBNAIL_HEIGHT, exposure, gamma, tonemap_mode)
-                    } else {
-                        None
-                    }
-                };
-                
-                if let Some(cached) = cached_opt {
-                    thumbnail_works.push(cached);
-                    prog.set(frac, Some(&format!("✅ Cached: {}/{} {}", idx + 1, total_files, path.file_name().and_then(|n| n.to_str()).unwrap_or("?"))));
-                    continue;
+            // Generuj miniaturki w osobnym wątku, ale bez slint::Image
+            let thumbnail_works = match crate::thumbnails::generate_thumbnails_cpu_raw(
+                files,
+                THUMBNAIL_HEIGHT, 
+                exposure, 
+                gamma, 
+                tonemap_mode,
+                Some(&prog)
+            ) {
+                Ok(works) => works,
+                Err(e) => {
+                    eprintln!("Failed to generate thumbnails: {}", e);
+                    let ui_weak_clone = ui_weak.clone();
+                    slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = ui_weak_clone.upgrade() {
+                            ui.set_status_text(format!("❌ Failed to generate thumbnails: {}", e).into());
+                            prog.finish(Some("❌ Thumbnail generation failed"));
+                        }
+                    }).unwrap();
+                    return;
                 }
-                
-                // Generuj nową miniaturkę
-                prog.set(frac, Some(&format!("🔄 Processing: {}/{} {}", idx + 1, total_files, path.file_name().and_then(|n| n.to_str()).unwrap_or("?"))));
-                
-                match crate::thumbnails::generate_single_exr_thumbnail_work(
-                    path, THUMBNAIL_HEIGHT, exposure, gamma, tonemap_mode
-                ) {
-                    Ok(work) => {
-                        // Zapisz do cache
-                        crate::thumbnails::put_thumb_cache(&work, THUMBNAIL_HEIGHT, exposure, gamma, tonemap_mode);
-                        thumbnail_works.push(work);
-                    }
-                    Err(e) => {
-                        eprintln!("Failed to generate thumbnail for {}: {}", path.display(), e);
-                        prog.set(frac, Some(&format!("❌ Failed: {}/{} {}", idx + 1, total_files, path.file_name().and_then(|n| n.to_str()).unwrap_or("?"))));
-                    }
-                }
-            }
+            };
             
-            // Sortuj miniaturki
             prog.set(0.9, Some("📊 Sorting thumbnails alphabetically..."));
-            thumbnail_works.sort_by(|a, b| a.file_name.to_lowercase().cmp(&b.file_name.to_lowercase()));
+            let mut sorted_works = thumbnail_works;
+            sorted_works.sort_by(|a, b| a.file_name.to_lowercase().cmp(&b.file_name.to_lowercase()));
             
-            let count = thumbnail_works.len();
+            let count = sorted_works.len();
             let ms = t0.elapsed().as_millis();
             
             // Aktualizuj UI w głównym wątku przez invoke_from_event_loop
@@ -425,7 +410,7 @@ pub fn load_thumbnails_for_directory(
                     prog.set(0.95, Some("🎨 Converting thumbnails to UI format..."));
                     
                     // Konwertuj miniaturki do formatu UI w głównym wątku
-                    let items: Vec<ThumbItem> = thumbnail_works
+                    let items: Vec<ThumbItem> = sorted_works
                         .into_iter()
                         .map(|w| {
                             // Konwertuj surowe piksele RGBA8 do slint::Image

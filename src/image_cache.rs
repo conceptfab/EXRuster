@@ -890,6 +890,7 @@ pub(crate) fn find_best_layer(layers_info: &[LayerInfo]) -> String {
     result
 }
 
+#[allow(dead_code)]
 pub(crate) fn load_specific_layer(path: &PathBuf, layer_name: &str, progress: Option<&dyn ProgressSink>) -> anyhow::Result<(Vec<(f32, f32, f32, f32)>, u32, u32, String)> {
     // Szybka ścieżka: jeżeli prosimy o bazową/typową warstwę RGBA, użyj gotowej funkcji czytającej pierwszą RGBA
     // Dotyczy częstych nazw: "", "beauty", "rgba", "default", "combined"
@@ -1120,6 +1121,7 @@ pub(crate) fn load_specific_layer(path: &PathBuf, layer_name: &str, progress: Op
     Ok((pixels, width, height, layer_name.to_string()))
 }
 
+#[allow(dead_code)]
 fn load_first_rgba_layer(path: &PathBuf) -> anyhow::Result<(Vec<(f32, f32, f32, f32)>, u32, u32, String)> {
     use std::convert::Infallible;
     use std::cell::RefCell;
