@@ -4,13 +4,10 @@ use std::path::{Path, PathBuf};
 use rayon::prelude::*;
 use slint::{Image, Rgba8Pixel, SharedPixelBuffer};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::cell::RefCell;
-use std::rc::Rc;
-use exr::prelude as exr;
+
 
 use crate::image_processing::process_pixel;
-use core::simd::{f32x4, Simd};
-use std::simd::prelude::SimdFloat;
+
 use crate::image_cache::{extract_layers_info, find_best_layer, load_specific_layer};
 use crate::progress::ProgressSink;
 use crate::color_processing::compute_rgb_to_srgb_matrix_from_file_for_layer;
@@ -290,224 +287,51 @@ pub fn generate_single_exr_thumbnail_work(
     gamma: f32,
     tonemap_mode: i32,
 ) -> anyhow::Result<ExrThumbWork> {
-    use std::convert::Infallible;
-    use ::exr::math::Vec2;
-
     let path_buf = path.to_path_buf();
 
-    // Tylko meta: policz warstwy do prezentacji, bez wczytywania pikseli
+    // Krok 1: Szybkie pobranie metadanych (liczba warstw, macierz kolorów)
     let layers_info = extract_layers_info(&path_buf)
-        .with_context(|| format!("Błąd odczytu EXR: {}", path.display()))?;
+        .with_context(|| format!("Błąd odczytu meta EXR: {}", path.display()))?;
+    let color_matrix_rgb_to_srgb = compute_rgb_to_srgb_matrix_from_file_for_layer(path, "").ok();
 
-    // Macierz primaries → sRGB z metadanych (globalnie / warstwa pusta)
-    let color_matrix_rgb_to_srgb = compute_rgb_to_srgb_matrix_from_file_for_layer(&path_buf.as_path(), "").ok();
+    // Krok 2: Fallback do wolniejszej, ale bardziej niezawodnej metody
+    let best_layer_name = find_best_layer(&layers_info);
+    let (raw_pixels, width, height, _) = load_specific_layer(&path_buf, &best_layer_name, None)?;
 
-    // Współdzielony stan dla callbacków czytnika
-    let dims = Rc::new(RefCell::new((0u32, 0u32, 0u32, 0u32))); // (w, h, tw, th)
-    let strides = Rc::new(RefCell::new((1.0f32, 1.0f32))); // (sx, sy)
-    let out_pixels = Rc::new(RefCell::new(Vec::<u8>::new()));
+    let scale = thumb_height as f32 / height as f32;
+    let thumb_w = ((width as f32) * scale).max(1.0).round() as u32;
+    let thumb_h = thumb_height.max(1);
 
-    let dims_c = dims.clone();
-    let strides_c = strides.clone();
-    let out_c1 = out_pixels.clone();
+    let mut pixels: Vec<u8> = vec![0; (thumb_w as usize) * (thumb_h as usize) * 4];
+    let m = color_matrix_rgb_to_srgb;
 
-    // 1) Inicjalizacja po rozdzielczości
-    let stream_result = exr::read_first_rgba_layer_from_file(
-        &path_buf,
-        move |resolution, _| -> Result<(), Infallible> {
-            let width = resolution.width() as u32;
-            let height = resolution.height() as u32;
-            let thumb_h = thumb_height.max(1);
-            let thumb_w = ((width as f32) * (thumb_h as f32) / (height as f32)).max(1.0).round() as u32;
+    pixels.par_chunks_mut(4).enumerate().for_each(|(i, out)| {
+        let x = (i as u32) % thumb_w;
+        let y = (i as u32) / thumb_w;
+        let src_x = ((x as f32 / scale) as u32).min(width.saturating_sub(1));
+        let src_y = ((y as f32 / scale) as u32).min(height.saturating_sub(1));
+        let src_idx = (src_y as usize) * (width as usize) + (src_x as usize);
 
-            *dims_c.borrow_mut() = (width, height, thumb_w, thumb_h);
-            let sx = (width as f32) / (thumb_w as f32);
-            let sy = (height as f32) / (thumb_h as f32);
-            *strides_c.borrow_mut() = (sx, sy);
-
-            out_c1.borrow_mut().resize((thumb_w as usize) * (thumb_h as usize) * 4, 0u8);
-            Ok(())
-        },
-        {
-            let m = color_matrix_rgb_to_srgb;
-            let out_c2 = out_pixels.clone();
-            let dims_r = dims.clone();
-            let strides_r = strides.clone();
-            move |_, position: Vec2<usize>, (r0, g0, b0, a0): (f32, f32, f32, f32)| {
-                let (_width, _height, thumb_w, thumb_h) = *dims_r.borrow();
-                if thumb_w == 0 || thumb_h == 0 {
-                    return;
-                }
-                let (sx, sy) = *strides_r.borrow();
-
-                // Użyj poprawnych współrzędnych z biblioteki `exr`
-                let src_x = position.x() as u32;
-                let src_y = position.y() as u32;
-
-                // Mapowanie do piksela docelowego (NN)
-                let x_out = ((src_x as f32) / sx).floor() as u32;
-                let y_out = ((src_y as f32) / sy).floor() as u32;
-                if x_out >= thumb_w || y_out >= thumb_h {
-                    return;
-                }
-
-                // Transformacja kolorów (opcjonalna) + tone-mapping
-                let (mut r, mut g, mut b, a) = (r0, g0, b0, a0);
-                if let Some(mat) = m {
-                    let v = mat * Vec3::new(r, g, b);
-                    r = v.x; g = v.y; b = v.z;
-                }
-                let px = process_pixel(r, g, b, a, exposure, gamma, tonemap_mode);
-
-                let out_index = ((y_out as usize) * (thumb_w as usize) + (x_out as usize)) * 4;
-                {
-                    let mut out_ref = out_c2.borrow_mut();
-                    if out_index + 3 < out_ref.len() {
-                        out_ref[out_index + 0] = px.r;
-                        out_ref[out_index + 1] = px.g;
-                        out_ref[out_index + 2] = px.b;
-                        out_ref[out_index + 3] = 255;
-                    }
-                }
-            }
+        let (mut r, mut g, mut b, a) = raw_pixels[src_idx];
+        if let Some(mat) = m {
+            let v = mat * Vec3::new(r, g, b);
+            r = v.x; g = v.y; b = v.z;
         }
-    );
+        let px = process_pixel(r, g, b, a, exposure, gamma, tonemap_mode);
+        out[0] = px.r; out[1] = px.g; out[2] = px.b; out[3] = px.a;
+    });
 
-    // Jeśli strumień się nie powiódł, fallback do heurystyki warstw
-    if stream_result.is_err() {
-        // Fallback: wczytaj warstwę w pełnej rozdzielczości, potem przeskaluj (stabilne API)
-        let best_layer_name = find_best_layer(&layers_info);
-        let (raw_pixels, width, height, _current_layer) = load_specific_layer(&path_buf, &best_layer_name, None)
-            .with_context(|| format!("Błąd wczytania warstwy \"{}\": {}", best_layer_name, path.display()))?;
-
-        let color_matrix_rgb_to_srgb = compute_rgb_to_srgb_matrix_from_file_for_layer(&path_buf.as_path(), &best_layer_name).ok();
-
-        let scale = thumb_height as f32 / height as f32;
-        let thumb_h = thumb_height.max(1);
-        let thumb_w = ((width as f32) * scale).max(1.0).round() as u32;
-
-        let mut pixels: Vec<u8> = vec![0; (thumb_w as usize) * (thumb_h as usize) * 4];
-        let raw_width = width as usize;
-        let m = color_matrix_rgb_to_srgb;
-        
-        // Zoptymalizowane przetwarzanie z SIMD
-        let total = (thumb_w as usize) * (thumb_h as usize);
-        
-        // Użyj większego bloku SIMD dla lepszej wydajności
-        let par_pixels: Vec<u8> = (0..(total / 8)).into_par_iter().flat_map(|block| {
-            let base = block * 8;
-            let mut rr = [0.0f32; 8];
-            let mut gg = [0.0f32; 8];
-            let mut bb = [0.0f32; 8];
-            let mut aa = [1.0f32; 8];
-            for lane in 0..8 {
-                let i = base + lane;
-                let x = (i as u32) % thumb_w;
-                let y = (i as u32) / thumb_w;
-                let src_x = ((x as f32 / scale) as u32).min(width.saturating_sub(1));
-                let src_y = ((y as f32 / scale) as u32).min(height.saturating_sub(1));
-                let src_idx = (src_y as usize) * raw_width + (src_x as usize);
-                let (mut r, mut g, mut b, a) = raw_pixels[src_idx];
-                if let Some(mat) = m {
-                    let v = mat * Vec3::new(r, g, b);
-                    r = v.x; g = v.y; b = v.z;
-                }
-                rr[lane] = r; gg[lane] = g; bb[lane] = b; aa[lane] = a;
-            }
-            let (r8, g8, b8) = crate::image_processing::tone_map_and_gamma_simd(
-                f32x4::from_array([rr[0], rr[1], rr[2], rr[3]]), 
-                f32x4::from_array([gg[0], gg[1], gg[2], gg[3]]), 
-                f32x4::from_array([bb[0], bb[1], bb[2], bb[3]]), 
-                exposure, gamma, tonemap_mode);
-            let a8_1 = f32x4::from_array([aa[0], aa[1], aa[2], aa[3]]).simd_clamp(Simd::splat(0.0), Simd::splat(1.0));
-            
-            let (r8_2, g8_2, b8_2) = crate::image_processing::tone_map_and_gamma_simd(
-                f32x4::from_array([rr[4], rr[5], rr[6], rr[7]]), 
-                f32x4::from_array([gg[4], gg[5], gg[6], gg[7]]), 
-                f32x4::from_array([bb[4], bb[5], bb[6], bb[7]]), 
-                exposure, gamma, tonemap_mode);
-            let a8_2 = f32x4::from_array([aa[4], aa[5], aa[6], aa[7]]).simd_clamp(Simd::splat(0.0), Simd::splat(1.0));
-            
-            let ra1: [f32; 4] = r8.into();
-            let ga1: [f32; 4] = g8.into();
-            let ba1: [f32; 4] = b8.into();
-            let aa1: [f32; 4] = a8_1.into();
-            
-            let ra2: [f32; 4] = r8_2.into();
-            let ga2: [f32; 4] = g8_2.into();
-            let ba2: [f32; 4] = b8_2.into();
-            let aa2: [f32; 4] = a8_2.into();
-            
-            let mut chunk = Vec::with_capacity(32);
-            for i in 0..4 {
-                chunk.push((ra1[i] * 255.0).round().clamp(0.0, 255.0) as u8);
-                chunk.push((ga1[i] * 255.0).round().clamp(0.0, 255.0) as u8);
-                chunk.push((ba1[i] * 255.0).round().clamp(0.0, 255.0) as u8);
-                chunk.push((aa1[i] * 255.0).round().clamp(0.0, 255.0) as u8);
-            }
-            for i in 0..4 {
-                chunk.push((ra2[i] * 255.0).round().clamp(0.0, 255.0) as u8);
-                chunk.push((ga2[i] * 255.0).round().clamp(0.0, 255.0) as u8);
-                chunk.push((ba2[i] * 255.0).round().clamp(0.0, 255.0) as u8);
-                chunk.push((aa2[i] * 255.0).round().clamp(0.0, 255.0) as u8);
-            }
-            chunk
-        }).collect();
-
-        pixels[..par_pixels.len()].copy_from_slice(&par_pixels);
-
-        // Obsłuż pozostałe piksele (resztę z dzielenia)
-        for i in (total / 8 * 8)..total {
-            let x = (i as u32) % thumb_w;
-            let y = (i as u32) / thumb_w;
-            let src_x = ((x as f32 / scale) as u32).min(width.saturating_sub(1));
-            let src_y = ((y as f32 / scale) as u32).min(height.saturating_sub(1));
-            let src_idx = (src_y as usize) * raw_width + (src_x as usize);
-            let (mut r, mut g, mut b, a) = raw_pixels[src_idx];
-            if let Some(mat) = m {
-                let v = mat * Vec3::new(r, g, b);
-                r = v.x; g = v.y; b = v.z;
-            }
-            let px = process_pixel(r, g, b, a, exposure, gamma, tonemap_mode);
-            let out_index = i * 4;
-            pixels[out_index + 0] = px.r;
-            pixels[out_index + 1] = px.g;
-            pixels[out_index + 2] = px.b;
-            pixels[out_index + 3] = px.a;
-        }
-
-        let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("?").to_string();
-        let file_size_bytes = fs::metadata(path).map(|m| m.len()).unwrap_or(0);
-
-        return Ok(ExrThumbWork {
-            path: path.to_path_buf(),
-            file_name,
-            file_size_bytes,
-            width: thumb_w,
-            height: thumb_h,
-            num_layers: layers_info.len(),
-            pixels,
-        });
-    }
-
-    let (_width, _height, thumb_w, thumb_h) = *dims.borrow();
     let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("?").to_string();
     let file_size_bytes = fs::metadata(path).map(|m| m.len()).unwrap_or(0);
 
-    // Skopiuj piksele do lokalnej zmiennej, aby zakończyć pożyczkę Ref zanim zwrócimy wynik
-    let pixels_vec = {
-        let borrow = out_pixels.borrow();
-        borrow.clone()
-    };
-
     Ok(ExrThumbWork {
-        path: path.to_path_buf(),
+        path: path_buf,
         file_name,
         file_size_bytes,
         width: thumb_w,
         height: thumb_h,
         num_layers: layers_info.len(),
-        pixels: pixels_vec,
+        pixels,
     })
 }
 
