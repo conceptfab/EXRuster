@@ -19,6 +19,35 @@ use lru::LruCache;
 use crate::gpu_context::GpuContext;
 use crate::gpu_thumbnails::GpuThumbnailProcessor;
 
+/// Funkcja pomocnicza do precyzyjnej interpolacji bilinearnej
+#[inline]
+fn precise_bilinear_interpolation(
+    r00: f32, r10: f32, r01: f32, r11: f32,
+    g00: f32, g10: f32, g01: f32, g11: f32,
+    b00: f32, b10: f32, b01: f32, b11: f32,
+    a00: f32, a10: f32, a01: f32, a11: f32,
+    fx: f32, fy: f32
+) -> (f32, f32, f32, f32) {
+    // Precyzyjna interpolacja bilinearna z clamp do [0,1]
+    let r0 = (r00 * (1.0 - fx) + r10 * fx).clamp(0.0, 1.0);
+    let r1 = (r01 * (1.0 - fx) + r11 * fx).clamp(0.0, 1.0);
+    let r = (r0 * (1.0 - fy) + r1 * fy).clamp(0.0, 1.0);
+    
+    let g0 = (g00 * (1.0 - fx) + g10 * fx).clamp(0.0, 1.0);
+    let g1 = (g01 * (1.0 - fx) + g11 * fx).clamp(0.0, 1.0);
+    let g = (g0 * (1.0 - fy) + g1 * fy).clamp(0.0, 1.0);
+    
+    let b0 = (b00 * (1.0 - fx) + b10 * fx).clamp(0.0, 1.0);
+    let b1 = (b01 * (1.0 - fx) + b11 * fx).clamp(0.0, 1.0);
+    let b = (b0 * (1.0 - fy) + b1 * fy).clamp(0.0, 1.0);
+    
+    let a0 = (a00 * (1.0 - fx) + a10 * fx).clamp(0.0, 1.0);
+    let a1 = (a01 * (1.0 - fx) + a11 * fx).clamp(0.0, 1.0);
+    let a = (a0 * (1.0 - fy) + a1 * fy).clamp(0.0, 1.0);
+    
+    (r, g, b, a)
+}
+
 /// Zwięzła reprezentacja miniaturki EXR do wyświetlenia w UI
 #[allow(dead_code)]
 pub struct ExrThumbnailInfo {
@@ -307,16 +336,39 @@ pub fn generate_single_exr_thumbnail_work(
     let thumb_w = ((width as f32) * scale).max(1.0).round() as u32;
     let thumb_h = thumb_height;
 
+    // Sprawdź czy wymiary są poprawne - POPRAWIONE!
+    if thumb_w == 0 || thumb_h == 0 {
+        return Err(anyhow::anyhow!("Invalid thumbnail dimensions: {}x{}", thumb_w, thumb_h));
+    }
+    
+    // Sprawdź czy scale jest rozsądny
+    if scale < 0.01 || scale > 100.0 {
+        println!("WARNING: Unusual scale: {:.6} for {}x{} -> {}x{}", 
+                 scale, width, height, thumb_w, thumb_h);
+    }
+
+    // Dodaj debugowanie współrzędnych - POPRAWIONE!
+    println!("DEBUG: Original: {}x{}, Thumb: {}x{}, Scale: {:.6}", 
+             width, height, thumb_w, thumb_h, scale);
+
     let mut pixels: Vec<u8> = vec![0; (thumb_w as usize) * (thumb_h as usize) * 4];
     let m = color_matrix_rgb_to_srgb;
 
-    pixels.par_chunks_mut(4).enumerate().for_each(|(i, out)| {
+    // Użyj zwykłego chunks_mut zamiast par_chunks_mut żeby uniknąć problemów z kolejnością
+    for (i, out) in pixels.chunks_mut(4).enumerate() {
         let x = (i as u32) % thumb_w;
         let y = (i as u32) / thumb_w;
         
-        // Współrzędne źródłowe z częścią ułamkową
-        let src_x_f = (x as f32) / scale;
-        let src_y_f = (y as f32) / scale;
+        // Współrzędne źródłowe z częścią ułamkową - POPRAWIONE!
+        // Używamy odwrotności scale do mapowania współrzędnych
+        let src_x_f = (x as f32) * (width as f32) / (thumb_w as f32);
+        let src_y_f = (y as f32) * (height as f32) / (thumb_h as f32);
+        
+        // Dodaj debugowanie dla pierwszych kilku pikseli
+        if i < 10 {
+            println!("DEBUG: Pixel {}: pos=({},{}) -> src=({:.2},{:.2})", 
+                     i, x, y, src_x_f, src_y_f);
+        }
         
         let src_x0 = src_x_f.floor() as u32;
         let src_y0 = src_y_f.floor() as u32;
@@ -333,36 +385,38 @@ pub fn generate_single_exr_thumbnail_work(
         let idx01 = (src_y1 as usize) * (width as usize) + (src_x0 as usize);
         let idx11 = (src_y1 as usize) * (width as usize) + (src_x1 as usize);
         
+        // Sprawdź czy indeksy są w zakresie
+        if idx11 >= raw_pixels.len() {
+            println!("ERROR: Index out of bounds: idx11={}, len={}", idx11, raw_pixels.len());
+            continue; // Pomiń problematyczny piksel zamiast return
+        }
+        
         let (r00, g00, b00, a00) = raw_pixels[idx00];
         let (r10, g10, b10, a10) = raw_pixels[idx10];
         let (r01, g01, b01, a01) = raw_pixels[idx01];
         let (r11, g11, b11, a11) = raw_pixels[idx11];
         
-        // Interpolacja bilinearna
-        let r0 = r00 * (1.0 - fx) + r10 * fx;
-        let r1 = r01 * (1.0 - fx) + r11 * fx;
-        let mut r = r0 * (1.0 - fy) + r1 * fy;
-        
-        let g0 = g00 * (1.0 - fx) + g10 * fx;
-        let g1 = g01 * (1.0 - fx) + g11 * fx;
-        let mut g = g0 * (1.0 - fy) + g1 * fy;
-        
-        let b0 = b00 * (1.0 - fx) + b10 * fx;
-        let b1 = b01 * (1.0 - fx) + b11 * fx;
-        let mut b = b0 * (1.0 - fy) + b1 * fy;
-        
-        let a0 = a00 * (1.0 - fx) + a10 * fx;
-        let a1 = a01 * (1.0 - fx) + a11 * fx;
-        let a = a0 * (1.0 - fy) + a1 * fy;
+        // Interpolacja bilinearna - POPRAWIONE!
+        let (r, g, b, a) = precise_bilinear_interpolation(
+            r00, r10, r01, r11,
+            g00, g10, g01, g11,
+            b00, b10, b01, b11,
+            a00, a10, a01, a11,
+            fx, fy
+        );
         
         // Reszta kodu pozostaje bez zmian (macierz kolorów i process_pixel)
+        let mut final_r = r;
+        let mut final_g = g;
+        let mut final_b = b;
+        
         if let Some(mat) = m {
-            let v = mat * Vec3::new(r, g, b);
-            r = v.x; g = v.y; b = v.z;
+            let v = mat * Vec3::new(final_r, final_g, final_b);
+            final_r = v.x; final_g = v.y; final_b = v.z;
         }
-        let px = process_pixel(r, g, b, a, exposure, gamma, tonemap_mode);
+        let px = process_pixel(final_r, final_g, final_b, a, exposure, gamma, tonemap_mode);
         out[0] = px.r; out[1] = px.g; out[2] = px.b; out[3] = px.a;
-    });
+    } // Zamykający nawias dla pętli for
 
     let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("?").to_string();
     let file_size_bytes = fs::metadata(path).map(|m| m.len()).unwrap_or(0);
@@ -525,10 +579,14 @@ fn load_exr_data_for_gpu(
             ]
         });
     
-    // Oblicz wymiary miniatury
+    // Oblicz wymiary miniatury - POPRAWIONE!
     let scale = thumb_height as f32 / height as f32;
     let thumb_h = thumb_height;
     let thumb_w = ((width as f32) * scale).max(1.0).round() as u32;
+    
+    // Dodaj debugowanie współrzędnych
+    println!("DEBUG: Original: {}x{}, Thumb: {}x{}, Scale: {:.6}", 
+             width, height, thumb_w, thumb_h, scale);
     
     // Konwertuj piksele do płaskiego formatu f32
     let flat_pixels: Vec<f32> = raw_pixels.iter()
