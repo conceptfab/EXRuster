@@ -318,10 +318,13 @@ pub fn load_thumbnails_for_directory(
         let prog = UiProgress::new(ui.as_weak());
         prog.start_indeterminate(Some("🔍 Scanning folder for EXR files..."));
         
-        // Pobierz parametry UI w głównym wątku
-        let exposure = ui.get_exposure_value();
-        let gamma = ui.get_gamma_value();
-        let tonemap_mode = ui.get_tonemap_mode() as i32;
+        // Wyczyść cache aby wymusić regenerację miniaturek z nowymi parametrami
+        crate::thumbnails::clear_thumb_cache();
+        
+        // Użyj stałych, zoptymalizowanych wartości dla miniaturek (nie z UI!)
+        let exposure = 0.0;     // Neutralna ekspozycja dla miniaturek
+        let gamma = 2.2;        // Standardowa gamma dla miniaturek  
+        let tonemap_mode = 0;   // ACES tone mapping dla miniaturek
         
         // GPU acceleration jest wyłączone na razie
         

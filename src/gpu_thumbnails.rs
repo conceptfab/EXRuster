@@ -60,29 +60,33 @@ fn process_thumbnail(@builtin(global_invocation_id) global_id: vec3<u32>) {
         final_b = transformed.z;
     }
     
+    // Zastosuj ekspozycję PRZED tone mappingiem (jak w CPU)
+    let exposure_mult = pow(2.0, params.exposure);
+    let exposed_r = final_r * exposure_mult;
+    let exposed_g = final_g * exposure_mult;
+    let exposed_b = final_b * exposure_mult;
+    
     // Tone mapping
-    var mapped_r = final_r;
-    var mapped_g = final_g;
-    var mapped_b = final_b;
+    var mapped_r = exposed_r;
+    var mapped_g = exposed_g;
+    var mapped_b = exposed_b;
     
     if (params.tonemap_mode == 0u) {
         // ACES
-        mapped_r = aces_tonemap(final_r);
-        mapped_g = aces_tonemap(final_g);
-        mapped_b = aces_tonemap(final_b);
+        mapped_r = aces_tonemap(exposed_r);
+        mapped_g = aces_tonemap(exposed_g);
+        mapped_b = aces_tonemap(exposed_b);
     } else if (params.tonemap_mode == 1u) {
         // Reinhard
-        mapped_r = reinhard_tonemap(final_r);
-        mapped_g = reinhard_tonemap(final_g);
-        mapped_b = reinhard_tonemap(final_b);
+        mapped_r = reinhard_tonemap(exposed_r);
+        mapped_g = reinhard_tonemap(exposed_g);
+        mapped_b = reinhard_tonemap(exposed_b);
+    } else if (params.tonemap_mode == 2u) {
+        // Linear: tylko clamp do [0,1] po ekspozycji
+        mapped_r = clamp(exposed_r, 0.0, 1.0);
+        mapped_g = clamp(exposed_g, 0.0, 1.0);
+        mapped_b = clamp(exposed_b, 0.0, 1.0);
     }
-    // Linear (tonemap_mode == 2) - bez zmian
-    
-    // Zastosuj ekspozycję
-    let exposure_mult = pow(2.0, params.exposure);
-    mapped_r = mapped_r * exposure_mult;
-    mapped_g = mapped_g * exposure_mult;
-    mapped_b = mapped_b * exposure_mult;
     
     // Gamma correction
     let inv_gamma = 1.0 / params.gamma;

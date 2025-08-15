@@ -288,6 +288,11 @@ pub fn generate_single_exr_thumbnail_work(
     tonemap_mode: i32,
 ) -> anyhow::Result<ExrThumbWork> {
     let path_buf = path.to_path_buf();
+    
+    // DEBUG: Loguj parametry generowania
+    println!("Generating thumbnail for {}: exposure={}, gamma={}, tonemap={}", 
+             path.file_name().and_then(|n| n.to_str()).unwrap_or("?"), 
+             exposure, gamma, tonemap_mode);
 
     // Krok 1: Szybkie pobranie metadanych (liczba warstw, macierz kolorów)
     let layers_info = extract_layers_info(&path_buf)
@@ -300,7 +305,7 @@ pub fn generate_single_exr_thumbnail_work(
 
     let scale = thumb_height as f32 / height as f32;
     let thumb_w = ((width as f32) * scale).max(1.0).round() as u32;
-    let thumb_h = thumb_height.max(1);
+    let thumb_h = thumb_height;
 
     let mut pixels: Vec<u8> = vec![0; (thumb_w as usize) * (thumb_h as usize) * 4];
     let m = color_matrix_rgb_to_srgb;
@@ -393,6 +398,14 @@ pub fn get_thumb_cache() -> &'static Mutex<LruCache<ThumbKey, ThumbValue>> {
     THUMB_CACHE.get_or_init(|| Mutex::new(LruCache::new(std::num::NonZeroUsize::new(256).unwrap())))
 }
 
+/// Czyści cache miniaturek (force regeneration)
+pub fn clear_thumb_cache() {
+    if let Ok(mut cache) = get_thumb_cache().lock() {
+        cache.clear();
+        println!("Thumbnail cache cleared - forcing regeneration");
+    }
+}
+
 pub fn c_get(
     cache: &mut LruCache<ThumbKey, ThumbValue>,
     path: &Path,
@@ -476,7 +489,7 @@ fn load_exr_data_for_gpu(
     
     // Oblicz wymiary miniatury
     let scale = thumb_height as f32 / height as f32;
-    let thumb_h = thumb_height.max(1);
+    let thumb_h = thumb_height;
     let thumb_w = ((width as f32) * scale).max(1.0).round() as u32;
     
     // Konwertuj piksele do płaskiego formatu f32
@@ -588,7 +601,7 @@ fn convert_gpu_pixels_to_rgba8(gpu_pixels: &[u32]) -> Vec<u8> {
     let mut rgba8_pixels = Vec::with_capacity(gpu_pixels.len() * 4);
     
     for &pixel in gpu_pixels {
-        // Rozpakuj RGBA z u32 (format: AABBGGRR)
+        // Rozpakuj RGBA z u32 (format GPU shader: ABGR - A w najwyższych bitach)
         let r = (pixel & 0xFF) as u8;
         let g = ((pixel >> 8) & 0xFF) as u8;
         let b = ((pixel >> 16) & 0xFF) as u8;
