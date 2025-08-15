@@ -29,6 +29,9 @@ pub type GpuContextType = Arc<Mutex<Option<crate::gpu_context::GpuContext>>>;
 use crate::full_exr_cache::{FullExrCacheData, FullLayer, build_full_exr_cache};
 pub type FullExrCache = Arc<Mutex<Option<std::sync::Arc<FullExrCacheData>>>>;
 
+// Stała wysokości miniaturek - zmień tutaj aby dostosować rozdzielczość
+const THUMBNAIL_HEIGHT: u32 = 128;
+
 /// Dodaje linię do modelu konsoli i aktualizuje tekst w `TextEdit` (console-text)
 pub fn push_console(ui: &crate::AppWindow, console: &ConsoleModel, line: String) {
     console.push(line.clone().into());
@@ -375,7 +378,7 @@ pub fn load_thumbnails_for_directory(
                 // Spróbuj z cache LRU
                 let cached_opt = {
                     if let Ok(mut guard) = crate::thumbnails::get_thumb_cache().lock() {
-                        crate::thumbnails::c_get(&mut *guard, path, 150, exposure, gamma, tonemap_mode)
+                        crate::thumbnails::c_get(&mut *guard, path, THUMBNAIL_HEIGHT, exposure, gamma, tonemap_mode)
                     } else {
                         None
                     }
@@ -391,11 +394,11 @@ pub fn load_thumbnails_for_directory(
                 prog.set(frac, Some(&format!("🔄 Processing: {}/{} {}", idx + 1, total_files, path.file_name().and_then(|n| n.to_str()).unwrap_or("?"))));
                 
                 match crate::thumbnails::generate_single_exr_thumbnail_work(
-                    path, 150, exposure, gamma, tonemap_mode
+                    path, THUMBNAIL_HEIGHT, exposure, gamma, tonemap_mode
                 ) {
                     Ok(work) => {
                         // Zapisz do cache
-                        crate::thumbnails::put_thumb_cache(&work, 150, exposure, gamma, tonemap_mode);
+                        crate::thumbnails::put_thumb_cache(&work, THUMBNAIL_HEIGHT, exposure, gamma, tonemap_mode);
                         thumbnail_works.push(work);
                     }
                     Err(e) => {
