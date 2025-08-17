@@ -101,9 +101,7 @@ fn reinhard_tonemap(x: f32) -> f32 {
     (x / (1.0 + x)).clamp(0.0, 1.0)
 }
 
-// (usunięto) apply_gamma_fast – zastąpione przez szybsze `apply_gamma_lut`
 
-// usunięto nieużywaną funkcję read_exr_to_slint_image
 
 #[inline]
 fn srgb_oetf(x: f32) -> f32 {

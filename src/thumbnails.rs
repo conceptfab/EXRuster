@@ -127,7 +127,7 @@ fn generate_thumbnails_gpu(
     progress: Option<&dyn ProgressSink>,
     _gpu_context: &GpuContext,
 ) -> anyhow::Result<Vec<ExrThumbnailInfo>> {
-    // Fallback do CPU na razie - GPU acceleration będzie dodane później
+
     if let Some(p) = progress { 
         p.set(0.1, Some("GPU acceleration temporarily disabled, using CPU...")); 
     }
@@ -195,7 +195,6 @@ pub fn generate_thumbnails_cpu_raw(
         p.finish(Some(&format!("Thumbnails loaded: {} files processed", works.len()))); 
     }
     
-    // Log timing statistics
     let load_time = timing_stats.get_load_time();
     let save_time = timing_stats.get_save_time();
     let processing_time = timing_stats.get_total_time();
@@ -262,14 +261,14 @@ pub fn generate_thumbnails_cpu(
         })
         .collect();
 
-    // 2) Na głównym wątku skonstruuj slint::Image (nie jest Send)
+
     let works_count = works.len();
     let thumbnails: Vec<ExrThumbnailInfo> = works
         .into_iter()
         .map(|w| {
             let mut buffer = SharedPixelBuffer::<Rgba8Pixel>::new(w.width, w.height);
             let slice = buffer.make_mut_slice();
-            // skopiuj surowe RGBA8 do bufora Slint
+
             for (dst, chunk) in slice.iter_mut().zip(w.pixels.chunks_exact(4)) {
                 *dst = Rgba8Pixel { r: chunk[0], g: chunk[1], b: chunk[2], a: chunk[3] };
             }
@@ -290,7 +289,6 @@ pub fn generate_thumbnails_cpu(
         p.finish(Some(&format!("Thumbnails loaded: {} files processed", works_count))); 
     }
     
-    // Log timing statistics
     let load_time = timing_stats.get_load_time();
     let save_time = timing_stats.get_save_time();
     let processing_time = timing_stats.get_total_time();
@@ -443,7 +441,7 @@ fn generate_single_exr_thumbnail_work_new(
     })
 }
 
-/// STARA FUNKCJA - zachowana dla kompatybilności, ale nie używana
+/// Funkcja zachowana dla kompatybilności
 #[allow(dead_code)]
 pub fn generate_single_exr_thumbnail_work(
     path: &Path,
@@ -452,7 +450,7 @@ pub fn generate_single_exr_thumbnail_work(
     gamma: f32,
     tonemap_mode: i32,
 ) -> anyhow::Result<ExrThumbWork> {
-    // Przekieruj do nowej funkcji
+
     let color_config = ColorConfig::new(
         gamma,
         exposure,

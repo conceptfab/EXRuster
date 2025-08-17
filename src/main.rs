@@ -39,7 +39,7 @@ fn main() -> Result<(), slint::PlatformError> {
 
     let ui = AppWindow::new()?;
 
-    // Windows: ustaw ikonę paska tytułu/taskbara po utworzeniu natywnego okna
+
     #[cfg(target_os = "windows")]
     {
         use slint::TimerMode;
@@ -61,19 +61,19 @@ fn main() -> Result<(), slint::PlatformError> {
         });
     }
     
-    // Inicjalizacja kontekstu GPU - POPRAWIONE: bezpieczniejsza inicjalizacja
+
     let gpu_context: GpuContextType = Arc::new(Mutex::new(None));
     
-    // Asynchroniczna inicjalizacja GPU w osobnym bloku
+
     {
         let gpu_context_clone = gpu_context.clone();
         let ui_weak = ui.as_weak();
         
-        // Uruchom inicjalizację GPU w osobnym wątku z obsługą błędów
+
         std::thread::spawn(move || {
-            // Uproszczona inicjalizacja GPU bez catch_unwind
+
             let gpu_result = pollster::block_on(async {
-                // Używamy prostszego timeout
+
                 GpuContext::new().await
             });
             
@@ -115,7 +115,7 @@ fn main() -> Result<(), slint::PlatformError> {
     // Setup UI callbacks...
     let console_model = setup_ui_callbacks(&ui, image_cache.clone(), current_file_path.clone(), full_exr_cache.clone(), gpu_context.clone());
 
-    // Obsługa argumentów uruchomieniowych: otwórz wskazany plik EXR i ewentualnie wczytaj miniatury folderu
+
     {
         use std::ffi::OsString;
         let args: Vec<OsString> = std::env::args_os().skip(1).collect();
@@ -148,7 +148,7 @@ fn main() -> Result<(), slint::PlatformError> {
                             .count();
 
                         if exr_count > 1 {
-                            // Użyj ujednoliconej funkcji wczytywania miniatur
+    
                             ui_handlers::load_thumbnails_for_directory(ui.as_weak(), dir, console_model.clone());
                         }
                     }
@@ -461,7 +461,7 @@ fn setup_panel_callbacks(
     full_exr_cache: FullExrCache,
     _gpu_context: GpuContextType,
 ) {
-    // Debug klawiszy: wypisz do statusu i konsoli
+
     ui.on_key_pressed_debug({
         let ui_handle = ui.as_weak();
         let console_model = console_model.clone();

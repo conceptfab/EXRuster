@@ -414,7 +414,7 @@ impl ImageCache {
                 true, // read_only
             );
             
-            // NAPRAWIONE: Bufory dla u32 (4 bajty na piksel) - poprawione typy
+    
             let output_buffer = gpu_context.create_storage_buffer(
                 "output_pixels",
                 self.width as u64 * self.height as u64 * std::mem::size_of::<u32>() as u64,
@@ -423,7 +423,7 @@ impl ImageCache {
             
             let uniform_buffer = gpu_context.create_uniform_buffer("params", &params);
             
-            // Utworzenie layoutu bind group - POPRAWIONE: wszystkie bindingi w jednej grupie
+
             let bind_group_layout = gpu_context.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("image_processing_bind_group_layout"),
                 entries: &[
@@ -540,7 +540,7 @@ impl ImageCache {
         println!("GPU: Przygotowuję dane wejściowe - {} pikseli RGBA", self.raw_pixels.len() / 4);
         gpu_context.queue.write_buffer(input_buffer, 0, bytemuck::cast_slice(&self.raw_pixels));
         
-        // Utworzenie bind group - POPRAWIONE: poprawne bindingi
+        
         let bind_group = gpu_context.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("image_processing_bind_group"),
             layout: bind_group_layout,
@@ -600,7 +600,7 @@ impl ImageCache {
         println!("GPU: Wysyłam komendy do wykonania");
         gpu_context.queue.submit(std::iter::once(encoder.finish()));
         
-        // RELEASE MODE: Force sync przed mapowaniem
+
         println!("GPU: Synchronizuję operacje GPU...");
         let _ = gpu_context.device.poll(wgpu::PollType::Wait);
         
@@ -622,7 +622,7 @@ impl ImageCache {
         let start_time = std::time::Instant::now();
         const MAX_WAIT_TIME: std::time::Duration = std::time::Duration::from_secs(30); // ZWIĘKSZONY TIMEOUT dla release
         
-        // NAPRAWIONE: bezpieczniejsze oczekiwanie na mapowanie
+
         loop {
             // Krótki poll zamiast Wait - unikamy zablokowania
             let _ = gpu_context.device.poll(wgpu::PollType::Wait);
@@ -643,7 +643,7 @@ impl ImageCache {
                         println!("GPU: Timeout podczas mapowania bufora");
                         return Err("Timeout podczas oczekiwania na mapowanie bufora GPU".into());
                     }
-                    // RELEASE MODE: jeszcze dłuższy sleep dla stabilności
+        
                     std::thread::sleep(std::time::Duration::from_millis(50));
                 },
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
@@ -659,7 +659,7 @@ impl ImageCache {
             return Err("Bufor GPU jest pusty".into());
         }
         
-        // NAPRAWIONE: Odczyt danych jako u32 (packed RGBA)
+
         let data_u32: &[u32] = bytemuck::cast_slice(&data);
         
         // Sprawdzenie rozmiaru danych
@@ -814,7 +814,7 @@ impl ImageCache {
                 if let Some(lvl) = self.mip_levels.iter().find(|lvl| lvl.width.max(lvl.height) >= target) {
                     (&lvl.pixels[..], lvl.width, lvl.height)
                 } else {
-                    // Fallback: użyj pełnej rozdzielczości (nigdy poniżej 1:1)
+            
                     (&self.raw_pixels[..], self.width, self.height)
                 }
             }
@@ -926,15 +926,6 @@ pub(crate) fn extract_layers_info(path: &PathBuf) -> anyhow::Result<Vec<LayerInf
 }
 
 pub(crate) fn find_best_layer(layers_info: &[LayerInfo]) -> String {
-    // DODAJĘ DEBUGOWANIE - może to jest źródło problemu z przesuniętymi liniami!
-    println!("DEBUG find_best_layer: {} warstw dostępnych", layers_info.len());
-    for (i, layer) in layers_info.iter().enumerate() {
-        println!("DEBUG layer {}: '{}' z kanałami: {:?}", 
-                 i, layer.name, layer.channels.iter().map(|c| &c.name).collect::<Vec<_>>());
-    }
-    
-    // Plan A: Sprawdź czy istnieje warstwa pusta ("") z kanałami R, G, B
-    // Ta warstwa zawiera główne kanały obrazu bez prefiksu
     if let Some(layer) = layers_info.iter().find(|l| l.name.is_empty()) {
         let mut has_r = false;
         let mut has_g = false;
@@ -946,23 +937,18 @@ pub(crate) fn find_best_layer(layers_info: &[LayerInfo]) -> String {
             else if n == "B" { has_b = true; }
         }
         if has_r && has_g && has_b {
-            println!("DEBUG find_best_layer: WYBRANO warstwę pustą '{}' (Plan A)", layer.name);
             return layer.name.clone();
         }
     }
     
-    // Plan B: Priorytetowa lista nazw warstw (zgodnie z mini.md)
     let priority_names = ["beauty", "Beauty", "RGBA", "rgba", "default", "Default", "combined", "Combined"];
     
-    // Sprawdź czy istnieje warstwa o priorytetowej nazwie
     for priority_name in &priority_names {
         if let Some(layer) = layers_info.iter().find(|l| l.name.to_lowercase().contains(&priority_name.to_lowercase())) {
-            println!("DEBUG find_best_layer: WYBRANO warstwę '{}' (Plan B - priority: {})", layer.name, priority_name);
             return layer.name.clone();
         }
     }
     
-    // Plan C: Znajdź pierwszą warstwę z kanałami R, G, B (porównanie dokładne krótkie nazwy)
     for layer in layers_info {
         let mut has_r = false;
         let mut has_g = false;
@@ -974,18 +960,13 @@ pub(crate) fn find_best_layer(layers_info: &[LayerInfo]) -> String {
             else if n == "B" { has_b = true; }
         }
         if has_r && has_g && has_b {
-            println!("DEBUG find_best_layer: WYBRANO warstwę '{}' (Plan C - ma R,G,B)", layer.name);
             return layer.name.clone();
         }
     }
     
-    // Plan D (ostateczność): Pierwsza warstwa
-    let result = layers_info.first()
+    layers_info.first()
         .map(|l| l.name.clone())
-        .unwrap_or_else(|| "Layer 1".to_string());
-    
-    println!("DEBUG find_best_layer: WYBRANO warstwę '{}' (Plan D - pierwsza)", result);
-    result
+        .unwrap_or_else(|| "Layer 1".to_string())
 }
 
 #[allow(dead_code)]
@@ -1049,74 +1030,45 @@ pub(crate) fn load_specific_layer(path: &PathBuf, layer_name: &str, progress: Op
                 group_indices.push(idx);
                 let su = short.to_ascii_uppercase();
                 
-                // DODAJĘ DEBUGOWANIE - sprawdzam wykrywanie kanałów R/G/B/A
-                println!("DEBUG channel detection: '{}' -> short='{}' -> su='{}'", full, short, su);
-                
-                match su.as_str() {
-                    "R" | "RED" => {
-                        r_idx = Some(idx);
-                        println!("DEBUG: Znaleziono R kanał na indeksie {}", idx);
-                    }
-                    "G" | "GREEN" => {
-                        g_idx = Some(idx);
-                        println!("DEBUG: Znaleziono G kanał na indeksie {}", idx);
-                    }
-                    "B" | "BLUE" => {
-                        b_idx = Some(idx);
-                        println!("DEBUG: Znaleziono B kanał na indeksie {}", idx);
-                    }
-                    "A" | "ALPHA" => {
-                        a_idx = Some(idx);
-                        println!("DEBUG: Znaleziono A kanał na indeksie {}", idx);
-                    }
-                    _ => {
-                        // Dodatkowe heurystyki: nazwy zaczynające się od R/G/B
-                        if r_idx.is_none() && su.starts_with('R') { 
-                            r_idx = Some(idx);
-                            println!("DEBUG: Znaleziono R kanał (heurystyka) na indeksie {}", idx);
-                        }
-                        else if g_idx.is_none() && su.starts_with('G') { 
-                            g_idx = Some(idx);
-                            println!("DEBUG: Znaleziono G kanał (heurystyka) na indeksie {}", idx);
-                        }
-                        else if b_idx.is_none() && su.starts_with('B') { 
-                            b_idx = Some(idx);
-                            println!("DEBUG: Znaleziono B kanał (heurystyka) na indeksie {}", idx);
-                        }
-                    }
+                        match su.as_str() {
+            "R" | "RED" => {
+                r_idx = Some(idx);
+            }
+            "G" | "GREEN" => {
+                g_idx = Some(idx);
+            }
+            "B" | "BLUE" => {
+                b_idx = Some(idx);
+            }
+            "A" | "ALPHA" => {
+                a_idx = Some(idx);
+            }
+            _ => {
+                if r_idx.is_none() && su.starts_with('R') { 
+                    r_idx = Some(idx);
                 }
+                else if g_idx.is_none() && su.starts_with('G') { 
+                    g_idx = Some(idx);
+                }
+                else if b_idx.is_none() && su.starts_with('B') { 
+                    b_idx = Some(idx);
+                }
+            }
+        }
             }
         }
 
         if group_found {
             if let Some(p) = progress { p.set(0.4, Some("Processing pixels...")); }
             
-            // DODAJĘ DEBUGOWANIE - sprawdzam mapowanie kanałów R/G/B/A
-            println!("DEBUG load_specific_layer: Znaleziono warstwę '{}'", layer_name);
-            println!("DEBUG load_specific_layer: r_idx={:?}, g_idx={:?}, b_idx={:?}, a_idx={:?}", 
-                     r_idx, g_idx, b_idx, a_idx);
-            println!("DEBUG load_specific_layer: group_indices={:?}", group_indices);
-            
-            // DODAJĘ DEBUGOWANIE - sprawdzam kolejność kanałów w pliku
-            println!("DEBUG load_specific_layer: Kolejność kanałów w pliku:");
-            for (idx, ch) in layer.channel_data.list.iter().enumerate() {
-                let full = ch.name.to_string();
-                let (lname, short) = split_layer_and_short(&full, base_attr.as_deref());
-                println!("DEBUG   [{}]: '{}' -> layer='{}', short='{}'", idx, full, lname, short);
-            }
-            
-            // Zapewnij 3 kanały: jeśli brakuje, uzupełnij z listy kanałów grupy lub duplikuj poprzedni
             if r_idx.is_none() {
                 r_idx = group_indices.get(0).cloned();
-                println!("DEBUG load_specific_layer: Uzupełniono r_idx={:?}", r_idx);
             }
             if g_idx.is_none() {
                 g_idx = group_indices.get(1).cloned().or(r_idx);
-                println!("DEBUG load_specific_layer: Uzupełniono g_idx={:?}", g_idx);
             }
             if b_idx.is_none() {
                 b_idx = group_indices.get(2).cloned().or(g_idx).or(r_idx);
-                println!("DEBUG load_specific_layer: Uzupełniono b_idx={:?}", b_idx);
             }
 
             // Jeżeli nadal coś jest None (pusta grupa), zgłoś błąd
@@ -1125,69 +1077,17 @@ pub(crate) fn load_specific_layer(path: &PathBuf, layer_name: &str, progress: Op
                 _ => anyhow::bail!("Warstwa '{}' nie zawiera kanałów do kompozytu", layer_name),
             };
             
-            println!("DEBUG load_specific_layer: Finalne indeksy: r={}, g={}, b={}", ri, gi, bi);
+
             
-            // DODAJĘ DEBUGOWANIE - sprawdzam czy problem może być w złej kolejności kanałów R/G/B
+
             println!("DEBUG load_specific_layer: Sprawdzam czy problem może być w kolejności kanałów R/G/B:");
-            println!("DEBUG   Kanał R (indeks {}): '{}'", ri, layer.channel_data.list[ri].name);
-            println!("DEBUG   Kanał G (indeks {}): '{}'", gi, layer.channel_data.list[gi].name);
-            println!("DEBUG   Kanał B (indeks {}): '{}'", bi, layer.channel_data.list[bi].name);
+
             
-            // DODAJĘ DEBUGOWANIE - sprawdzam pierwsze kilka pikseli każdego kanału osobno
-            println!("DEBUG load_specific_layer: Pierwsze 5 pikseli każdego kanału osobno:");
-            for i in 0..5.min(pixel_count) {
-                let r_val = layer.channel_data.list[ri].sample_data.value_by_flat_index(i).to_f32();
-                let g_val = layer.channel_data.list[gi].sample_data.value_by_flat_index(i).to_f32();
-                let b_val = layer.channel_data.list[bi].sample_data.value_by_flat_index(i).to_f32();
-                println!("DEBUG   Piksel[{}]: R={:.3}, G={:.3}, B={:.3}", i, r_val, g_val, b_val);
-            }
+
             
             let mut out: Vec<f32> = Vec::with_capacity(pixel_count * 4);
             
-            // DODAJĘ DEBUGOWANIE - sprawdzam kolejność pikseli w buforze
-            println!("DEBUG load_specific_layer: Rozpoczynam wczytywanie {} pikseli ({}x{})", 
-                     pixel_count, width, height);
-            
-            // DODAJĘ DEBUGOWANIE - sprawdzam czy problem może być w kolejności wierszy
-            println!("DEBUG load_specific_layer: Sprawdzam kolejność wierszy - czy plik ma odwrócone wiersze?");
-            println!("DEBUG load_specific_layer: Pierwsze 5 pikseli każdego z pierwszych 5 wierszy:");
-            
-            for y in 0..5.min(height as usize) {
-                for x in 0..5.min(width as usize) {
-                    let i = y * (width as usize) + x;
-                    if i < pixel_count {
-                        let r = layer.channel_data.list[ri].sample_data.value_by_flat_index(i).to_f32();
-                        let g = layer.channel_data.list[gi].sample_data.value_by_flat_index(i).to_f32();
-                        let b = layer.channel_data.list[bi].sample_data.value_by_flat_index(i).to_f32();
-                        println!("DEBUG   Wiersz {} (y={}), Kolumna {} (x={}): R={:.3}, G={:.3}, B={:.3}", 
-                                 y, y, x, x, r, g, b);
-                    }
-                }
-            }
-            
-            // DODAJĘ DEBUGOWANIE - sprawdzam ostatnie wiersze
-            println!("DEBUG load_specific_layer: Ostatnie 5 pikseli ostatniego wiersza:");
-            let last_y = (height as usize).saturating_sub(1);
-            for x in (width as usize).saturating_sub(5)..(width as usize) {
-                let i = last_y * (width as usize) + x;
-                if i < pixel_count {
-                    let r = layer.channel_data.list[ri].sample_data.value_by_flat_index(i).to_f32();
-                    let g = layer.channel_data.list[gi].sample_data.value_by_flat_index(i).to_f32();
-                    let b = layer.channel_data.list[bi].sample_data.value_by_flat_index(i).to_f32();
-                    println!("DEBUG load_specific_layer: Ostatni wiersz (y={}), Kolumna {} (x={}): R={:.3}, G={:.3}, B={:.3}", 
-                             last_y, x, x, r, g, b);
-                }
-            }
-            
             for i in 0..pixel_count {
-                let x = i % width as usize;
-                let y = i / width as usize;
-                
-                // Debugowanie dla pierwszych kilku pikseli każdego wiersza
-                if x < 5 && y < 5 {
-                    println!("DEBUG pixel[{}]: pos=({},{})", i, x, y);
-                }
-                
                 let r = layer.channel_data.list[ri].sample_data.value_by_flat_index(i).to_f32();
                 let g = layer.channel_data.list[gi].sample_data.value_by_flat_index(i).to_f32();
                 let b = layer.channel_data.list[bi].sample_data.value_by_flat_index(i).to_f32();
@@ -1196,20 +1096,6 @@ pub(crate) fn load_specific_layer(path: &PathBuf, layer_name: &str, progress: Op
                 out.push(g);
                 out.push(b);
                 out.push(a);
-            }
-            
-            // DODAJĘ DEBUGOWANIE - sprawdzam pierwsze kilka pikseli
-            if pixel_count > 0 {
-                println!("DEBUG load_specific_layer: Pierwszy piksel: R={:.3}, G={:.3}, B={:.3}, A={:.3}", 
-                         out[0], out[1], out[2], out[3]);
-                
-                // Sprawdź czy ostatni piksel jest poprawny
-                let last_idx = pixel_count - 1;
-                let last_x = last_idx % width as usize;
-                let last_y = last_idx / width as usize;
-                let last_pixel_start = last_idx * 4;
-                println!("DEBUG load_specific_layer: Ostatni piksel[{}]: pos=({},{}) R={:.3}, G={:.3}, B={:.3}, A={:.3}", 
-                         last_idx, last_x, last_y, out[last_pixel_start], out[last_pixel_start + 1], out[last_pixel_start + 2], out[last_pixel_start + 3]);
             }
             
             if let Some(p) = progress { p.set(0.9, Some("Finalizing...")); }
@@ -1264,7 +1150,7 @@ fn load_first_rgba_layer(path: &PathBuf) -> anyhow::Result<(Vec<f32>, u32, u32, 
 
 // Funkcja usunięta - nie jest używana w uproszczonej implementacji
 
-// usunięto rozbudowane wykrywanie rodzaju kanału — UI pokazuje teraz realne kanały bez grupowania
+
 
 impl ImageCache {
     /// Wczytuje jeden wskazany kanał z danej warstwy i zapisuje go jako grayscale (R=G=B=val, A=1)
@@ -1355,7 +1241,7 @@ impl ImageCache {
         let mut hi = *hi_ref;
         if let Some(p) = progress { p.set(0.4, Some("Computing percentiles...")); }
         if !lo.is_finite() || !hi.is_finite() || (hi - lo).abs() < 1e-20 {
-            // Fallback do min/max jeśli degeneracja lub NaN/Inf
+    
             let mut min_v = f32::INFINITY;
             let mut max_v = f32::NEG_INFINITY;
             for &v in &values {
@@ -1386,17 +1272,7 @@ impl ImageCache {
         Image::from_rgba8(buffer)
     }
     // uproszczono API: używaj `process_depth_image_with_progress` bezpośrednio
-
-    // usunięto: specjalny preview Cryptomatte
 }
-
-/// Hashuje identyfikator z cryptomatte (f32 bit pattern) do stabilnego koloru w 0..1
-// usunięto: hash_id_to_color
-
-/// Buduje kolorowy preview dla warstwy Cryptomatte, łącząc pary (id, coverage)
-// usunięto: funkcja preview warstwy Cryptomatte
-
-// (usunięto) stary loader pojedynczego kanału – zastąpiony cachingiem wszystkich kanałów warstwy
 
 // Pomocnicze: wczytuje wszystkie kanały dla wybranej warstwy do pamięci (bez dalszego I/O przy przełączaniu)
 pub(crate) fn load_all_channels_for_layer_from_full(
@@ -1420,7 +1296,7 @@ pub(crate) fn load_all_channels_for_layer_from_full(
         if matches {
             if let Some(p) = _progress { p.set(0.35, Some("Copying channel data...")); }
             let channel_names = layer.channel_names.clone();
-            // Zmieniono: Utwórz Arc<[f32]> z istniejących danych
+    
             let channel_data = Arc::from(layer.channel_data.as_slice());
             if let Some(p) = _progress { p.finish(Some("Layer channels loaded")); }
             return Ok(LayerChannels { layer_name: layer_name.to_string(), width: layer.width, height: layer.height, channel_names, channel_data });
@@ -1475,7 +1351,7 @@ fn compose_composite_from_channels(layer_channels: &LayerChannels) -> Vec<f32> {
     let pixel_count = (layer_channels.width as usize) * (layer_channels.height as usize);
     let mut out: Vec<f32> = vec![0.0; pixel_count * 4];
 
-    // Heurystyki: najpierw dokładne R/G/B/A, potem nazwy zaczynające się od R/G/B, a na końcu pierwszy dostępny kanał
+    
     let pick_exact_index = |name: &str| -> Option<usize> { layer_channels.channel_names.iter().position(|n| n == name) };
     let pick_prefix_index = |prefix: char| -> Option<usize> {
         let prefix = prefix.to_ascii_uppercase();
@@ -1506,3 +1382,4 @@ fn compose_composite_from_channels(layer_channels: &LayerChannels) -> Vec<f32> {
 
     out
 }
+

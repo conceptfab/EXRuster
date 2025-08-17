@@ -179,7 +179,7 @@ pub fn handle_layer_tree_click(
                         };
                         (layer, ch_short)
                     } else {
-                        // Fallback: użyj mapy i dotychczasowego parsowania
+                
                         let active_layer = {
                             let key = clicked_item.trim_end().to_string();
                             let map = lock_or_recover(&ITEM_TO_LAYER);
@@ -317,7 +317,7 @@ pub fn load_thumbnails_for_directory(
         push_console(&ui, &console, format!("[folder] loading thumbnails: {}", directory.display()));
         ui.set_status_text(format!("Loading thumbnails: {}", directory.display()).into());
         
-        // Uruchom progress bar natychmiast
+
         let prog = UiProgress::new(ui.as_weak());
         prog.start_indeterminate(Some("🔍 Scanning folder for EXR files..."));
         
@@ -329,7 +329,7 @@ pub fn load_thumbnails_for_directory(
         let gamma = 2.2;        // Standardowa gamma dla miniaturek  
         let tonemap_mode = 0;   // ACES tone mapping dla miniaturek
         
-        // GPU acceleration jest wyłączone na razie
+    
         
         // Generuj miniaturki w głównym wątku (bezpieczniejsze i z cache)
         let ui_weak = ui.as_weak();
@@ -771,7 +771,7 @@ pub fn handle_parameter_changed_throttled(
     }
 }
 
-// usunięto nieużywaną funkcję create_layers_model
+
 
 pub fn create_layers_model(
     layers_info: &[crate::image_cache::LayerInfo],
@@ -1461,7 +1461,7 @@ pub fn process_image_with_gpu_fallback(
     if gpu_enabled {
         // Spróbuj użyć GPU z lepszą obsługą błędów
         // Uwaga: process_to_image_gpu wymaga &mut self, więc używamy tylko CPU
-        // TODO: Zaimplementować mutex dla cache GPU
+    
         cache.process_to_image(exposure, gamma, tonemap_mode)
     } else {
         // Użyj CPU

@@ -299,11 +299,6 @@ fn classify_channel_group(upper_short: &str) -> ChannelGroup {
     ChannelGroup::Other
 }
 
-// Rozdziela "warstwa.kanał" na (warstwa, kanał_krótki).
-// Jeżeli nagłówek warstwy zawiera atrybut `layer_name`, używa go jako nazwy warstwy,
-// w przeciwnym razie rozcina po ostatniej kropce.
-// split_layer_and_short oraz human_size przeniesione do utils
-
 // Funkcja pomocnicza do formatowania wartości atrybutów
 fn format_attribute_value(value: &AttributeValue, normalized_key: &str) -> String {
     match value {

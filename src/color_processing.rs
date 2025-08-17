@@ -34,7 +34,7 @@ pub fn compute_rgb_to_srgb_matrix_from_file_for_layer(path: &Path, layer_name: &
         }
     }
 
-    // Fallback: globalny nagłówek
+
     if primaries.is_none() {
         if let Some(first_header) = meta.headers.first() {
             if let Some((_, AttributeValue::Chromaticities(ch))) = first_header
@@ -132,5 +132,3 @@ fn xy_to_xyz(x: f64, y: f64) -> DVec3 {
     let z = 1.0 - x - y;
     DVec3::new(x / y, 1.0, z / y)
 }
-
-// ręczne implementacje mnożeń i solver zostały zastąpione przez glam
