@@ -84,35 +84,7 @@ pub fn read_and_group_metadata(path: &Path) -> anyhow::Result<ExrMetadata> {
         };
 
         // Sformatuj wartość bazując na typie
-        let pretty_value: String = match value {
-            AttributeValue::Chromaticities(ch) => {
-                // Bezpieczne formatowanie z precyzją, bez parsowania tekstu
-                let r = (ch.red.x() as f64, ch.red.y() as f64);
-                let g = (ch.green.x() as f64, ch.green.y() as f64);
-                let b = (ch.blue.x() as f64, ch.blue.y() as f64);
-                let w = (ch.white.x() as f64, ch.white.y() as f64);
-                format!(
-                    "R: ({:.3},{:.3})  G: ({:.3},{:.3})  B: ({:.3},{:.3})  W: ({:.3},{:.3})",
-                    r.0, r.1, g.0, g.1, b.0, b.1, w.0, w.1
-                )
-            }
-            AttributeValue::F32(v) => {
-                if normalized_key.eq_ignore_ascii_case("pixel_aspect") {
-                    format!("{:.3}", *v as f64)
-                } else {
-                    format!("{:.3}", *v as f64)
-                }
-            }
-            AttributeValue::F64(v) => {
-                if normalized_key.eq_ignore_ascii_case("pixel_aspect") {
-                    format!("{:.3}", v)
-                } else {
-                    format!("{:.3}", v)
-                }
-            }
-            // Dla innych typów użyj czytelnego Debug bez dalszego parsowania w UI
-            other => format!("{:?}", other),
-        };
+        let pretty_value = format_attribute_value(value, &normalized_key);
 
         // Jeśli już dodaliśmy wpis o tym samym kluczu (np. pixel_aspect z pola), nadpiszemy go informacją z `other`
         if let Some(existing) = header_items.iter_mut().find(|(k, _)| k.eq_ignore_ascii_case(&normalized_key)) {
@@ -160,33 +132,7 @@ pub fn read_and_group_metadata(path: &Path) -> anyhow::Result<ExrMetadata> {
                 raw_name.to_string()
             };
 
-            let pretty_value: String = match value {
-                AttributeValue::Chromaticities(ch) => {
-                    let r = (ch.red.x() as f64, ch.red.y() as f64);
-                    let g = (ch.green.x() as f64, ch.green.y() as f64);
-                    let b = (ch.blue.x() as f64, ch.blue.y() as f64);
-                    let w = (ch.white.x() as f64, ch.white.y() as f64);
-                    format!(
-                        "R: ({:.3},{:.3})  G: ({:.3},{:.3})  B: ({:.3},{:.3})  W: ({:.3},{:.3})",
-                        r.0, r.1, g.0, g.1, b.0, b.1, w.0, w.1
-                    )
-                }
-                AttributeValue::F32(v) => {
-                    if normalized_key.eq_ignore_ascii_case("pixel_aspect") {
-                        format!("{:.3}", *v as f64)
-                    } else {
-                        format!("{:.3}", *v as f64)
-                    }
-                }
-                AttributeValue::F64(v) => {
-                    if normalized_key.eq_ignore_ascii_case("pixel_aspect") {
-                        format!("{:.3}", v)
-                    } else {
-                        format!("{:.3}", v)
-                    }
-                }
-                other => format!("{:?}", other),
-            };
+            let pretty_value = format_attribute_value(value, &normalized_key);
             layer_items.push((normalized_key, pretty_value));
         }
         layers.push(LayerMetadata { name: layer_name, width: w, height: h, channel_groups, attributes: layer_items });
@@ -358,4 +304,33 @@ fn classify_channel_group(upper_short: &str) -> ChannelGroup {
 // w przeciwnym razie rozcina po ostatniej kropce.
 // split_layer_and_short oraz human_size przeniesione do utils
 
-// (usunięto nieużywane formatery wartości dla UI)
+// Funkcja pomocnicza do formatowania wartości atrybutów
+fn format_attribute_value(value: &AttributeValue, normalized_key: &str) -> String {
+    match value {
+        AttributeValue::Chromaticities(ch) => {
+            let r = (ch.red.x() as f64, ch.red.y() as f64);
+            let g = (ch.green.x() as f64, ch.green.y() as f64);
+            let b = (ch.blue.x() as f64, ch.blue.y() as f64);
+            let w = (ch.white.x() as f64, ch.white.y() as f64);
+            format!(
+                "R: ({:.3},{:.3})  G: ({:.3},{:.3})  B: ({:.3},{:.3})  W: ({:.3},{:.3})",
+                r.0, r.1, g.0, g.1, b.0, b.1, w.0, w.1
+            )
+        }
+        AttributeValue::F32(v) => {
+            if normalized_key.eq_ignore_ascii_case("pixel_aspect") {
+                format!("{:.3}", *v as f64)
+            } else {
+                format!("{:.3}", *v as f64)
+            }
+        }
+        AttributeValue::F64(v) => {
+            if normalized_key.eq_ignore_ascii_case("pixel_aspect") {
+                format!("{:.3}", v)
+            } else {
+                format!("{:.3}", v)
+            }
+        }
+        other => format!("{:?}", other),
+    }
+}
