@@ -1,6 +1,6 @@
 use crate::gpu_context::GpuContext;
 use anyhow::Result;
-use wgpu::ComputePipeline;
+use wgpu::{ComputePipeline, Buffer};
 use wgpu::util::DeviceExt;
 
 /// GPU compute shader dla przetwarzania miniaturek
@@ -154,6 +154,11 @@ pub struct GpuThumbnailProcessor {
     gpu_context: GpuContext,
     compute_pipeline: ComputePipeline,
     bind_group_layout: wgpu::BindGroupLayout,
+    // Nowe pola do reużywalnych buforów
+    input_buffer: Option<Buffer>,
+    output_buffer: Option<Buffer>,
+    uniform_buffer: Option<Buffer>,
+    staging_buffer: Option<Buffer>,
 }
 
 impl GpuThumbnailProcessor {
@@ -229,13 +234,18 @@ impl GpuThumbnailProcessor {
             gpu_context,
             compute_pipeline,
             bind_group_layout,
+            // Zainicjalizuj bufory
+            input_buffer: None,
+            output_buffer: None,
+            uniform_buffer: None,
+            staging_buffer: None,
         })
     }
     
     /// Przetwarza miniaturkę na GPU
     #[allow(dead_code)]
     pub fn process_thumbnail(
-        &self,
+        &mut self,
         input_pixels: &[f32],
         input_width: u32,
         input_height: u32,
@@ -276,26 +286,75 @@ impl GpuThumbnailProcessor {
             has_color_matrix: if color_matrix.is_some() { 1 } else { 0 },
         };
         
-        // Utwórz bufory
-        let input_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Input Pixels Buffer"),
-            contents: bytemuck::cast_slice(input_pixels),
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        });
-        
+        // Sprawdź czy istniejące bufory są wystarczająco duże dla bieżącego zadania
+        let input_size = input_pixels.len() as u64 * std::mem::size_of::<f32>() as u64;
         let output_size = output_width as u64 * output_height as u64 * std::mem::size_of::<u32>() as u64;
-        let output_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Output Pixels Buffer"),
-            size: output_size,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
         
-        let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Thumbnail Params Buffer"),
-            contents: bytemuck::cast_slice(&[params]),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
+        // Sprawdź i utwórz/odtwórz bufor wejściowy
+        let input_buffer = if let Some(ref buf) = self.input_buffer {
+            if buf.size() >= input_size {
+                // Reużyj istniejący bufor, ale zaktualizuj dane
+                queue.write_buffer(buf, 0, bytemuck::cast_slice(input_pixels));
+                buf
+            } else {
+                let new_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Input Pixels Buffer"),
+                    contents: bytemuck::cast_slice(input_pixels),
+                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                });
+                self.input_buffer = Some(new_buffer.clone());
+                &self.input_buffer.as_ref().unwrap()
+            }
+        } else {
+            let new_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Input Pixels Buffer"),
+                contents: bytemuck::cast_slice(input_pixels),
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            });
+            self.input_buffer = Some(new_buffer.clone());
+            &self.input_buffer.as_ref().unwrap()
+        };
+        
+        // Sprawdź i utwórz/odtwórz bufor wyjściowy
+        let output_buffer = if let Some(ref buf) = self.output_buffer {
+            if buf.size() >= output_size {
+                buf
+            } else {
+                let new_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("Output Pixels Buffer"),
+                    size: output_size,
+                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+                    mapped_at_creation: false,
+                });
+                self.output_buffer = Some(new_buffer.clone());
+                &self.output_buffer.as_ref().unwrap()
+            }
+        } else {
+            let new_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Output Pixels Buffer"),
+                size: output_size,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+                mapped_at_creation: false,
+            });
+            self.output_buffer = Some(new_buffer.clone());
+            &self.output_buffer.as_ref().unwrap()
+        };
+        
+        // Sprawdź i utwórz/odtwórz bufor uniformów
+        let uniform_buffer = if let Some(ref buf) = self.uniform_buffer {
+            // Uniform buffer zawsze ma ten sam rozmiar, więc możemy go reużyć
+            // Zaktualizuj zawartość
+            queue.write_buffer(buf, 0, bytemuck::cast_slice(&[params]));
+            buf
+        } else {
+            let new_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Thumbnail Params Buffer"),
+                contents: bytemuck::cast_slice(&[params]),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            });
+            self.uniform_buffer = Some(new_buffer.clone());
+            &self.uniform_buffer.as_ref().unwrap()
+        };
         
         // Bind group
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -340,13 +399,30 @@ impl GpuThumbnailProcessor {
             compute_pass.dispatch_workgroups(workgroups_x, workgroups_y, 1);
         }
         
-        // Staging buffer do odczytu wyników
-        let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Thumbnail Staging Buffer"),
-            size: output_size,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        // Sprawdź i utwórz/odtwórz staging buffer
+        let staging_buffer = if let Some(ref buf) = self.staging_buffer {
+            if buf.size() >= output_size {
+                buf
+            } else {
+                let new_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("Thumbnail Staging Buffer"),
+                    size: output_size,
+                    usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                self.staging_buffer = Some(new_buffer.clone());
+                &self.staging_buffer.as_ref().unwrap()
+            }
+        } else {
+            let new_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Thumbnail Staging Buffer"),
+                size: output_size,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            self.staging_buffer = Some(new_buffer.clone());
+            &self.staging_buffer.as_ref().unwrap()
+        };
         
         // Kopiuj wyniki do staging buffer
         encoder.copy_buffer_to_buffer(&output_buffer, 0, &staging_buffer, 0, output_size);
