@@ -85,20 +85,6 @@ pub fn find_layer_by_name<'a>(cache: &'a FullExrCacheData, wanted: &str) -> Opti
     })
 }
 
-#[allow(dead_code)]
-impl FullLayer {
-    #[inline]
-    pub fn pixel_count(&self) -> usize { (self.width as usize) * (self.height as usize) }
 
-    #[inline]
-    pub fn num_channels(&self) -> usize { self.channel_names.len() }
-
-    #[inline]
-    pub fn channel_slice(&self, channel_index: usize) -> &[f32] {
-        let n = self.pixel_count();
-        let base = channel_index * n;
-        &self.channel_data[base..base + n]
-    }
-}
 
 

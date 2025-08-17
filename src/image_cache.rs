@@ -432,9 +432,7 @@ impl ImageCache {
         Image::from_rgba8(buffer)
     }
 
-    /// Zwraca współdzielony wskaźnik do pełnego obrazu EXR trzymanego w pamięci
-    #[allow(dead_code)]
-    pub fn full_cache(&self) -> Arc<FullExrCacheData> { self.full_cache.clone() }
+
 }
 
 

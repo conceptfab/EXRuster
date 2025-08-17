@@ -2,7 +2,7 @@ use anyhow::Context;
 use std::fs;
 use std::path::{Path, PathBuf};
 use rayon::prelude::*;
-use slint::{Image, Rgba8Pixel, SharedPixelBuffer};
+
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Instant, Duration};
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
@@ -34,10 +34,7 @@ impl TimingStats {
         self.total_load_time.fetch_add(duration.as_nanos() as u64, AtomicOrdering::SeqCst);
     }
 
-    #[allow(dead_code)]
-    fn add_save_time(&self, duration: Duration) {
-        self.total_save_time.fetch_add(duration.as_nanos() as u64, AtomicOrdering::SeqCst);
-    }
+
 
     fn get_load_time(&self) -> Duration {
         Duration::from_nanos(self.total_load_time.load(AtomicOrdering::SeqCst))
@@ -69,51 +66,9 @@ impl ColorConfig {
     }
 }
 
-/// Zwięzła reprezentacja miniaturki EXR do wyświetlenia w UI
-#[allow(dead_code)]
-pub struct ExrThumbnailInfo {
-    pub path: PathBuf,
-    pub file_name: String,
-    pub file_size_bytes: u64,
-    pub num_layers: usize,
-    pub width: u32,  // rzeczywista szerokość miniaturki po skalowaniu
-    pub height: u32, // rzeczywista wysokość miniaturki (zawsze thumb_height)
-    pub image: Image,
-}
 
-/// Główna funkcja do generowania miniaturek - używa nowego, wydajnego systemu
-#[allow(dead_code)]
-pub fn generate_exr_thumbnails_in_dir(
-    directory: &Path,
-    thumb_height: u32,
-    exposure: f32,
-    gamma: f32,
-    tonemap_mode: i32,
-    progress: Option<&dyn ProgressSink>,
-) -> anyhow::Result<Vec<ExrThumbnailInfo>> {
-    let files = list_exr_files(directory)?;
-    let total_files = files.len();
-    
-    if let Some(p) = progress { 
-        if total_files > 0 {
-            p.set(0.0, Some(&format!("Found {} files, processing...", total_files))); 
-        } else {
-            p.finish(Some("No EXR files found"));
-            return Ok(Vec::new());
-        }
-    }
 
-    if total_files == 0 {
-        if let Some(p) = progress { p.finish(Some("No EXR files")); }
-        return Ok(Vec::new());
-    }
 
-    if let Some(p) = progress { 
-        p.set(0.1, Some("Using high-performance CPU thumbnail generation")); 
-    }
-    
-    generate_thumbnails_cpu(files, thumb_height, exposure, gamma, tonemap_mode, progress)
-}
 
 /// Generuje miniaturki używając CPU (nowa, wydajna implementacja) - zwraca ExrThumbWork
 pub fn generate_thumbnails_cpu_raw(
@@ -185,43 +140,7 @@ pub fn generate_thumbnails_cpu_raw(
     Ok(works)
 }
 
-/// Generuje miniaturki używając CPU (nowa, wydajna implementacja) - zwraca ExrThumbnailInfo
-pub fn generate_thumbnails_cpu(
-    files: Vec<PathBuf>,
-    thumb_height: u32,
-    exposure: f32,
-    gamma: f32,
-    tonemap_mode: i32,
-    progress: Option<&dyn ProgressSink>,
-) -> anyhow::Result<Vec<ExrThumbnailInfo>> {
-    // Użyj generate_thumbnails_cpu_raw jako backend
-    let works = generate_thumbnails_cpu_raw(files, thumb_height, exposure, gamma, tonemap_mode, progress)?;
 
-    let _works_count = works.len();
-    let thumbnails: Vec<ExrThumbnailInfo> = works
-        .into_iter()
-        .map(|w| {
-            let mut buffer = SharedPixelBuffer::<Rgba8Pixel>::new(w.width, w.height);
-            let slice = buffer.make_mut_slice();
-
-            for (dst, chunk) in slice.iter_mut().zip(w.pixels.chunks_exact(4)) {
-                *dst = Rgba8Pixel { r: chunk[0], g: chunk[1], b: chunk[2], a: chunk[3] };
-            }
-
-            ExrThumbnailInfo {
-                path: w.path,
-                file_name: w.file_name,
-                file_size_bytes: w.file_size_bytes,
-                num_layers: w.num_layers,
-                width: w.width,
-                height: w.height,
-                image: Image::from_rgba8(buffer),
-            }
-        })
-        .collect();
-
-    Ok(thumbnails)
-}
 
 pub fn list_exr_files(dir: &Path) -> anyhow::Result<Vec<PathBuf>> {
     let entries = fs::read_dir(dir)
