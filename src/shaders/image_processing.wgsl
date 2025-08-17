@@ -24,25 +24,16 @@ struct Params {
 
 // ACES tone mapping - znacznie lepszy od Reinhard (bezpieczniejsza wersja)
 fn aces_tonemap(x: f32) -> f32 {
-    // Sprawdź czy wejście jest poprawne
-    if (x != x || x < 0.0) {
-        return 0.0; // NaN lub ujemne -> 0
-    }
-    
+    let x_safe = max(x, 0.0); // Zabezpiecza przed wartościami ujemnymi
     let a = 2.51;
     let b = 0.03;
     let c = 2.43;
     let d = 0.59;
     let e = 0.14;
-    let denominator = x * (c * x + d) + e;
-    
-    // Sprawdź dzielenie przez zero
-    if (abs(denominator) < 1e-10) {
-        return 0.0;
-    }
-    
-    let result = (x * (a * x + b)) / denominator;
-    return clamp(result, 0.0, 1.0);
+    let numerator = x_safe * (a * x_safe + b);
+    let denominator = x_safe * (c * x_safe + d) + e;
+    // Dodaj epsilon, aby uniknąć dzielenia przez zero
+    return clamp(numerator / (denominator + 1e-9), 0.0, 1.0);
 }
 
 // Reinhard tone mapping: x / (1 + x) (bezpieczniejsza wersja)
@@ -58,18 +49,15 @@ fn reinhard_tonemap(x: f32) -> f32 {
 
 // Prawdziwa krzywa sRGB (OETF), zastosowana do wartości w [0,1]
 fn srgb_oetf(x: f32) -> f32 {
-    let x = select(0.0, select(1.0, x, x < 1.0), x > 0.0);
-    if (x <= 0.0031308) {
-        return 12.92 * x;
-    } else {
-        return 1.055 * pow(x, 1.0 / 2.4) - 0.055;
-    }
+    let x_clamped = clamp(x, 0.0, 1.0);
+    let linear_part = 12.92 * x_clamped;
+    let nonlinear_part = 1.055 * pow(x_clamped, 1.0 / 2.4) - 0.055;
+    return select(nonlinear_part, linear_part, x_clamped <= 0.0031308);
 }
 
 // Niestandardowa korekcja gamma
 fn apply_gamma(x: f32, gamma_inv: f32) -> f32 {
-    let x = select(0.0, select(1.0, x, x < 1.0), x > 0.0);
-    return pow(x, gamma_inv);
+    return pow(clamp(x, 0.0, 1.0), gamma_inv);
 }
 
 // Wspólny pipeline: ekspozycja → tone-map (wg trybu) → gamma/sRGB
