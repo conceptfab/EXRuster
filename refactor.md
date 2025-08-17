@@ -122,7 +122,6 @@ fn compose_composite_from_channels(layer_channels: &LayerChannels) -> Vec<f32> {
 
 ---
 
-## 3. Plik: `src/thumbnails.rs`
 
 ### 3.1. Przyspieszenie generowania miniaturek
 

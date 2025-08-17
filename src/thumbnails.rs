@@ -420,8 +420,8 @@ fn generate_single_exr_thumbnail_work_new(
     )
     .ok_or_else(|| anyhow::anyhow!("Could not create image buffer"))?;
 
-    // Resize używając wysokiej jakości filtra
-    let thumbnail = image::imageops::resize(&img, thumb_width, thumb_height, image::imageops::FilterType::Lanczos3);
+    // Resize używając szybszego filtra
+    let thumbnail = image::imageops::resize(&img, thumb_width, thumb_height, image::imageops::FilterType::Triangle);
 
     let load_duration = load_start.elapsed();
     timing_stats.add_load_time(load_duration);
