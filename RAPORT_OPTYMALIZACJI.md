@@ -1,61 +1,55 @@
-# Raport optymalizacji kodu `EXRuster`
+# Raport Optymalizacji Kodu - EXRuster
 
-Poniższy raport przedstawia zidentyfikowane obszary do optymalizacji w kodzie projektu. Celem jest maksymalne przyśpieszenie działania aplikacji, zwłaszcza w zakresie przetwarzania obrazów i interakcji z GPU, przy jednoczesnym unikaniu nadmiernej inżynierii.
+Poniższy raport przedstawia zidentyfikowane obszary do optymalizacji w kodzie projektu. Celem jest maksymalne przyśpieszenie działania aplikacji przy jednoczesnym unikaniu nadmiernej inżynierii (over-engineering). Zmiany zostały podzielone na logiczne etapy.
 
----
+## Etap 1: Optymalizacja operacji plikowych i cache'owania (I/O)
 
-### Etap 1: Krytyczna optymalizacja potoku GPU
+Celem tego etapu jest zminimalizowanie liczby operacji odczytu z dysku oraz usprawnienie sposobu, w jaki dane są przechowywane w pamięci po wczytaniu.
 
-Największy potencjał do optymalizacji leży w sposobie zarządzania zasobami GPU. Obecne podejście, polegające na tworzeniu buforów, pipeline'ów i bind group przy każdym przetwarzaniu obrazu, jest skrajnie nieefektywne.
+1.  **Wydajniejsze budowanie cache'u EXR (`full_exr_cache.rs`)**
+    *   **Problem:** Funkcja `build_full_exr_cache` kopiuje dane pikseli z wczytanego pliku EXR do bufora `channel_data` pojedynczo, piksel po pikselu (`entry.3.push(...)`). Jest to nieefektywne dla dużych obrazów.
+    *   **Zadanie:** Zmodyfikuj pętlę w `build_full_exr_cache` tak, aby kopiowała dane całego kanału za jednym razem, używając metody `extend_from_slice` lub podobnej, zamiast indywidualnego `push`. To znacząco zredukuje liczbę operacji i przyśpieszy budowanie pełnego cache'u pliku.
 
-1.  **`image_cache.rs` (`process_to_image_gpu_internal`)**:
-    *   **Zadanie:** Zrefaktoryzować funkcję tak, aby zasoby GPU (pipeline, bind group layout, bufory uniformów) były tworzone tylko raz i przechowywane w strukturze `ImageCache`. Przy każdym wywołaniu należy jedynie aktualizować zawartość buforów (`input_pixels`, `uniforms`) i ponownie wykorzystywać istniejący pipeline.
-    *   **Cel:** Drastyczne zmniejszenie narzutu na komunikację z GPU, co przyśpieszy aktualizację podglądu przy zmianie parametrów (ekspozycja, gamma).
+2.  **Cache'owanie macierzy transformacji kolorów (`image_cache.rs`)**
+    *   **Problem:** Macierz konwersji kolorów (`color_matrix_rgb_to_srgb`) jest obliczana przy tworzeniu `ImageCache`, a następnie ponownie przy każdej zmianie warstwy (`load_layer`). Jest to zbędne, jeśli atrybuty `chromaticities` nie zmieniają się między warstwami.
+    *   **Zadanie:** Zmodyfikuj `ImageCache`, aby przechowywać macierz transformacji dla każdej warstwy w `HashMap<String, Mat3>`. Obliczaj macierz tylko raz dla danej warstwy i odczytuj ją z mapy przy kolejnych przełączeniach.
 
-2.  **`gpu_thumbnails.rs` (`process_thumbnail`)**:
-    *   **Zadanie:** Zastosować tę samą strategię co powyżej. Struktura `GpuThumbnailProcessor` powinna przechowywać gotowy pipeline i layout. Funkcja `process_thumbnail` powinna jedynie tworzyć specyficzne dla zadania bufory (wejściowy, wyjściowy) i bind group, a następnie dispatchować zadanie na istniejącym pipeline.
-    *   **Cel:** Przyśpieszenie generowania miniatur na GPU, gdy ta funkcja zostanie w pełni zintegrowana.
+## Etap 2: Optymalizacja przetwarzania obrazu na CPU
 
-3.  **`shaders/image_processing.wgsl`**:
-    *   **Zadanie:** Uprościć funkcje `srgb_oetf` i `apply_gamma`, zastępując warunki `if` funkcją `select` w celu clampowania wartości do przedziału `[0, 1]`. Jest to bardziej idiomatyczne dla kodu shaderów i może być wydajniejsze.
-    *   **Cel:** Poprawa czytelności i potencjalnie wydajności shadera.
+Ten etap koncentruje się na usprawnieniu algorytmów działających na CPU, głównie z wykorzystaniem Rayon i SIMD.
 
----
+1.  **Równoległe tworzenie kompozytu RGBA (`image_cache.rs`)**
+    *   **Problem:** Funkcja `compose_composite_from_channels`, która tworzy główny bufor `raw_pixels` (RGBA) z oddzielnych płaszczyzn kanałów (R, G, B, A), działa jednowątkowo, iterując po każdym pikselu.
+    *   **Zadanie:** Zrównoleglij tę funkcję przy użyciu `rayon`. Przetwarzaj fragmenty bufora wyjściowego równolegle, co znacząco przyśpieszy tworzenie podglądu po wczytaniu nowej warstwy.
 
-### Etap 2: Optymalizacja przetwarzania danych po stronie CPU
+2.  **Przyspieszenie generowania miniaturek (`thumbnails.rs`)**
+    *   **Problem:** Funkcja `generate_single_exr_thumbnail_work_new` używa filtra `Lanczos3` do skalowania obrazów. Jest to filtr wysokiej jakości, ale relatywnie wolny, co nie jest konieczne dla małych miniaturek.
+    *   **Zadanie:** W funkcji `generate_single_exr_thumbnail_work_new` zmień filtr w `image::imageops::resize` z `FilterType::Lanczos3` na szybszy, np. `FilterType::Triangle`. Różnica w jakości będzie niezauważalna na miniaturkach, a zysk wydajności znaczący.
 
-Operacje na CPU, zwłaszcza te związane z przygotowaniem danych i algorytmami, również mogą zostać zoptymalizowane.
+## Etap 3: Optymalizacja przetwarzania na GPU
 
-1.  **`image_cache.rs` (`build_mip_chain`)**:
-    *   **Zadanie:** Obecna implementacja generowania MIP-map jest jednowątkowa. Należy ją zrównoleglić przy użyciu `rayon`, przetwarzając wiersze lub bloki pikseli równolegle.
-    *   **Cel:** Znaczne przyśpieszenie generowania podglądów o niższej rozdzielczości, co poprawi responsywność UI przy manipulacji dużymi obrazami.
+Usprawnienia w potoku renderowania z użyciem `wgpu` w celu lepszej wydajności i jakości.
 
-2.  **`image_cache.rs` (Struktura `ImageCache`)**:
-    *   **Zadanie:** Zmienić typ pola `raw_pixels` z `Vec<(f32, f32, f32, f32)>` (tablica struktur) na `Vec<f32>` (interleaved, `[R,G,B,A,R,G,B,A,...]`).
-    *   **Cel:** Poprawa lokalności danych w pamięci cache procesora. Upraszcza to i przyśpiesza transfer danych do buforów GPU oraz operacje SIMD, które mogą wczytywać ciągłe bloki pamięci.
+1.  **Poprawa jakości skalowania w shaderze miniaturek (`gpu_thumbnails.rs`)**
+    *   **Problem:** Shader w `gpu_thumbnails.rs` używa interpolacji bilinearnej do skalowania obrazu w dół. Przy dużym zmniejszeniu może to prowadzić do aliasingu i utraty detali.
+    *   **Zadanie:** Zmodyfikuj shader `THUMBNAIL_COMPUTE_SHADER`. Zamiast próbkować jeden punkt źródłowy, uśrednij wartości z bloku 2x2 lub 4x4 pikseli źródłowych (tzw. box filter). Zapewni to gładszy i bardziej reprezentatywny wygląd miniaturek.
 
-3.  **`full_exr_cache.rs` (`build_full_exr_cache`)**:
-    *   **Zadanie:** Pętla kopiująca piksele (`for i in 0..pixel_count`) jest nieefektywna. Należy zbadać, czy biblioteka `exr` oferuje dostęp do danych pikseli jako ciągłego slice'a, co pozwoliłoby na użycie szybszej operacji hurtowej, np. `copy_from_slice`.
-    *   **Cel:** Przyśpieszenie wczytywania całego pliku EXR do pamięci.
+2.  **Uproszczenie i stabilizacja potoku GPU (`image_cache.rs`)**
+    *   **Problem:** Logika przetwarzania GPU w `process_to_image_gpu_internal` jest skomplikowana, podatna na błędy (panics) i nieefektywnie zarządza zasobami, próbując je odtwarzać w locie.
+    *   **Zadanie:** Zrefaktoryzuj tę część. Stwórz dedykowaną, trwałą strukturę (np. `GpuProcessor`), która będzie przechowywać potok `wgpu` i bufory. Inicjalizuj ją raz i zmieniaj rozmiar buforów tylko w razie potrzeby. To uprości kod, wyeliminuje błędy i zwiększy wydajność przez unikanie rekreacji zasobów.
 
----
+3.  **Dodanie transformacji kolorów w shaderze (`shaders/image_processing.wgsl`)**
+    *   **Problem:** Główny shader do przetwarzania obrazu nie uwzględnia macierzy transformacji kolorów (`color_matrix`), przez co kolory na podglądzie GPU mogą różnić się od tych z CPU.
+    *   **Zadanie:** Dodaj do shadera `image_processing.wgsl` nowy `uniform` typu `mat3x3<f32>` dla macierzy kolorów. Zastosuj tę transformację do wartości RGB piksela przed etapem ekspozycji i tone mappingu, aby zapewnić spójność kolorystyczną z resztą aplikacji.
 
-### Etap 3: Refaktoryzacja i czyszczenie kodu
+## Etap 4: Ogólne usprawnienia i refaktoryzacja
 
-Uproszczenie kodu i usunięcie duplikacji poprawi jego utrzymywalność i zmniejszy ryzyko błędów.
+Drobne zmiany poprawiające czytelność, redukujące duplikację kodu i wykorzystujące lepsze praktyki.
 
-1.  **`exr_metadata.rs` (`read_and_group_metadata`)**:
-    *   **Zadanie:** Wyodrębnić zduplikowany kod formatujący wartości atrybutów (`AttributeValue::Chromaticities`, `F32`, `F64` itd.) do jednej, prywatnej funkcji pomocniczej.
-    *   **Cel:** Zmniejszenie redundancji i poprawa czytelności.
+1.  **Refaktoryzacja formatowania atrybutów (`exr_metadata.rs`)**
+    *   **Problem:** Logika formatowania wartości atrybutów (`AttributeValue`) na `String` jest zduplikowana w dwóch miejscach: raz dla atrybutów współdzielonych i raz dla atrybutów per-warstwa.
+    *   **Zadanie:** Wydziel tę logikę do jednej, prywatnej funkcji pomocniczej, np. `format_attribute_value(value: &AttributeValue) -> String`, i używaj jej w obu pętlach, aby uniknąć powielania kodu.
 
-2.  **`image_cache.rs` (`find_best_layer`, `load_specific_layer`)**:
-    *   **Zadanie:** Usunąć liczne, pozostawione w kodzie instrukcje `println!` służące do debugowania.
-    *   **Cel:** Oczyszczenie kodu produkcyjnego i uniknięcie zaśmiecania konsoli.
-
-3.  **`ui_handlers.rs` (`handle_export_convert`, `handle_export_channels`)**:
-    *   **Zadanie:** Logika znajdowania indeksów kanałów (R, G, B, A) w warstwie jest powtórzona w kilku miejscach. Należy stworzyć jedną, wspólną funkcję pomocniczą w `full_exr_cache.rs` lub `utils.rs`, która przyjmuje `&FullLayer` i zwraca zmapowane indeksy.
-    *   **Cel:** Uniknięcie duplikacji kodu i centralizacja logiki mapowania kanałów.
-
-4.  **`main.rs`**:
-    *   **Zadanie:** Uprościć inicjalizację GPU. Zamiast ręcznego tworzenia wątku i używania `pollster`, można wykorzystać prostsze `block_on` z `futures` lub `tokio` (jeśli zostanie dodane jako zależność) bezpośrednio w funkcji `main` przed uruchomieniem pętli UI.
-    *   **Cel:** Poprawa czytelności i uproszczenie logiki startowej aplikacji.
+2.  **Uproszczenie konwersji typów w `glam` (`color_processing.rs`)**
+    *   **Problem:** Funkcje `bradford_adaptation_matrix` i `rgb_to_xyz_from_primaries` konwertują typy `DMat3` (f64) na `Mat3` (f32) poprzez ręczne tworzenie nowej macierzy i kopiowanie każdej składowej.
+    *   **Zadanie:** Zastąp ręczną konwersję wbudowanymi metodami z biblioteki `glam`, takimi jak `as_mat3()` i `as_vec3()`. Kod stanie się czystszy, krótszy i potencjalnie wydajniejszy.
