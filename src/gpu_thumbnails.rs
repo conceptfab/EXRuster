@@ -33,35 +33,32 @@ fn process_thumbnail(@builtin(global_invocation_id) global_id: vec3<u32>) {
     // Oblicz współczynniki skalowania
     let scale_x = f32(params.input_width) / f32(params.output_width);
     let scale_y = f32(params.input_height) / f32(params.output_height);
-    
-    // Oblicz współrzędne źródłowe z częścią ułamkową
-    let src_x_f = f32(x) * scale_x;
-    let src_y_f = f32(y) * scale_y;
 
-    let src_x0 = u32(floor(src_x_f));
-    let src_y0 = u32(floor(src_y_f));
-    let src_x1 = min(src_x0 + 1u, params.input_width - 1u);
-    let src_y1 = min(src_y0 + 1u, params.input_height - 1u);
+    // Współrzędne centralnego piksela w obrazie źródłowym
+    let src_cx = (f32(x) + 0.5) * scale_x;
+    let src_cy = (f32(y) + 0.5) * scale_y;
 
-    // Wagi interpolacji
-    let fx = fract(src_x_f);
-    let fy = fract(src_y_f);
+    // Współrzędne dla 4 próbek (2x2) wokół centrum
+    let x0 = u32(floor(src_cx - 0.5));
+    let x1 = x0 + 1u;
+    let y0 = u32(floor(src_cy - 0.5));
+    let y1 = y0 + 1u;
 
-    // Pobierz 4 sąsiednie piksele
-    let idx00 = (src_y0 * params.input_width + src_x0) * 4u;
-    let idx10 = (src_y0 * params.input_width + src_x1) * 4u;
-    let idx01 = (src_y1 * params.input_width + src_x0) * 4u;
-    let idx11 = (src_y1 * params.input_width + src_x1) * 4u;
+    // Funkcja pomocnicza do bezpiecznego pobierania piksela
+    fn get_pixel(px: u32, py: u32) -> vec4<f32> {
+        let safe_x = min(px, params.input_width - 1u);
+        let safe_y = min(py, params.input_height - 1u);
+        let idx = (safe_y * params.input_width + safe_x) * 4u;
+        return vec4<f32>(input_pixels[idx], input_pixels[idx+1], input_pixels[idx+2], input_pixels[idx+3]);
+    }
 
-    // Interpolacja bilinearna dla każdego kanału
-    let p00 = vec4<f32>(input_pixels[idx00], input_pixels[idx00 + 1], input_pixels[idx00 + 2], input_pixels[idx00 + 3]);
-    let p10 = vec4<f32>(input_pixels[idx10], input_pixels[idx10 + 1], input_pixels[idx10 + 2], input_pixels[idx10 + 3]);
-    let p01 = vec4<f32>(input_pixels[idx01], input_pixels[idx01 + 1], input_pixels[idx01 + 2], input_pixels[idx01 + 3]);
-    let p11 = vec4<f32>(input_pixels[idx11], input_pixels[idx11 + 1], input_pixels[idx11 + 2], input_pixels[idx11 + 3]);
+    // Pobierz 4 piksele i uśrednij
+    let p00 = get_pixel(x0, y0);
+    let p10 = get_pixel(x1, y0);
+    let p01 = get_pixel(x0, y1);
+    let p11 = get_pixel(x1, y1);
 
-    let p0 = mix(p00, p10, fx);
-    let p1 = mix(p01, p11, fx);
-    let pixel = mix(p0, p1, fy);
+    let pixel = (p00 + p10 + p01 + p11) * 0.25;
 
     let r = pixel.x;
     let g = pixel.y;
