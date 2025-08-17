@@ -8,8 +8,8 @@ struct Params {
     tonemap_mode: u32,       // Tryb tone mapping: 0=ACES, 1=Reinhard, 2=Linear
     width: u32,              // Szerokość obrazu
     height: u32,             // Wysokość obrazu
-    // Opcjonalna macierz transformacji kolorów (może być dodana później)
-    // color_matrix: mat3x3<f32>,
+    color_matrix: mat3x3<f32>, // Nowe pole: macierz transformacji kolorów
+    has_color_matrix: u32,    // Nowe pole: flaga użycia macierzy (0 lub 1)
 }
 
 // Wszystkie bindingi w jednej grupie (group 0)
@@ -136,12 +136,18 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     
     // Wczytaj piksel HDR z bufora wejściowego
     let input_pixel = input_pixels[pixel_index];
+    var color = input_pixel.rgb;
+
+    // Zastosuj macierz kolorów jeśli dostępna
+    if (params.has_color_matrix != 0u) {
+        color = params.color_matrix * color;
+    }
     
     // Przetwórz piksel przez pipeline: ekspozycja → tone mapping → gamma
     let processed_color = tone_map_and_gamma(
-        input_pixel.r,
-        input_pixel.g,
-        input_pixel.b,
+        color.r,
+        color.g,
+        color.b,
         params.exposure,
         params.gamma,
         params.tonemap_mode
