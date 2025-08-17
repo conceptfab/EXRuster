@@ -60,6 +60,8 @@ pub struct ImageCache {
     pub current_layer_name: String,
     // Opcjonalna macierz konwersji z przestrzeni primaries pliku do sRGB (linear RGB)
     color_matrix_rgb_to_srgb: Option<Mat3>,
+    // Cache macierzy kolorów dla każdej warstwy
+    color_matrices: HashMap<String, Mat3>,
     // Cache wszystkich kanałów dla bieżącej warstwy aby uniknąć I/O przy przełączaniu
     pub current_layer_channels: Option<LayerChannels>,
     // Pełne dane EXR (wszystkie warstwy i kanały) w pamięci
@@ -144,7 +146,11 @@ impl ImageCache {
         let current_layer_name = layer_channels.layer_name.clone();
 
         // Spróbuj wyliczyć macierz konwersji primaries → sRGB na podstawie atrybutu chromaticities (dla wybranej warstwy/partu)
+        let mut color_matrices = HashMap::new();
         let color_matrix_rgb_to_srgb = compute_rgb_to_srgb_matrix_from_file_for_layer(path, &best_layer).ok();
+        if let Some(matrix) = color_matrix_rgb_to_srgb {
+            color_matrices.insert(best_layer.clone(), matrix);
+        }
 
         let mip_levels = build_mip_chain(&raw_pixels, width, height, 4);
         Ok(ImageCache {
@@ -154,6 +160,7 @@ impl ImageCache {
             layers_info,
             current_layer_name,
             color_matrix_rgb_to_srgb,
+            color_matrices,
             current_layer_channels: Some(layer_channels),
             full_cache: full_cache,
             mip_levels,
@@ -177,8 +184,15 @@ impl ImageCache {
         self.current_layer_name = layer_channels.layer_name.clone();
         self.raw_pixels = compose_composite_from_channels(&layer_channels);
         self.current_layer_channels = Some(layer_channels);
-        // Reoblicz macierz primaries→sRGB na wypadek, gdyby warstwa/part zmieniały chromaticities
-        self.color_matrix_rgb_to_srgb = compute_rgb_to_srgb_matrix_from_file_for_layer(path, layer_name).ok();
+        // Sprawdź, czy macierz dla danej warstwy jest już w cache'u
+        if self.color_matrices.contains_key(layer_name) {
+            self.color_matrix_rgb_to_srgb = self.color_matrices.get(layer_name).cloned();
+        } else {
+            self.color_matrix_rgb_to_srgb = compute_rgb_to_srgb_matrix_from_file_for_layer(path, layer_name).ok();
+            if let Some(matrix) = self.color_matrix_rgb_to_srgb {
+                self.color_matrices.insert(layer_name.to_string(), matrix);
+            }
+        }
         // Odbuduj MIP-y dla nowego obrazu
         self.mip_levels = build_mip_chain(&self.raw_pixels, self.width, self.height, 4);
 
@@ -1459,7 +1473,7 @@ pub(crate) fn load_all_channels_for_layer(
 // Pomocnicze: buduje kompozyt RGB z mapy kanałów
 fn compose_composite_from_channels(layer_channels: &LayerChannels) -> Vec<f32> {
     let pixel_count = (layer_channels.width as usize) * (layer_channels.height as usize);
-    let mut out: Vec<f32> = Vec::with_capacity(pixel_count * 4); // 4 kanały RGBA
+    let mut out: Vec<f32> = vec![0.0; pixel_count * 4];
 
     // Heurystyki: najpierw dokładne R/G/B/A, potem nazwy zaczynające się od R/G/B, a na końcu pierwszy dostępny kanał
     let pick_exact_index = |name: &str| -> Option<usize> { layer_channels.channel_names.iter().position(|n| n == name) };
@@ -1478,16 +1492,17 @@ fn compose_composite_from_channels(layer_channels: &LayerChannels) -> Vec<f32> {
     let base_b = b_idx * pixel_count;
     let a_base_opt = a_idx.map(|ai| ai * pixel_count);
 
-    for i in 0..pixel_count {
-        let rr = layer_channels.channel_data[base_r + i];
-        let gg = layer_channels.channel_data[base_g + i];
-        let bb = layer_channels.channel_data[base_b + i];
-        let aa = a_base_opt.map(|ab| layer_channels.channel_data[ab + i]).unwrap_or(1.0);
-        out.push(rr);
-        out.push(gg);
-        out.push(bb);
-        out.push(aa);
-    }
+    let r_plane = &layer_channels.channel_data[base_r..base_r + pixel_count];
+    let g_plane = &layer_channels.channel_data[base_g..base_g + pixel_count];
+    let b_plane = &layer_channels.channel_data[base_b..base_b + pixel_count];
+    let a_plane = a_base_opt.map(|ab| &layer_channels.channel_data[ab..ab + pixel_count]);
+
+    out.par_chunks_mut(4).enumerate().for_each(|(i, chunk)| {
+        chunk[0] = r_plane[i];
+        chunk[1] = g_plane[i];
+        chunk[2] = b_plane[i];
+        chunk[3] = if let Some(a) = a_plane { a[i] } else { 1.0 };
+    });
 
     out
 }
