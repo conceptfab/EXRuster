@@ -9,7 +9,6 @@ use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
 use crate::image_cache::extract_layers_info;
 use crate::progress::ProgressSink;
-use crate::gpu_context::GpuContext;
 use std::sync::{Mutex, OnceLock};
 use lru::LruCache;
 
@@ -110,27 +109,9 @@ pub fn generate_exr_thumbnails_in_dir(
     }
 
     if let Some(p) = progress { 
-        p.set(0.1, Some("Using new high-performance CPU thumbnail generation")); 
+        p.set(0.1, Some("Using high-performance CPU thumbnail generation")); 
     }
     
-    generate_thumbnails_cpu(files, thumb_height, exposure, gamma, tonemap_mode, progress)
-}
-
-/// Generuje miniaturki używając GPU (nowa implementacja)
-#[allow(dead_code)]
-fn generate_thumbnails_gpu(
-    files: Vec<PathBuf>,
-    thumb_height: u32,
-    exposure: f32,
-    gamma: f32,
-    tonemap_mode: i32,
-    progress: Option<&dyn ProgressSink>,
-    _gpu_context: &GpuContext,
-) -> anyhow::Result<Vec<ExrThumbnailInfo>> {
-
-    if let Some(p) = progress { 
-        p.set(0.1, Some("GPU acceleration temporarily disabled, using CPU...")); 
-    }
     generate_thumbnails_cpu(files, thumb_height, exposure, gamma, tonemap_mode, progress)
 }
 
@@ -213,56 +194,10 @@ pub fn generate_thumbnails_cpu(
     tonemap_mode: i32,
     progress: Option<&dyn ProgressSink>,
 ) -> anyhow::Result<Vec<ExrThumbnailInfo>> {
-    let total_files = files.len();
-    let timing_stats = TimingStats::new();
-    let color_config = ColorConfig::new(
-        gamma,
-        exposure,
-        tonemap_mode
-    );
+    // Użyj generate_thumbnails_cpu_raw jako backend
+    let works = generate_thumbnails_cpu_raw(files, thumb_height, exposure, gamma, tonemap_mode, progress)?;
 
-    // 1) Równolegle generuj dane miniaturek w typie bezpiecznym dla wątków
-    let completed = AtomicUsize::new(0);
-    let works: Vec<ExrThumbWork> = files
-        .into_par_iter()
-        .filter_map(|path| {
-            // Spróbuj z cache LRU
-            let cached_opt = {
-                if let Ok(mut guard) = get_thumb_cache().lock() {
-                    c_get(&mut *guard, &path, thumb_height, exposure, gamma, tonemap_mode)
-                } else {
-                    None
-                }
-            };
-            if let Some(cached) = cached_opt {
-                let n = completed.fetch_add(1, Ordering::Relaxed) + 1;
-                if let Some(p) = progress {
-                    let frac = (n as f32) / (total_files as f32);
-                    p.set(frac, Some(&format!("Cached: {}/{} {}", n, total_files, path.file_name().and_then(|n| n.to_str()).unwrap_or("?"))));
-                }
-                return Some(cached);
-            }
-
-            let res = generate_single_exr_thumbnail_work_new(&path, thumb_height, &color_config, &timing_stats)
-                .map(|work| {
-                    // Zapisz do cache
-                    put_thumb_cache(&work, thumb_height, exposure, gamma, tonemap_mode);
-                    work
-                });
-            let n = completed.fetch_add(1, Ordering::Relaxed) + 1;
-            if let Some(p) = progress {
-                let frac = (n as f32) / (total_files as f32);
-                p.set(frac, Some(&format!("Processed: {}/{} {}", n, total_files, path.file_name().and_then(|n| n.to_str()).unwrap_or("?"))));
-            }
-            match res {
-                Ok(work) => Some(work),
-                Err(_e) => None,
-            }
-        })
-        .collect();
-
-
-    let works_count = works.len();
+    let _works_count = works.len();
     let thumbnails: Vec<ExrThumbnailInfo> = works
         .into_iter()
         .map(|w| {
@@ -285,16 +220,6 @@ pub fn generate_thumbnails_cpu(
         })
         .collect();
 
-    if let Some(p) = progress { 
-        p.finish(Some(&format!("Thumbnails loaded: {} files processed", works_count))); 
-    }
-    
-    let load_time = timing_stats.get_load_time();
-    let save_time = timing_stats.get_save_time();
-    let processing_time = timing_stats.get_total_time();
-    println!("Thumbnail generation timing: Load: {:.2}ms, Save: {:.2}ms, Total: {:.2}ms", 
-             load_time.as_millis(), save_time.as_millis(), processing_time.as_millis());
-    
     Ok(thumbnails)
 }
 
@@ -439,25 +364,6 @@ fn generate_single_exr_thumbnail_work_new(
         num_layers: layers_info.len(),
         pixels,
     })
-}
-
-/// Funkcja zachowana dla kompatybilności
-#[allow(dead_code)]
-pub fn generate_single_exr_thumbnail_work(
-    path: &Path,
-    thumb_height: u32,
-    exposure: f32,
-    gamma: f32,
-    tonemap_mode: i32,
-) -> anyhow::Result<ExrThumbWork> {
-
-    let color_config = ColorConfig::new(
-        gamma,
-        exposure,
-        tonemap_mode
-    );
-    let timing_stats = TimingStats::new();
-    generate_single_exr_thumbnail_work_new(path, thumb_height, &color_config, &timing_stats)
 }
 
 // ================= LRU cache miniaturek =================

@@ -12,8 +12,6 @@ use std::sync::Arc;
 use crate::full_exr_cache::FullExrCacheData;
 use core::simd::{f32x4, Simd};
 use std::simd::prelude::SimdFloat;
-use wgpu::{ComputePipeline, BindGroupLayout, Buffer};
-use std::sync::Mutex;
 
 /// Zwraca kanoniczny skrót kanału na podstawie aliasów/nazw przyjaznych.
 /// Np. "red"/"Red"/"RED"/"R"/"R8" → "R"; analogicznie dla G/B/A.
@@ -68,21 +66,6 @@ pub struct ImageCache {
     full_cache: Arc<FullExrCacheData>,
     // MIP cache: przeskalowane podglądy (float RGBA) do szybkiego preview
     mip_levels: Vec<MipLevel>,
-    // Kontekst GPU do akceleracji przetwarzania obrazów
-    #[allow(dead_code)]
-    gpu_context: Option<Arc<Mutex<Option<crate::gpu_context::GpuContext>>>>,
-
-    // Nowe pola do cachowania zasobów GPU
-    #[allow(dead_code)]
-    gpu_pipeline: Option<ComputePipeline>,
-    #[allow(dead_code)]
-    gpu_bind_group_layout: Option<BindGroupLayout>,
-    #[allow(dead_code)]
-    gpu_input_buffer: Option<Buffer>,
-    #[allow(dead_code)]
-    gpu_output_buffer: Option<Buffer>,
-    #[allow(dead_code)]
-    gpu_uniform_buffer: Option<Buffer>,
 }
 
 #[derive(Clone, Debug)]
@@ -164,14 +147,6 @@ impl ImageCache {
             current_layer_channels: Some(layer_channels),
             full_cache: full_cache,
             mip_levels,
-            gpu_context: None,
-
-            // Nowe pola do cachowania zasobów GPU
-            gpu_pipeline: None,
-            gpu_bind_group_layout: None,
-            gpu_input_buffer: None,
-            gpu_output_buffer: None,
-            gpu_uniform_buffer: None,
         })
     }
     
@@ -201,11 +176,6 @@ impl ImageCache {
 
     #[inline]
     pub fn color_matrix(&self) -> Option<Mat3> { self.color_matrix_rgb_to_srgb }
-    
-    /// Ustawia kontekst GPU dla akceleracji
-    pub fn set_gpu_context(&mut self, gpu_context: Arc<Mutex<Option<crate::gpu_context::GpuContext>>>) {
-        self.gpu_context = Some(gpu_context);
-    }
     
     pub fn process_to_image(&self, exposure: f32, gamma: f32, tonemap_mode: i32) -> Image {
         let mut buffer = SharedPixelBuffer::<Rgba8Pixel>::new(self.width, self.height);
@@ -283,420 +253,6 @@ impl ImageCache {
         Image::from_rgba8(buffer)
     }
     
-    /// Przetwarza obraz na GPU z użyciem compute shadera
-    #[allow(dead_code)]
-    pub fn process_to_image_gpu(&mut self, exposure: f32, gamma: f32, tonemap_mode: i32) -> Result<Image, Box<dyn std::error::Error>> {
-        println!("GPU: Rozpoczynam przetwarzanie obrazu {}x{} pikseli", self.width, self.height);
-        
-        // Wrap całą funkcję w catch_unwind dla bezpieczeństwa
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            self.process_to_image_gpu_internal(exposure, gamma, tonemap_mode)
-        }));
-        
-        match result {
-            Ok(res) => res,
-            Err(_) => {
-                println!("GPU: PANIC wykryty w przetwarzaniu GPU! Fallback do CPU.");
-                Err("Panic w przetwarzaniu GPU - fallback do CPU".into())
-            }
-        }
-    }
-    
-    /// Wewnętrzna funkcja przetwarzania GPU (bez catch_unwind)
-    #[allow(dead_code)]
-    fn process_to_image_gpu_internal(&mut self, exposure: f32, gamma: f32, tonemap_mode: i32) -> Result<Image, Box<dyn std::error::Error>> {
-        
-        // Sprawdź czy kontekst GPU jest dostępny
-        let gpu_context = match &self.gpu_context {
-            Some(ctx) => ctx,
-            None => {
-                println!("GPU: Błąd - kontekst GPU nie jest dostępny");
-                return Err("Kontekst GPU nie jest dostępny".into());
-            }
-        };
-        
-        let gpu_guard = gpu_context.lock().map_err(|e| {
-            println!("GPU: Błąd - nie można uzyskać dostępu do kontekstu GPU: {:?}", e);
-            "Nie można uzyskać dostępu do kontekstu GPU"
-        })?;
-        let gpu_context = match gpu_guard.as_ref() {
-            Some(ctx) => ctx,
-            None => {
-                println!("GPU: Błąd - kontekst GPU nie został zainicjalizowany");
-                return Err("Kontekst GPU nie został zainicjalizowany".into());
-            }
-        };
-        
-        // Dodatkowe sprawdzenie dostępności GPU
-        if !gpu_context.is_available() {
-            println!("GPU: Błąd - urządzenie GPU nie jest dostępne");
-            return Err("Urządzenie GPU nie jest dostępne".into());
-        }
-        
-        // Sprawdź rozmiar obrazu
-        if self.width == 0 || self.height == 0 {
-            println!("GPU: Błąd - nieprawidłowe wymiary obrazu: {}x{}", self.width, self.height);
-            return Err("Nieprawidłowe wymiary obrazu".into());
-        }
-        
-        if self.raw_pixels.is_empty() {
-            println!("GPU: Błąd - brak danych obrazu do przetworzenia");
-            return Err("Brak danych obrazu do przetworzenia".into());
-        }
-        
-        // Sprawdź czy rozmiar pikseli odpowiada wymiarom obrazu
-        let expected_pixels = (self.width * self.height) as usize;
-        if self.raw_pixels.len() != expected_pixels * 4 { // 4 kanały RGBA
-            println!("GPU: Błąd - niezgodność rozmiaru: oczekiwano {} pikseli RGBA, mam {}", 
-                     expected_pixels * 4, self.raw_pixels.len());
-            return Err("Niezgodność rozmiaru pikseli z wymiarami obrazu".into());
-        }
-        
-        // Sprawdź czy wymiary nie są zbyt duże dla GPU
-        const MAX_DIMENSION: u32 = 16384; // 16K max
-        if self.width > MAX_DIMENSION || self.height > MAX_DIMENSION {
-            println!("GPU: Błąd - obraz zbyt duży: {}x{} (max {}x{})", 
-                     self.width, self.height, MAX_DIMENSION, MAX_DIMENSION);
-            return Err("Obraz zbyt duży dla przetwarzania GPU".into());
-        }
-        
-        // Sprawdź limity GPU
-        let (_, limits) = gpu_context.get_device_info();
-        let max_buffer_size = limits.max_buffer_size;
-        let input_size = (self.raw_pixels.len() * std::mem::size_of::<f32>()) as u64;
-        let output_size = (self.width * self.height * 4) as u64;
-        
-        if input_size > max_buffer_size || output_size > max_buffer_size {
-            println!("GPU: Błąd - bufory zbyt duże dla GPU: input {} MB, output {} MB (max {} MB)", 
-                     input_size / 1024 / 1024, output_size / 1024 / 1024, max_buffer_size / 1024 / 1024);
-            return Err("Bufory zbyt duże dla GPU".into());
-        }
-        
-        println!("GPU: Parametry - exposure: {}, gamma: {}, tonemap: {}", exposure, gamma, tonemap_mode);
-        
-        // Parametry uniformów
-        #[repr(C)]
-        #[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy)]
-        struct Params {
-            exposure: f32,
-            gamma: f32,
-            tonemap_mode: u32,
-            width: u32,
-            height: u32,
-        }
-        
-        let params = Params {
-            exposure,
-            gamma,
-            tonemap_mode: tonemap_mode as u32,
-            width: self.width,
-            height: self.height,
-        };
-        
-        // Sprawdź czy istniejące zasoby GPU są wystarczająco duże
-        let needs_recreate = self.gpu_pipeline.is_none() 
-            || self.gpu_bind_group_layout.is_none()
-            || self.gpu_input_buffer.is_none()
-            || self.gpu_output_buffer.is_none()
-            || self.gpu_uniform_buffer.is_none();
-        
-        if needs_recreate {
-            println!("GPU: Tworzę nowe zasoby GPU");
-            
-            // Utworzenie buforów z logowaniem
-            println!("GPU: Tworzę bufory - wejściowy: {} bajtów, wyjściowy: {} bajtów", 
-                     self.raw_pixels.len() * std::mem::size_of::<f32>(),
-                     self.width * self.height * 4);
-            
-            let input_buffer = gpu_context.create_storage_buffer(
-                "input_pixels",
-                (self.raw_pixels.len() * std::mem::size_of::<f32>()) as u64,
-                true, // read_only
-            );
-            
-    
-            let output_buffer = gpu_context.create_storage_buffer(
-                "output_pixels",
-                self.width as u64 * self.height as u64 * std::mem::size_of::<u32>() as u64,
-                false, // write_only
-            );
-            
-            let uniform_buffer = gpu_context.create_uniform_buffer("params", &params);
-            
-
-            let bind_group_layout = gpu_context.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("image_processing_bind_group_layout"),
-                entries: &[
-                    // Binding 0: Uniformy
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    // Binding 1: Bufor wejściowy (read-only)
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    // Binding 2: Bufor wyjściowy (write-only)
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: false },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                ],
-            });
-            
-            // Utworzenie pipeline compute
-            let shader_module = gpu_context.create_shader_module(
-                "image_processing_shader",
-                include_str!("shaders/image_processing.wgsl")
-            );
-            
-            let pipeline_layout = gpu_context.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("image_processing_pipeline_layout"),
-                bind_group_layouts: &[&bind_group_layout],
-                push_constant_ranges: &[],
-            });
-            
-            let compute_pipeline = gpu_context.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some("image_processing_pipeline"),
-                layout: Some(&pipeline_layout),
-                module: &shader_module,
-                entry_point: Some("main"),
-                cache: None,
-                compilation_options: Default::default(),
-            });
-            
-            // Zapisz zasoby GPU w cache
-            self.gpu_pipeline = Some(compute_pipeline);
-            self.gpu_bind_group_layout = Some(bind_group_layout);
-            self.gpu_input_buffer = Some(input_buffer);
-            self.gpu_output_buffer = Some(output_buffer);
-            self.gpu_uniform_buffer = Some(uniform_buffer);
-        } else {
-            println!("GPU: Używam istniejących zasobów GPU");
-            
-            // Sprawdź czy rozmiar obrazu się nie zmienił
-            let current_input_size = (self.raw_pixels.len() * std::mem::size_of::<f32>()) as u64;
-            let current_output_size = (self.width * self.height * 4) as u64;
-            
-            if let Some(input_buffer) = &self.gpu_input_buffer {
-                let buffer_size = input_buffer.size();
-                if buffer_size < current_input_size {
-                    println!("GPU: Odtwarzam bufor wejściowy - za mały");
-                    let new_input_buffer = gpu_context.create_storage_buffer(
-                        "input_pixels",
-                        current_input_size,
-                        true,
-                    );
-                    self.gpu_input_buffer = Some(new_input_buffer);
-                }
-            }
-            
-            if let Some(output_buffer) = &self.gpu_output_buffer {
-                let buffer_size = output_buffer.size();
-                if buffer_size < current_output_size {
-                    println!("GPU: Odtwarzam bufor wyjściowy - za mały");
-                    let new_output_buffer = gpu_context.create_storage_buffer(
-                        "output_pixels",
-                        current_output_size,
-                        false,
-                    );
-                    self.gpu_output_buffer = Some(new_output_buffer);
-                }
-            }
-            
-            // Zaktualizuj uniformy
-            if let Some(uniform_buffer) = &self.gpu_uniform_buffer {
-                gpu_context.queue.write_buffer(uniform_buffer, 0, bytemuck::cast_slice(&[params]));
-            }
-        }
-        
-        // Pobierz zasoby z cache
-        let pipeline = self.gpu_pipeline.as_ref().unwrap();
-        let bind_group_layout = self.gpu_bind_group_layout.as_ref().unwrap();
-        let input_buffer = self.gpu_input_buffer.as_ref().unwrap();
-        let output_buffer = self.gpu_output_buffer.as_ref().unwrap();
-        let uniform_buffer = self.gpu_uniform_buffer.as_ref().unwrap();
-        
-        // Wypełnienie bufora wejściowego danymi
-        println!("GPU: Przygotowuję dane wejściowe - {} pikseli RGBA", self.raw_pixels.len() / 4);
-        gpu_context.queue.write_buffer(input_buffer, 0, bytemuck::cast_slice(&self.raw_pixels));
-        
-        
-        let bind_group = gpu_context.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("image_processing_bind_group"),
-            layout: bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: uniform_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: input_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: output_buffer.as_entire_binding(),
-                },
-            ],
-        });
-        
-        // Wysłanie komend do GPU
-        println!("GPU: Przygotowuję komendy przetwarzania");
-        let mut encoder = gpu_context.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("image_processing_encoder"),
-        });
-        
-        {
-            let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("image_processing_compute_pass"),
-                timestamp_writes: None,
-            });
-            
-            compute_pass.set_pipeline(pipeline);
-            compute_pass.set_bind_group(0, &bind_group, &[]);
-            
-            // Obliczenie liczby grup roboczych
-            let workgroup_size = 8;
-            let workgroups_x = (self.width + workgroup_size - 1) / workgroup_size;
-            let workgroups_y = (self.height + workgroup_size - 1) / workgroup_size;
-            
-            println!("GPU: Uruchamiam compute shader - grupy robocze: {}x{} (workgroup_size: {})", 
-                     workgroups_x, workgroups_y, workgroup_size);
-            
-            compute_pass.dispatch_workgroups(workgroups_x, workgroups_y, 1);
-        }
-        
-        // Staging buffer do kopiowania wyników
-        let staging_buffer = gpu_context.create_staging_buffer(
-            "staging_buffer",
-            self.width as u64 * self.height as u64 * std::mem::size_of::<u32>() as u64,
-        );
-        
-        // Kopiowanie wyników do staging buffer
-        println!("GPU: Kopiuję wyniki do staging buffer");
-        encoder.copy_buffer_to_buffer(output_buffer, 0, &staging_buffer, 0, self.width as u64 * self.height as u64 * std::mem::size_of::<u32>() as u64);
-        
-        // Wysłanie komend
-        println!("GPU: Wysyłam komendy do wykonania");
-        gpu_context.queue.submit(std::iter::once(encoder.finish()));
-        
-
-        println!("GPU: Synchronizuję operacje GPU...");
-        let _ = gpu_context.device.poll(wgpu::PollType::Wait);
-        
-        // Sprawdź stan urządzenia po wysłaniu komend
-        if !gpu_context.is_available() {
-            return Err("Urządzenie GPU zostało utracone podczas przetwarzania".into());
-        }
-        
-        // Odczyt wyników - NAPRAWIONE: prawidłowa kolejność operacji
-        let buffer_slice = staging_buffer.slice(..);
-        let (tx, rx) = std::sync::mpsc::channel();
-        
-        // Mapowanie bufora z obsługą błędów
-        buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-            let _ = tx.send(result);
-        });
-        
-        // Najpierw poczekaj na zakończenie wszystkich operacji GPU
-        let start_time = std::time::Instant::now();
-        const MAX_WAIT_TIME: std::time::Duration = std::time::Duration::from_secs(30); // ZWIĘKSZONY TIMEOUT dla release
-        
-
-        loop {
-            // Krótki poll zamiast Wait - unikamy zablokowania
-            let _ = gpu_context.device.poll(wgpu::PollType::Wait);
-            
-            // Sprawdź czy otrzymaliśmy odpowiedź z mapowania
-            match rx.try_recv() {
-                Ok(Ok(())) => {
-                    println!("GPU: Mapowanie bufora zakończone pomyślnie");
-                    break;
-                },
-                Ok(Err(e)) => {
-                    println!("GPU: Błąd mapowania bufora: {:?}", e);
-                    return Err(format!("Błąd mapowania bufora GPU: {:?}", e).into());
-                },
-                Err(std::sync::mpsc::TryRecvError::Empty) => {
-                    // Jeszcze czekamy
-                    if start_time.elapsed() > MAX_WAIT_TIME {
-                        println!("GPU: Timeout podczas mapowania bufora");
-                        return Err("Timeout podczas oczekiwania na mapowanie bufora GPU".into());
-                    }
-        
-                    std::thread::sleep(std::time::Duration::from_millis(50));
-                },
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    println!("GPU: Kanał komunikacji został zamknięty");
-                    return Err("Błąd komunikacji podczas mapowania bufora GPU".into());
-                }
-            }
-        }
-        
-        // Pobranie zmapowanych danych - POPRAWIONE: bezpieczny odczyt
-        let data = buffer_slice.get_mapped_range();
-        if data.is_empty() {
-            return Err("Bufor GPU jest pusty".into());
-        }
-        
-
-        let data_u32: &[u32] = bytemuck::cast_slice(&data);
-        
-        // Sprawdzenie rozmiaru danych
-        if data_u32.len() != (self.width * self.height) as usize {
-            return Err(format!(
-                "Nieprawidłowy rozmiar danych GPU: oczekiwano {} pikseli u32, otrzymano {}", 
-                self.width * self.height, 
-                data_u32.len()
-            ).into());
-        }
-        
-        println!("GPU: Odczytano {} pikseli z bufora", data_u32.len());
-        
-        // Stworzenie SharedPixelBuffer
-        let mut buffer = SharedPixelBuffer::<Rgba8Pixel>::new(self.width, self.height);
-        let out_slice = buffer.make_mut_slice();
-        
-        // Rozpakuj u32 do RGBA
-        for (i, &packed_pixel) in data_u32.iter().enumerate() {
-            if i < out_slice.len() {
-                out_slice[i] = Rgba8Pixel {
-                    r: (packed_pixel & 0xFF) as u8,
-                    g: ((packed_pixel >> 8) & 0xFF) as u8,
-                    b: ((packed_pixel >> 16) & 0xFF) as u8,
-                    a: ((packed_pixel >> 24) & 0xFF) as u8,
-                };
-            }
-        }
-        
-        drop(data);
-        
-        // Unmapowanie bufora
-        staging_buffer.unmap();
-        
-        Ok(Image::from_rgba8(buffer))
-    }
-
     pub fn process_to_composite(&self, exposure: f32, gamma: f32, tonemap_mode: i32, lighting_rgb: bool) -> Image {
         let mut buffer = SharedPixelBuffer::<Rgba8Pixel>::new(self.width, self.height);
         let out_slice = buffer.make_mut_slice();
@@ -969,188 +525,114 @@ pub(crate) fn find_best_layer(layers_info: &[LayerInfo]) -> String {
         .unwrap_or_else(|| "Layer 1".to_string())
 }
 
-#[allow(dead_code)]
-pub(crate) fn load_specific_layer(path: &PathBuf, layer_name: &str, progress: Option<&dyn ProgressSink>) -> anyhow::Result<(Vec<f32>, u32, u32, String)> {
-    // Szybka ścieżka: jeżeli prosimy o bazową/typową warstwę RGBA, użyj gotowej funkcji czytającej pierwszą RGBA
-    // Dotyczy częstych nazw: "", "beauty", "rgba", "default", "combined"
-    let lname = layer_name.trim();
-    let lname_lower = lname.to_ascii_lowercase();
-    let is_typical_rgba = lname.is_empty()
-        || lname_lower == "beauty"
-        || lname_lower == "rgba"
-        || lname_lower == "default"
-        || lname_lower == "combined";
+// Pomocnicze: wczytuje wszystkie kanały dla wybranej warstwy do pamięci (bez dalszego I/O przy przełączaniu)
+pub(crate) fn load_all_channels_for_layer_from_full(
+    full: &Arc<FullExrCacheData>,
+    layer_name: &str,
+    _progress: Option<&dyn ProgressSink>,
+) -> anyhow::Result<LayerChannels> {
+    if let Some(p) = _progress { p.start_indeterminate(Some("Reading layer channels...")); }
 
-    if is_typical_rgba {
-        if let Some(p) = progress { p.set(0.08, Some("Fast path: RGBA layer")); }
-        if let Ok((pixels, w, h, _)) = load_first_rgba_layer(path) {
-            if let Some(p) = progress { p.set(0.92, Some("Fast path done")); }
-            return Ok((pixels, w, h, layer_name.to_string()));
+    let wanted_lower = layer_name.to_lowercase();
+
+    for layer in full.layers.iter() {
+        let lname_lower = layer.name.to_lowercase();
+        let matches = if wanted_lower.is_empty() && lname_lower.is_empty() {
+            true
+        } else if wanted_lower.is_empty() || lname_lower.is_empty() {
+            false
+        } else {
+            lname_lower == wanted_lower || lname_lower.contains(&wanted_lower) || wanted_lower.contains(&lname_lower)
+        };
+        if matches {
+            if let Some(p) = _progress { p.set(0.35, Some("Copying channel data...")); }
+            let channel_names = layer.channel_names.clone();
+    
+            let channel_data = Arc::from(layer.channel_data.as_slice());
+            if let Some(p) = _progress { p.finish(Some("Layer channels loaded")); }
+            return Ok(LayerChannels { layer_name: layer_name.to_string(), width: layer.width, height: layer.height, channel_names, channel_data });
         }
     }
 
-    // Standardowa ścieżka: wczytaj płaskie warstwy (bez mip-map), aby uzyskać FlatSamples
-    if let Some(p) = progress { p.set(0.1, Some("Reading layer data...")); }
-    let any_image = exr::read_all_flat_layers_from_file(path)?;
+    if let Some(p) = _progress { p.reset(); }
+    anyhow::bail!(format!("Nie znaleziono warstwy '{}'", layer_name))
+}
 
-    // Szukaj grupy kanałów odpowiadającej nazwie warstwy (spójne z extract_layers_info)
+/// Zachowany wariant czytający z dysku (używany w ścieżkach niezależnych od globalnego cache)
+#[allow(dead_code)]
+pub(crate) fn load_all_channels_for_layer(
+    path: &PathBuf,
+    layer_name: &str,
+    _progress: Option<&dyn ProgressSink>,
+) -> anyhow::Result<LayerChannels> {
+    let any_image = exr::read_all_flat_layers_from_file(path)?;
     let wanted_lower = layer_name.to_lowercase();
     for layer in any_image.layer_data.iter() {
         let width = layer.size.width() as u32;
         let height = layer.size.height() as u32;
         let pixel_count = (width as usize) * (height as usize);
-
         let base_attr: Option<String> = layer.attributes.layer_name.as_ref().map(|s| s.to_string());
-
-        // Indeksy R/G/B/A w grupie, jeśli dopasowano, oraz lista wszystkich indeksów w grupie
-        let mut r_idx: Option<usize> = None;
-        let mut g_idx: Option<usize> = None;
-        let mut b_idx: Option<usize> = None;
-        let mut a_idx: Option<usize> = None;
-        let mut group_found = false;
-        let mut group_indices: Vec<usize> = Vec::with_capacity(layer.channel_data.list.len());
-
-        let name_matches = |lname: &str| -> bool {
-            let lname_lower = lname.to_lowercase();
-            if wanted_lower.is_empty() && lname_lower.is_empty() {
-                true
-            } else if wanted_lower.is_empty() || lname_lower.is_empty() {
-                false
-            } else {
-                lname_lower == wanted_lower || lname_lower.contains(&wanted_lower) || wanted_lower.contains(&lname_lower)
-            }
+        let lname_lower = base_attr.as_deref().unwrap_or("").to_lowercase();
+        let matches = if wanted_lower.is_empty() && lname_lower.is_empty() {
+            true
+        } else if wanted_lower.is_empty() || lname_lower.is_empty() {
+            false
+        } else {
+            lname_lower == wanted_lower || lname_lower.contains(&wanted_lower) || wanted_lower.contains(&lname_lower)
         };
-
-        for (idx, ch) in layer.channel_data.list.iter().enumerate() {
-            let full = ch.name.to_string();
-            let (lname, short) = split_layer_and_short(&full, base_attr.as_deref());
-
-            if name_matches(&lname) {
-                group_found = true;
-                group_indices.push(idx);
-                let su = short.to_ascii_uppercase();
-                
-                        match su.as_str() {
-            "R" | "RED" => {
-                r_idx = Some(idx);
+        if matches {
+            let num_channels = layer.channel_data.list.len();
+            let mut channel_names: Vec<String> = Vec::with_capacity(num_channels);
+            let mut channel_data_vec: Vec<f32> = Vec::with_capacity(pixel_count * num_channels); // Temporary Vec
+            for (ci, ch) in layer.channel_data.list.iter().enumerate() {
+                let full = ch.name.to_string();
+                let (_lname, short) = split_layer_and_short(&full, base_attr.as_deref());
+                channel_names.push(short);
+                for i in 0..pixel_count { channel_data_vec.push(layer.channel_data.list[ci].sample_data.value_by_flat_index(i).to_f32()); }
             }
-            "G" | "GREEN" => {
-                g_idx = Some(idx);
-            }
-            "B" | "BLUE" => {
-                b_idx = Some(idx);
-            }
-            "A" | "ALPHA" => {
-                a_idx = Some(idx);
-            }
-            _ => {
-                if r_idx.is_none() && su.starts_with('R') { 
-                    r_idx = Some(idx);
-                }
-                else if g_idx.is_none() && su.starts_with('G') { 
-                    g_idx = Some(idx);
-                }
-                else if b_idx.is_none() && su.starts_with('B') { 
-                    b_idx = Some(idx);
-                }
-            }
-        }
-            }
-        }
-
-        if group_found {
-            if let Some(p) = progress { p.set(0.4, Some("Processing pixels...")); }
-            
-            if r_idx.is_none() {
-                r_idx = group_indices.get(0).cloned();
-            }
-            if g_idx.is_none() {
-                g_idx = group_indices.get(1).cloned().or(r_idx);
-            }
-            if b_idx.is_none() {
-                b_idx = group_indices.get(2).cloned().or(g_idx).or(r_idx);
-            }
-
-            // Jeżeli nadal coś jest None (pusta grupa), zgłoś błąd
-            let (ri, gi, bi) = match (r_idx, g_idx, b_idx) {
-                (Some(ri), Some(gi), Some(bi)) => (ri, gi, bi),
-                _ => anyhow::bail!("Warstwa '{}' nie zawiera kanałów do kompozytu", layer_name),
-            };
-            
-
-            
-
-            println!("DEBUG load_specific_layer: Sprawdzam czy problem może być w kolejności kanałów R/G/B:");
-
-            
-
-            
-            let mut out: Vec<f32> = Vec::with_capacity(pixel_count * 4);
-            
-            for i in 0..pixel_count {
-                let r = layer.channel_data.list[ri].sample_data.value_by_flat_index(i).to_f32();
-                let g = layer.channel_data.list[gi].sample_data.value_by_flat_index(i).to_f32();
-                let b = layer.channel_data.list[bi].sample_data.value_by_flat_index(i).to_f32();
-                let a = a_idx.map(|ci| layer.channel_data.list[ci].sample_data.value_by_flat_index(i).to_f32()).unwrap_or(1.0);
-                out.push(r);
-                out.push(g);
-                out.push(b);
-                out.push(a);
-            }
-            
-            if let Some(p) = progress { p.set(0.9, Some("Finalizing...")); }
-            // Zwracamy żądaną nazwę jako aktualną, aby była spójna z UI
-            return Ok((out, width, height, layer_name.to_string()));
+            let channel_data = Arc::from(channel_data_vec.into_boxed_slice()); // Convert Vec to Arc<[f32]>
+            return Ok(LayerChannels { layer_name: layer_name.to_string(), width, height, channel_names, channel_data });
         }
     }
-
-    // Jeśli nie znaleziono warstwy, fallback do pierwszej RGBA
-    let (pixels, width, height, _) = load_first_rgba_layer(path)?;
-    Ok((pixels, width, height, layer_name.to_string()))
+    anyhow::bail!(format!("Nie znaleziono warstwy '{}'", layer_name))
 }
 
-#[allow(dead_code)]
-fn load_first_rgba_layer(path: &PathBuf) -> anyhow::Result<(Vec<f32>, u32, u32, String)> {
-    use std::convert::Infallible;
-    use std::cell::RefCell;
-    use std::rc::Rc;
-    
-    let pixels = Rc::new(RefCell::new(Vec::new()));
-    let dimensions = Rc::new(RefCell::new((0u32, 0u32)));
-    
-    let pixels_clone1 = pixels.clone();
-    let pixels_clone2 = pixels.clone();
-    let dimensions_clone = dimensions.clone();
-    
-    exr::read_first_rgba_layer_from_file(
-        path,
-        move |resolution, _| -> Result<(), Infallible> {
-            let width = resolution.width() as u32;
-            let height = resolution.height() as u32;
-            *dimensions_clone.borrow_mut() = (width, height);
-            pixels_clone1.borrow_mut().reserve_exact((width * height * 4) as usize); // 4 kanały RGBA
-            Ok(())
-        },
-        move |_, _, (r, g, b, a): (f32, f32, f32, f32)| {
-            pixels_clone2.borrow_mut().push(r);
-            pixels_clone2.borrow_mut().push(g);
-            pixels_clone2.borrow_mut().push(b);
-            pixels_clone2.borrow_mut().push(a);
-        },
-    )?;
+// Pomocnicze: buduje kompozyt RGB z mapy kanałów
+fn compose_composite_from_channels(layer_channels: &LayerChannels) -> Vec<f32> {
+    let pixel_count = (layer_channels.width as usize) * (layer_channels.height as usize);
+    let mut out: Vec<f32> = vec![0.0; pixel_count * 4];
 
-    let (width, height) = *dimensions.borrow();
-    let raw_pixels = match Rc::try_unwrap(pixels) {
-        Ok(cell) => cell.into_inner(),
-        Err(rc) => rc.borrow().clone(),
+    
+    let pick_exact_index = |name: &str| -> Option<usize> { layer_channels.channel_names.iter().position(|n| n == name) };
+    let pick_prefix_index = |prefix: char| -> Option<usize> {
+        let prefix = prefix.to_ascii_uppercase();
+        layer_channels.channel_names.iter().position(|n| n.to_ascii_uppercase().starts_with(prefix))
     };
-    
-    Ok((raw_pixels, width, height, "First RGBA Layer".to_string()))
+
+    let r_idx = pick_exact_index("R").or_else(|| pick_prefix_index('R')).unwrap_or(0);
+    let g_idx = pick_exact_index("G").or_else(|| pick_prefix_index('G')).unwrap_or(r_idx);
+    let b_idx = pick_exact_index("B").or_else(|| pick_prefix_index('B')).unwrap_or(g_idx);
+    let a_idx = pick_exact_index("A").or_else(|| pick_prefix_index('A'));
+
+    let base_r = r_idx * pixel_count;
+    let base_g = g_idx * pixel_count;
+    let base_b = b_idx * pixel_count;
+    let a_base_opt = a_idx.map(|ai| ai * pixel_count);
+
+    let r_plane = &layer_channels.channel_data[base_r..base_r + pixel_count];
+    let g_plane = &layer_channels.channel_data[base_g..base_g + pixel_count];
+    let b_plane = &layer_channels.channel_data[base_b..base_b + pixel_count];
+    let a_plane = a_base_opt.map(|ab| &layer_channels.channel_data[ab..ab + pixel_count]);
+
+    out.par_chunks_mut(4).enumerate().for_each(|(i, chunk)| {
+        chunk[0] = r_plane[i];
+        chunk[1] = g_plane[i];
+        chunk[2] = b_plane[i];
+        chunk[3] = if let Some(a) = a_plane { a[i] } else { 1.0 };
+    });
+
+    out
 }
-
-// Funkcja usunięta - nie jest używana w uproszczonej implementacji
-
-
 
 impl ImageCache {
     /// Wczytuje jeden wskazany kanał z danej warstwy i zapisuje go jako grayscale (R=G=B=val, A=1)
@@ -1271,115 +753,6 @@ impl ImageCache {
         if let Some(p) = progress { p.finish(Some("Depth processed")); }
         Image::from_rgba8(buffer)
     }
-    // uproszczono API: używaj `process_depth_image_with_progress` bezpośrednio
 }
 
-// Pomocnicze: wczytuje wszystkie kanały dla wybranej warstwy do pamięci (bez dalszego I/O przy przełączaniu)
-pub(crate) fn load_all_channels_for_layer_from_full(
-    full: &Arc<FullExrCacheData>,
-    layer_name: &str,
-    _progress: Option<&dyn ProgressSink>,
-) -> anyhow::Result<LayerChannels> {
-    if let Some(p) = _progress { p.start_indeterminate(Some("Reading layer channels...")); }
-
-    let wanted_lower = layer_name.to_lowercase();
-
-    for layer in full.layers.iter() {
-        let lname_lower = layer.name.to_lowercase();
-        let matches = if wanted_lower.is_empty() && lname_lower.is_empty() {
-            true
-        } else if wanted_lower.is_empty() || lname_lower.is_empty() {
-            false
-        } else {
-            lname_lower == wanted_lower || lname_lower.contains(&wanted_lower) || wanted_lower.contains(&lname_lower)
-        };
-        if matches {
-            if let Some(p) = _progress { p.set(0.35, Some("Copying channel data...")); }
-            let channel_names = layer.channel_names.clone();
-    
-            let channel_data = Arc::from(layer.channel_data.as_slice());
-            if let Some(p) = _progress { p.finish(Some("Layer channels loaded")); }
-            return Ok(LayerChannels { layer_name: layer_name.to_string(), width: layer.width, height: layer.height, channel_names, channel_data });
-        }
-    }
-
-    if let Some(p) = _progress { p.reset(); }
-    anyhow::bail!(format!("Nie znaleziono warstwy '{}'", layer_name))
-}
-
-/// Zachowany wariant czytający z dysku (używany w ścieżkach niezależnych od globalnego cache)
-#[allow(dead_code)]
-pub(crate) fn load_all_channels_for_layer(
-    path: &PathBuf,
-    layer_name: &str,
-    _progress: Option<&dyn ProgressSink>,
-) -> anyhow::Result<LayerChannels> {
-    let any_image = exr::read_all_flat_layers_from_file(path)?;
-    let wanted_lower = layer_name.to_lowercase();
-    for layer in any_image.layer_data.iter() {
-        let width = layer.size.width() as u32;
-        let height = layer.size.height() as u32;
-        let pixel_count = (width as usize) * (height as usize);
-        let base_attr: Option<String> = layer.attributes.layer_name.as_ref().map(|s| s.to_string());
-        let lname_lower = base_attr.as_deref().unwrap_or("").to_lowercase();
-        let matches = if wanted_lower.is_empty() && lname_lower.is_empty() {
-            true
-        } else if wanted_lower.is_empty() || lname_lower.is_empty() {
-            false
-        } else {
-            lname_lower == wanted_lower || lname_lower.contains(&wanted_lower) || wanted_lower.contains(&lname_lower)
-        };
-        if matches {
-            let num_channels = layer.channel_data.list.len();
-            let mut channel_names: Vec<String> = Vec::with_capacity(num_channels);
-            let mut channel_data_vec: Vec<f32> = Vec::with_capacity(pixel_count * num_channels); // Temporary Vec
-            for (ci, ch) in layer.channel_data.list.iter().enumerate() {
-                let full = ch.name.to_string();
-                let (_lname, short) = split_layer_and_short(&full, base_attr.as_deref());
-                channel_names.push(short);
-                for i in 0..pixel_count { channel_data_vec.push(layer.channel_data.list[ci].sample_data.value_by_flat_index(i).to_f32()); }
-            }
-            let channel_data = Arc::from(channel_data_vec.into_boxed_slice()); // Convert Vec to Arc<[f32]>
-            return Ok(LayerChannels { layer_name: layer_name.to_string(), width, height, channel_names, channel_data });
-        }
-    }
-    anyhow::bail!(format!("Nie znaleziono warstwy '{}'", layer_name))
-}
-
-// Pomocnicze: buduje kompozyt RGB z mapy kanałów
-fn compose_composite_from_channels(layer_channels: &LayerChannels) -> Vec<f32> {
-    let pixel_count = (layer_channels.width as usize) * (layer_channels.height as usize);
-    let mut out: Vec<f32> = vec![0.0; pixel_count * 4];
-
-    
-    let pick_exact_index = |name: &str| -> Option<usize> { layer_channels.channel_names.iter().position(|n| n == name) };
-    let pick_prefix_index = |prefix: char| -> Option<usize> {
-        let prefix = prefix.to_ascii_uppercase();
-        layer_channels.channel_names.iter().position(|n| n.to_ascii_uppercase().starts_with(prefix))
-    };
-
-    let r_idx = pick_exact_index("R").or_else(|| pick_prefix_index('R')).unwrap_or(0);
-    let g_idx = pick_exact_index("G").or_else(|| pick_prefix_index('G')).unwrap_or(r_idx);
-    let b_idx = pick_exact_index("B").or_else(|| pick_prefix_index('B')).unwrap_or(g_idx);
-    let a_idx = pick_exact_index("A").or_else(|| pick_prefix_index('A'));
-
-    let base_r = r_idx * pixel_count;
-    let base_g = g_idx * pixel_count;
-    let base_b = b_idx * pixel_count;
-    let a_base_opt = a_idx.map(|ai| ai * pixel_count);
-
-    let r_plane = &layer_channels.channel_data[base_r..base_r + pixel_count];
-    let g_plane = &layer_channels.channel_data[base_g..base_g + pixel_count];
-    let b_plane = &layer_channels.channel_data[base_b..base_b + pixel_count];
-    let a_plane = a_base_opt.map(|ab| &layer_channels.channel_data[ab..ab + pixel_count]);
-
-    out.par_chunks_mut(4).enumerate().for_each(|(i, chunk)| {
-        chunk[0] = r_plane[i];
-        chunk[1] = g_plane[i];
-        chunk[2] = b_plane[i];
-        chunk[3] = if let Some(a) = a_plane { a[i] } else { 1.0 };
-    });
-
-    out
-}
 

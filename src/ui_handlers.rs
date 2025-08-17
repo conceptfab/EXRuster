@@ -542,13 +542,11 @@ pub fn handle_open_exr_from_path(
                                             if let Some(ui2) = ui_weak.upgrade() {
                                                 { let mut g = lock_or_recover(&full_exr_cache_c); *g = Some(full.clone()); }
                                                 { let mut cg = lock_or_recover(&image_cache_c); *cg = Some(cache); }
-                                                // Ustaw kontekst GPU w ImageCache
-                                                set_gpu_context_in_cache_global(&image_cache_c);
                                                 // Generuj obraz na wątku UI
                                                 let img = {
                                                     let mut guard = lock_or_recover(&image_cache_c);
                                                     if let Some(ref mut c) = *guard { 
-                                                        process_image_with_gpu_fallback(c, exposure0, gamma0, tonemap_mode0)
+                                                        c.process_to_image(exposure0, gamma0, tonemap_mode0)
                                                     } else { 
                                                         ui2.get_exr_image() 
                                                     }
@@ -619,14 +617,12 @@ pub fn handle_open_exr_from_path(
                                             if let Some(ui2) = ui_weak.upgrade() {
                                                 { let mut g = lock_or_recover(&full_exr_cache_c); *g = Some(full.clone()); }
                                                 { let mut cg = lock_or_recover(&image_cache_c); *cg = Some(cache); }
-                                                // Ustaw kontekst GPU w ImageCache
-                                                set_gpu_context_in_cache_global(&image_cache_c);
                                                 // Wygeneruj obraz na wątku UI (Image nie jest Send)
                                                 let (img, layers_info_len, layers_info_vec) = {
                                                     let mut guard = lock_or_recover(&image_cache_c);
                                                     if let Some(ref mut c) = *guard {
                                                         let li = c.layers_info.clone();
-                                                        (process_image_with_gpu_fallback(c, exposure0, gamma0, tonemap_mode0), li.len(), li)
+                                                        (c.process_to_image(exposure0, gamma0, tonemap_mode0), li.len(), li)
                                                     } else {
                                                         (ui2.get_exr_image(), 0usize, Vec::new())
                                                     }
@@ -774,7 +770,7 @@ pub fn update_preview_image(
     let image = if cache.raw_pixels.len() > 2_000_000 {
         cache.process_to_thumbnail(exposure, gamma, tonemap_mode, target)
     } else {
-        process_image_with_gpu_fallback(cache, exposure, gamma, tonemap_mode)
+        cache.process_to_image(exposure, gamma, tonemap_mode)
     };
     
     // Throttled log do konsoli: co najmniej 300 ms odstępu, z diagnostyką DPI i dopasowania
@@ -1451,50 +1447,7 @@ pub fn set_global_gpu_acceleration(enabled: bool) {
     }
 }
 
-/// Pobiera globalny stan akceleracji GPU
-pub fn get_global_gpu_acceleration() -> bool {
-    if let Ok(guard) = GPU_ACCELERATION_ENABLED.lock() {
-        *guard
-    } else {
-        false
-    }
-}
 
-/// Ustawia kontekst GPU w ImageCache po jego utworzeniu
-pub fn set_gpu_context_in_cache(image_cache: &ImageCacheType, gpu_context: &GpuContextType) {
-    if let Ok(mut guard) = image_cache.lock() {
-        if let Some(ref mut cache) = *guard {
-            cache.set_gpu_context(gpu_context.clone());
-        }
-    }
-}
 
-/// Ustawia kontekst GPU w ImageCache używając globalnego kontekstu
-pub fn set_gpu_context_in_cache_global(image_cache: &ImageCacheType) {
-    if let Ok(guard) = GPU_CONTEXT.lock() {
-        if let Some(ref gpu_ctx) = *guard {
-            set_gpu_context_in_cache(image_cache, gpu_ctx);
-        }
-    }
-}
 
-/// Przetwarza obraz używając GPU lub CPU w zależności od ustawień
-pub fn process_image_with_gpu_fallback(
-    cache: &ImageCache,
-    exposure: f32,
-    gamma: f32,
-    tonemap_mode: i32,
-) -> slint::Image {
-    let gpu_enabled = get_global_gpu_acceleration();
-    
-    if gpu_enabled {
-        // Spróbuj użyć GPU z lepszą obsługą błędów
-        // Uwaga: process_to_image_gpu wymaga &mut self, więc używamy tylko CPU
-    
-        cache.process_to_image(exposure, gamma, tonemap_mode)
-    } else {
-        // Użyj CPU
-        cache.process_to_image(exposure, gamma, tonemap_mode)
-    }
-}
 
