@@ -1,4 +1,4 @@
-@src Ten kod działa poprawnie, ale chce go maksymalnie przyśpieszyć/zoptymalizować. Przeanalizuj go pod tym kątem i przygotuj zwarty raport z numerowanymu punktami co model AI ma zrobić by poprawić kod. W folderze @__viewer jest kod podobnej aplikacji w C++. Zastanów się czy jakieś techniki można zastosować z zyskiem w kodzie RUST. Chce uniknąć over-engineeringu. Pokaż tylko pliki które potrzebuja poprawek. Raport ma być w formacie markdown, podzielony na logiczne etapy. zapisz go w folderze projektu.
+@src Ten kod działa poprawnie, ale chce go maksymalnie przyśpieszyć/zoptymalizować. Przeanalizuj go pod tym kątem i przygotuj zwarty raport z numerowanymu punktami co model AI ma zrobić by poprawić kod. Chce uniknąć over-engineeringu. Pokaż tylko pliki które potrzebuja poprawek. Raport ma być w formacie markdown, podzielony na logiczne etapy. zapisz go w folderze projektu.
 
 
 
