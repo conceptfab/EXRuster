@@ -145,7 +145,7 @@ pub fn handle_layer_tree_click(
     }
     // Sprawdź klik kanału (wiersz zaczyna się od „• ” lub emoji koloru)
     else {
-        // próbujemy dopasować „    • X” lub „    🔴 R/🟢 G/🔵 B/⚪ A”
+        // próbujemy dopasować „    • X" lub „    🔴 R/🟢 G/🔵 B/⚪ A"
         let trimmed = clicked_item.trim();
         let is_dot = trimmed.starts_with("• ");
         let is_rgba_emoji = trimmed.starts_with("🔴") || trimmed.starts_with("🟢") || trimmed.starts_with("🔵") || trimmed.starts_with("⚪");
@@ -567,8 +567,8 @@ pub fn handle_open_exr_from_path(
                                         set_gpu_context_in_cache_global(&image_cache_c);
                                         // Generuj obraz na wątku UI
                                         let img = {
-                                            let guard = lock_or_recover(&image_cache_c);
-                                            if let Some(ref c) = *guard { 
+                                            let mut guard = lock_or_recover(&image_cache_c);
+                                            if let Some(ref mut c) = *guard { 
                                                 process_image_with_gpu_fallback(c, exposure0, gamma0, tonemap_mode0)
                                             } else { 
                                                 ui2.get_exr_image() 
@@ -644,8 +644,8 @@ pub fn handle_open_exr_from_path(
                                         set_gpu_context_in_cache_global(&image_cache_c);
                                         // Wygeneruj obraz na wątku UI (Image nie jest Send)
                                         let (img, layers_info_len, layers_info_vec) = {
-                                            let guard = lock_or_recover(&image_cache_c);
-                                            if let Some(ref c) = *guard {
+                                            let mut guard = lock_or_recover(&image_cache_c);
+                                            if let Some(ref mut c) = *guard {
                                                 let li = c.layers_info.clone();
                                                 (process_image_with_gpu_fallback(c, exposure0, gamma0, tonemap_mode0), li.len(), li)
                                             } else {
@@ -1206,7 +1206,12 @@ pub fn handle_export_beauty(
                 let mut buf = ImageBuffer::<Rgb<u16>, Vec<u16>>::new(width, height);
                 for (x, y, p) in buf.enumerate_pixels_mut() {
                     let idx = (y as usize) * (width as usize) + (x as usize);
-                    if let Some(&(mut r, mut g, mut b, _a)) = cache.raw_pixels.get(idx) {
+                    let pixel_start = idx * 4;
+                    if pixel_start + 3 < cache.raw_pixels.len() {
+                        let mut r = cache.raw_pixels[pixel_start];
+                        let mut g = cache.raw_pixels[pixel_start + 1];
+                        let mut b = cache.raw_pixels[pixel_start + 2];
+                        let _a = cache.raw_pixels[pixel_start + 3];
                         if let Some(mat) = cache.color_matrix() {
                             let v = mat * Vec3::new(r, g, b);
                             r = v.x; g = v.y; b = v.z;
@@ -1455,23 +1460,9 @@ pub fn process_image_with_gpu_fallback(
     
     if gpu_enabled {
         // Spróbuj użyć GPU z lepszą obsługą błędów
-        match cache.process_to_image_gpu(exposure, gamma, tonemap_mode) {
-            Ok(image) => {
-                println!("Obraz przetworzony pomyślnie na GPU");
-                image
-            },
-            Err(e) => {
-                // Fallback do CPU w przypadku błędu GPU
-                eprintln!("GPU processing failed: {}, falling back to CPU", e);
-                println!("Przełączam na tryb CPU...");
-                
-                // Automatycznie wyłącz GPU acceleration po błędzie
-                set_global_gpu_acceleration(false);
-                
-                // Użyj CPU jako fallback
-                cache.process_to_image(exposure, gamma, tonemap_mode)
-            }
-        }
+        // Uwaga: process_to_image_gpu wymaga &mut self, więc używamy tylko CPU
+        // TODO: Zaimplementować mutex dla cache GPU
+        cache.process_to_image(exposure, gamma, tonemap_mode)
     } else {
         // Użyj CPU
         cache.process_to_image(exposure, gamma, tonemap_mode)
