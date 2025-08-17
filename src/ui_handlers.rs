@@ -70,9 +70,7 @@ static GPU_CONTEXT: std::sync::LazyLock<std::sync::Mutex<Option<Arc<Mutex<Option
 static GPU_ACCELERATION_ENABLED: std::sync::LazyLock<std::sync::Mutex<bool>> =
     std::sync::LazyLock::new(|| std::sync::Mutex::new(false));
 
-// Normalizacja nazw kanałów do skrótu R/G/B/A
-#[inline]
-fn normalize_channel_display_to_short(channel_display: &str) -> String { normalize_channel_name(channel_display) }
+
 
 pub fn handle_layer_tree_click(
     ui_handle: Weak<AppWindow>,
@@ -194,7 +192,7 @@ pub fn handle_layer_tree_click(
                     }
                 };
                 // Jeżeli kliknięto na przyjazną nazwę (Red/Green/Blue/Alpha), zamień na skrót R/G/B/A
-                let channel_short = normalize_channel_display_to_short(&channel_short);
+                let channel_short = normalize_channel_name(&channel_short);
                 // NIE normalizujemy nazw — używamy 1:1 z pliku; jedynie tryb Depth rozpoznamy później po wzorcu
 
                 let path = match file_path {
@@ -493,109 +491,104 @@ pub fn handle_open_exr_from_path(
         prog.set(0.05, Some(&format!("Loading: {}", path.display())));
         push_console(&ui, &console, format!("{{\"event\":\"file.open\",\"path\":\"{}\"}}", path.display()));
 
-        // Zbuduj i wyświetl metadane w zakładce Meta
-        match exr_metadata::read_and_group_metadata(&path) {
-            Ok(meta) => {
-                // Tekstowa wersja (zostawiona jako fallback)
-                let lines = exr_metadata::build_ui_lines(&meta);
-                let text = lines.join("\n");
-                ui.set_meta_text(text.into());
-                // Tabelaryczna wersja 2 kolumny
-                let rows = exr_metadata::build_ui_rows(&meta);
-                let (keys, vals): (Vec<_>, Vec<_>) = rows.into_iter().unzip();
-                ui.set_meta_table_keys(ModelRc::new(VecModel::from(keys.into_iter().map(SharedString::from).collect::<Vec<_>>())));
-                ui.set_meta_table_values(ModelRc::new(VecModel::from(vals.into_iter().map(SharedString::from).collect::<Vec<_>>())));
-                push_console(&ui, &console, format!("[meta] layers: {}", meta.layers.len()));
-                prog.set(0.15, Some("Metadata loaded"));
-            }
-            Err(e) => {
-                ui.set_meta_text(format!("Błąd odczytu metadanych: {}", e).into());
-                push_console(&ui, &console, format!("[error][meta] {}", e));
-                prog.reset();
-            }
-        }
+        // Ładuje metadane pliku EXR i aktualizuje UI
+        match load_metadata(&ui, &path, &console) {
+            Ok(()) => {
+                // Zapisz ścieżkę do pliku
+                { *lock_or_recover(&current_file_path) = Some(path.clone()); }
 
-        // Zapisz ścieżkę do pliku
-        { *lock_or_recover(&current_file_path) = Some(path.clone()); }
+                // Asynchroniczne wczytanie: wybór ścieżki FULL vs LIGHT
+                let file_size_bytes = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+                let force_light = std::env::var("EXRUSTER_LIGHT_OPEN").ok().as_deref() == Some("1");
+                let use_light = force_light || file_size_bytes > 700 * 1024 * 1024; // >700MB ⇒ light
 
-        // Asynchroniczne wczytanie: wybór ścieżki FULL vs LIGHT
-        let file_size_bytes = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-        let force_light = std::env::var("EXRUSTER_LIGHT_OPEN").ok().as_deref() == Some("1");
-        let use_light = force_light || file_size_bytes > 700 * 1024 * 1024; // >700MB ⇒ light
+                prog.set(0.22, Some(if use_light { "Reading EXR (light)..." } else { "Reading EXR (full)..." }));
+                ui.set_progress_value(-1.0);
 
-        prog.set(0.22, Some(if use_light { "Reading EXR (light)..." } else { "Reading EXR (full)..." }));
-        ui.set_progress_value(-1.0);
+                // Pobierz aktualne parametry przetwarzania
+                let exposure0 = ui.get_exposure_value();
+                let gamma0 = ui.get_gamma_value();
+                let tonemap_mode0 = ui.get_tonemap_mode() as i32;
 
-        // Pobierz aktualne parametry przetwarzania
-        let exposure0 = ui.get_exposure_value();
-        let gamma0 = ui.get_gamma_value();
-        let tonemap_mode0 = ui.get_tonemap_mode() as i32;
+                let ui_weak = ui.as_weak();
+                let image_cache_c = image_cache.clone();
+                let full_exr_cache_c = full_exr_cache.clone();
+                let path_c = path.clone();
 
-        let ui_weak = ui.as_weak();
-        let image_cache_c = image_cache.clone();
-        let full_exr_cache_c = full_exr_cache.clone();
-        let path_c = path.clone();
+                if use_light {
+                    rayon::spawn(move || {
+                        let t_start = Instant::now();
+                        // Odczytaj tylko najlepszą warstwę i zbuduj minimalny cache
+                        let light_res = (|| -> anyhow::Result<std::sync::Arc<FullExrCacheData>> {
+                            let layers = crate::image_cache::extract_layers_info(&path_c)?;
+                            let best = crate::image_cache::find_best_layer(&layers);
+                            let lc = crate::image_cache::load_all_channels_for_layer(&path_c, &best, None)?;
+                            let fl = FullLayer {
+                                name: lc.layer_name.clone(),
+                                width: lc.width,
+                                height: lc.height,
+                                channel_names: lc.channel_names.clone(),
+                                channel_data: lc.channel_data.to_vec(),
+                            };
+                            Ok(std::sync::Arc::new(FullExrCacheData { layers: vec![fl] }))
+                        })();
 
-        if use_light {
-            rayon::spawn(move || {
-                let t_start = Instant::now();
-                // Odczytaj tylko najlepszą warstwę i zbuduj minimalny cache
-                let light_res = (|| -> anyhow::Result<std::sync::Arc<FullExrCacheData>> {
-                    let layers = crate::image_cache::extract_layers_info(&path_c)?;
-                    let best = crate::image_cache::find_best_layer(&layers);
-                    let lc = crate::image_cache::load_all_channels_for_layer(&path_c, &best, None)?;
-                    let fl = FullLayer {
-                        name: lc.layer_name.clone(),
-                        width: lc.width,
-                        height: lc.height,
-                        channel_names: lc.channel_names.clone(),
-                        channel_data: lc.channel_data.to_vec(),
-                    };
-                    Ok(std::sync::Arc::new(FullExrCacheData { layers: vec![fl] }))
-                })();
+                        match light_res {
+                            Ok(full) => {
+                                let cache_res = crate::image_cache::ImageCache::new_with_full_cache(&path_c, full.clone());
+                                match cache_res {
+                                    Ok(cache) => {
+                                        let _ = invoke_from_event_loop(move || {
+                                            if let Some(ui2) = ui_weak.upgrade() {
+                                                { let mut g = lock_or_recover(&full_exr_cache_c); *g = Some(full.clone()); }
+                                                { let mut cg = lock_or_recover(&image_cache_c); *cg = Some(cache); }
+                                                // Ustaw kontekst GPU w ImageCache
+                                                set_gpu_context_in_cache_global(&image_cache_c);
+                                                // Generuj obraz na wątku UI
+                                                let img = {
+                                                    let mut guard = lock_or_recover(&image_cache_c);
+                                                    if let Some(ref mut c) = *guard { 
+                                                        process_image_with_gpu_fallback(c, exposure0, gamma0, tonemap_mode0)
+                                                    } else { 
+                                                        ui2.get_exr_image() 
+                                                    }
+                                                };
+                                                ui2.set_exr_image(img);
 
-                match light_res {
-                    Ok(full) => {
-                        let cache_res = crate::image_cache::ImageCache::new_with_full_cache(&path_c, full.clone());
-                        match cache_res {
-                            Ok(cache) => {
-                                let _ = invoke_from_event_loop(move || {
-                                    if let Some(ui2) = ui_weak.upgrade() {
-                                        { let mut g = lock_or_recover(&full_exr_cache_c); *g = Some(full.clone()); }
-                                        { let mut cg = lock_or_recover(&image_cache_c); *cg = Some(cache); }
-                                        // Ustaw kontekst GPU w ImageCache
-                                        set_gpu_context_in_cache_global(&image_cache_c);
-                                        // Generuj obraz na wątku UI
-                                        let img = {
-                                            let mut guard = lock_or_recover(&image_cache_c);
-                                            if let Some(ref mut c) = *guard { 
-                                                process_image_with_gpu_fallback(c, exposure0, gamma0, tonemap_mode0)
-                                            } else { 
-                                                ui2.get_exr_image() 
+                                                // Zaktualizuj listę warstw
+                                                let layers_info_vec = {
+                                                    let guard = lock_or_recover(&image_cache_c);
+                                                    guard.as_ref().map(|c| c.layers_info.clone()).unwrap_or_default()
+                                                };
+                                                if !layers_info_vec.is_empty() {
+                                                    let (layers_model, layers_colors, layers_font_sizes) = create_layers_model(&layers_info_vec, &ui2);
+                                                    ui2.set_layers_model(layers_model);
+                                                    ui2.set_layers_colors(layers_colors);
+                                                    ui2.set_layers_font_sizes(layers_font_sizes);
+                                                }
+
+                                                let mut log = ui2.get_console_text().to_string();
+                                                if !log.is_empty() { log.push('\n'); }
+                                                log.push_str(&format!("[light] image ready in {} ms", t_start.elapsed().as_millis()));
+                                                ui2.set_console_text(log.into());
+                                                ui2.set_status_text("Loaded (light)".into());
+                                                ui2.set_progress_value(1.0);
                                             }
-                                        };
-                                        ui2.set_exr_image(img);
-
-                                        // Zaktualizuj listę warstw
-                                        let layers_info_vec = {
-                                            let guard = lock_or_recover(&image_cache_c);
-                                            guard.as_ref().map(|c| c.layers_info.clone()).unwrap_or_default()
-                                        };
-                                        if !layers_info_vec.is_empty() {
-                                            let (layers_model, layers_colors, layers_font_sizes) = create_layers_model(&layers_info_vec, &ui2);
-                                            ui2.set_layers_model(layers_model);
-                                            ui2.set_layers_colors(layers_colors);
-                                            ui2.set_layers_font_sizes(layers_font_sizes);
-                                        }
-
-                                        let mut log = ui2.get_console_text().to_string();
-                                        if !log.is_empty() { log.push('\n'); }
-                                        log.push_str(&format!("[light] image ready in {} ms", t_start.elapsed().as_millis()));
-                                        ui2.set_console_text(log.into());
-                                        ui2.set_status_text("Loaded (light)".into());
-                                        ui2.set_progress_value(1.0);
+                                        });
                                     }
-                                });
+                                    Err(e) => {
+                                        let _ = invoke_from_event_loop(move || {
+                                            if let Some(ui2) = ui_weak.upgrade() {
+                                                ui2.set_status_text(format!("Read error '{}': {}", get_file_name(&path_c), e).into());
+                                                let mut log = ui2.get_console_text().to_string();
+                                                if !log.is_empty() { log.push('\n'); }
+                                                log.push_str(&format!("[error] light open: {}", e));
+                                                ui2.set_console_text(log.into());
+                                                ui2.set_progress_value(0.0);
+                                            }
+                                        });
+                                    }
+                                }
                             }
                             Err(e) => {
                                 let _ = invoke_from_event_loop(move || {
@@ -610,65 +603,65 @@ pub fn handle_open_exr_from_path(
                                 });
                             }
                         }
-                    }
-                    Err(e) => {
-                        let _ = invoke_from_event_loop(move || {
-                            if let Some(ui2) = ui_weak.upgrade() {
-                                ui2.set_status_text(format!("Read error '{}': {}", get_file_name(&path_c), e).into());
-                                let mut log = ui2.get_console_text().to_string();
-                                if !log.is_empty() { log.push('\n'); }
-                                log.push_str(&format!("[error] light open: {}", e));
-                                ui2.set_console_text(log.into());
-                                ui2.set_progress_value(0.0);
-                            }
-                        });
-                    }
-                }
-            });
-        } else {
-            // FULL ścieżka (dotychczasowa)
-            rayon::spawn(move || {
-                let t_start = Instant::now();
-                let full_res = build_full_exr_cache(&path_c, None).map(std::sync::Arc::new);
-                match full_res {
-                    Ok(full) => {
-                        let t_new = Instant::now();
-                        let cache_res = crate::image_cache::ImageCache::new_with_full_cache(&path_c, full.clone());
-                        match cache_res {
-                            Ok(cache) => {
-                                let _ = invoke_from_event_loop(move || {
-                                    if let Some(ui2) = ui_weak.upgrade() {
-                                        { let mut g = lock_or_recover(&full_exr_cache_c); *g = Some(full.clone()); }
-                                        { let mut cg = lock_or_recover(&image_cache_c); *cg = Some(cache); }
-                                        // Ustaw kontekst GPU w ImageCache
-                                        set_gpu_context_in_cache_global(&image_cache_c);
-                                        // Wygeneruj obraz na wątku UI (Image nie jest Send)
-                                        let (img, layers_info_len, layers_info_vec) = {
-                                            let mut guard = lock_or_recover(&image_cache_c);
-                                            if let Some(ref mut c) = *guard {
-                                                let li = c.layers_info.clone();
-                                                (process_image_with_gpu_fallback(c, exposure0, gamma0, tonemap_mode0), li.len(), li)
-                                            } else {
-                                                (ui2.get_exr_image(), 0usize, Vec::new())
+                    });
+                } else {
+                    // FULL ścieżka (dotychczasowa)
+                    rayon::spawn(move || {
+                        let t_start = Instant::now();
+                        let full_res = build_full_exr_cache(&path_c, None).map(std::sync::Arc::new);
+                        match full_res {
+                            Ok(full) => {
+                                let t_new = Instant::now();
+                                let cache_res = crate::image_cache::ImageCache::new_with_full_cache(&path_c, full.clone());
+                                match cache_res {
+                                    Ok(cache) => {
+                                        let _ = invoke_from_event_loop(move || {
+                                            if let Some(ui2) = ui_weak.upgrade() {
+                                                { let mut g = lock_or_recover(&full_exr_cache_c); *g = Some(full.clone()); }
+                                                { let mut cg = lock_or_recover(&image_cache_c); *cg = Some(cache); }
+                                                // Ustaw kontekst GPU w ImageCache
+                                                set_gpu_context_in_cache_global(&image_cache_c);
+                                                // Wygeneruj obraz na wątku UI (Image nie jest Send)
+                                                let (img, layers_info_len, layers_info_vec) = {
+                                                    let mut guard = lock_or_recover(&image_cache_c);
+                                                    if let Some(ref mut c) = *guard {
+                                                        let li = c.layers_info.clone();
+                                                        (process_image_with_gpu_fallback(c, exposure0, gamma0, tonemap_mode0), li.len(), li)
+                                                    } else {
+                                                        (ui2.get_exr_image(), 0usize, Vec::new())
+                                                    }
+                                                };
+                                                ui2.set_exr_image(img);
+                                                if !layers_info_vec.is_empty() {
+                                                    let (layers_model, layers_colors, layers_font_sizes) = create_layers_model(&layers_info_vec, &ui2);
+                                                    ui2.set_layers_model(layers_model);
+                                                    ui2.set_layers_colors(layers_colors);
+                                                    ui2.set_layers_font_sizes(layers_font_sizes);
+                                                }
+                                                let mut log = ui2.get_console_text().to_string();
+                                                let mut append = |line: String| { if !log.is_empty() { log.push('\n'); } log.push_str(&line); };
+                                                append(format!("[cache] cache created ({} ms)", t_new.elapsed().as_millis()));
+                                                append(format!("[preview] image updated (exp: {:.2}, gamma: {:.2})", exposure0, gamma0));
+                                                append(format!("[layers] count: {}", layers_info_len));
+                                                ui2.set_console_text(log.into());
+                                                ui2.set_status_text(format!("Loaded in {} ms", t_start.elapsed().as_millis()).into());
+                                                ui2.set_progress_value(1.0);
                                             }
-                                        };
-                                        ui2.set_exr_image(img);
-                                        if !layers_info_vec.is_empty() {
-                                            let (layers_model, layers_colors, layers_font_sizes) = create_layers_model(&layers_info_vec, &ui2);
-                                            ui2.set_layers_model(layers_model);
-                                            ui2.set_layers_colors(layers_colors);
-                                            ui2.set_layers_font_sizes(layers_font_sizes);
-                                        }
-                                        let mut log = ui2.get_console_text().to_string();
-                                        let mut append = |line: String| { if !log.is_empty() { log.push('\n'); } log.push_str(&line); };
-                                        append(format!("[cache] cache created ({} ms)", t_new.elapsed().as_millis()));
-                                        append(format!("[preview] image updated (exp: {:.2}, gamma: {:.2})", exposure0, gamma0));
-                                        append(format!("[layers] count: {}", layers_info_len));
-                                        ui2.set_console_text(log.into());
-                                        ui2.set_status_text(format!("Loaded in {} ms", t_start.elapsed().as_millis()).into());
-                                        ui2.set_progress_value(1.0);
+                                        });
                                     }
-                                });
+                                    Err(e) => {
+                                        let _ = invoke_from_event_loop(move || {
+                                            if let Some(ui2) = ui_weak.upgrade() {
+                                                ui2.set_status_text(format!("Read error '{}': {}", get_file_name(&path_c), e).into());
+                                                let mut log = ui2.get_console_text().to_string();
+                                                if !log.is_empty() { log.push('\n'); }
+                                                log.push_str(&format!("[error] reading file '{}': {}", get_file_name(&path_c), e));
+                                                ui2.set_console_text(log.into());
+                                                ui2.set_progress_value(0.0);
+                                            }
+                                        });
+                                    }
+                                }
                             }
                             Err(e) => {
                                 let _ = invoke_from_event_loop(move || {
@@ -683,21 +676,43 @@ pub fn handle_open_exr_from_path(
                                 });
                             }
                         }
-                    }
-                    Err(e) => {
-                        let _ = invoke_from_event_loop(move || {
-                            if let Some(ui2) = ui_weak.upgrade() {
-                                ui2.set_status_text(format!("Read error '{}': {}", get_file_name(&path_c), e).into());
-                                let mut log = ui2.get_console_text().to_string();
-                                if !log.is_empty() { log.push('\n'); }
-                                log.push_str(&format!("[error] reading file '{}': {}", get_file_name(&path_c), e));
-                                ui2.set_console_text(log.into());
-                                ui2.set_progress_value(0.0);
-                            }
-                        });
-                    }
+                    });
                 }
-            });
+            }
+            Err(e) => {
+                ui.set_status_text(format!("Błąd odczytu metadanych: {}", e).into());
+                push_console(&ui, &console, format!("[error][meta] {}", e));
+                prog.reset();
+            }
+        }
+    }
+}
+
+/// Ładuje metadane pliku EXR i aktualizuje UI
+fn load_metadata(
+    ui: &AppWindow,
+    path: &Path,
+    console: &ConsoleModel,
+) -> Result<(), anyhow::Error> {
+    // Zbuduj i wyświetl metadane w zakładce Meta
+    match exr_metadata::read_and_group_metadata(path) {
+        Ok(meta) => {
+            // Tekstowa wersja (zostawiona jako fallback)
+            let lines = exr_metadata::build_ui_lines(&meta);
+            let text = lines.join("\n");
+            ui.set_meta_text(text.into());
+            // Tabelaryczna wersja 2 kolumny
+            let rows = exr_metadata::build_ui_rows(&meta);
+            let (keys, vals): (Vec<_>, Vec<_>) = rows.into_iter().unzip();
+            ui.set_meta_table_keys(ModelRc::new(VecModel::from(keys.into_iter().map(SharedString::from).collect::<Vec<_>>())));
+            ui.set_meta_table_values(ModelRc::new(VecModel::from(vals.into_iter().map(SharedString::from).collect::<Vec<_>>())));
+            push_console(ui, console, format!("[meta] layers: {}", meta.layers.len()));
+            Ok(())
+        }
+        Err(e) => {
+            ui.set_meta_text(format!("Błąd odczytu metadanych: {}", e).into());
+            push_console(ui, console, format!("[error][meta] {}", e));
+            Err(e)
         }
     }
 }
@@ -717,47 +732,10 @@ pub fn handle_parameter_changed_throttled(
             let final_exposure = exposure.unwrap_or_else(|| ui.get_exposure_value());
             let final_gamma = gamma.unwrap_or_else(|| ui.get_gamma_value());
             
-            // Użyj thumbnail dla real-time preview jeśli obraz jest duży, ale nie schodź poniżej 1:1 względem widżetu
-            // Uwzględnij HiDPI i image-fit: contain (dopasowanie aspektu)
             let tonemap_mode = ui.get_tonemap_mode() as i32;
-            let preview_w = ui.get_preview_area_width() as f32;
-            let preview_h = ui.get_preview_area_height() as f32;
-            let dpr = ui.window().scale_factor() as f32;
-            let img_w = cache.width as f32;
-            let img_h = cache.height as f32;
-            let container_ratio = if preview_h > 0.0 { preview_w / preview_h } else { 1.0 };
-            let image_ratio = if img_h > 0.0 { img_w / img_h } else { 1.0 };
-            // Dłuzszy bok obrazu po dopasowaniu do kontenera (contain)
-            let display_long_side_logical = if container_ratio > image_ratio { preview_h * image_ratio } else { preview_w };
-            let target = (display_long_side_logical * dpr).round().max(1.0) as u32;
-            let image = if cache.raw_pixels.len() > 2_000_000 {
-                cache.process_to_thumbnail(final_exposure, final_gamma, tonemap_mode, target)
-            } else {
-                process_image_with_gpu_fallback(cache, final_exposure, final_gamma, tonemap_mode)
-            };
+            let image = update_preview_image(&ui, cache, final_exposure, final_gamma, tonemap_mode, &console);
             
             ui.set_exr_image(image);
-            // Throttled log do konsoli: co najmniej 300 ms odstępu, z diagnostyką DPI i dopasowania
-            let mut last = lock_or_recover(&LAST_PREVIEW_LOG);
-            let now = Instant::now();
-            if last.map(|t| now.duration_since(t).as_millis() >= 300).unwrap_or(true) {
-                let display_w_logical = if container_ratio > image_ratio { preview_h * image_ratio } else { preview_w };
-                let display_h_logical = if container_ratio > image_ratio { preview_h } else { preview_w / image_ratio };
-                let win_w = ui.get_window_width() as u32;
-                let win_h = ui.get_window_height() as u32;
-                let win_w_px = (win_w as f32 * dpr).round() as u32;
-                let win_h_px = (win_h as f32 * dpr).round() as u32;
-                push_console(&ui, &console,
-                    format!("[preview] params: exp={:.2}, gamma={:.2} | window={}x{} (≈{}x{} px @{}x) | view={}x{} @{}x | img={}x{} | display≈{}x{} px target={} px",
-                        final_exposure, final_gamma,
-                        win_w, win_h, win_w_px, win_h_px, dpr,
-                        preview_w as u32, preview_h as u32, dpr,
-                        img_w as u32, img_h as u32,
-                        (display_w_logical * dpr).round() as u32,
-                        (display_h_logical * dpr).round() as u32,
-                        target));
-                *last = Some(now);
-            }
             
             // Aktualizuj status bar z informacją o zmienionym parametrze
             if exposure.is_some() && gamma.is_some() {
@@ -771,7 +749,58 @@ pub fn handle_parameter_changed_throttled(
     }
 }
 
-
+/// Aktualizuje podgląd obrazu na podstawie aktualnych parametrów UI
+pub fn update_preview_image(
+    ui: &AppWindow,
+    cache: &ImageCache,
+    exposure: f32,
+    gamma: f32,
+    tonemap_mode: i32,
+    console: &ConsoleModel,
+) -> slint::Image {
+    // Użyj thumbnail dla real-time preview jeśli obraz jest duży, ale nie schodź poniżej 1:1 względem widżetu
+    // Uwzględnij HiDPI i image-fit: contain (dopasowanie aspektu)
+    let preview_w = ui.get_preview_area_width() as f32;
+    let preview_h = ui.get_preview_area_height() as f32;
+    let dpr = ui.window().scale_factor() as f32;
+    let img_w = cache.width as f32;
+    let img_h = cache.height as f32;
+    let container_ratio = if preview_h > 0.0 { preview_w / preview_h } else { 1.0 };
+    let image_ratio = if img_h > 0.0 { img_w / img_h } else { 1.0 };
+    // Dłuzszy bok obrazu po dopasowaniu do kontenera (contain)
+    let display_long_side_logical = if container_ratio > image_ratio { preview_h * image_ratio } else { preview_w };
+    let target = (display_long_side_logical * dpr).round().max(1.0) as u32;
+    
+    let image = if cache.raw_pixels.len() > 2_000_000 {
+        cache.process_to_thumbnail(exposure, gamma, tonemap_mode, target)
+    } else {
+        process_image_with_gpu_fallback(cache, exposure, gamma, tonemap_mode)
+    };
+    
+    // Throttled log do konsoli: co najmniej 300 ms odstępu, z diagnostyką DPI i dopasowania
+    let mut last = lock_or_recover(&LAST_PREVIEW_LOG);
+    let now = Instant::now();
+    if last.map(|t| now.duration_since(t).as_millis() >= 300).unwrap_or(true) {
+        let display_w_logical = if container_ratio > image_ratio { preview_h * image_ratio } else { preview_w };
+        let display_h_logical = if container_ratio > image_ratio { preview_h } else { preview_w / image_ratio };
+        let win_w = ui.get_window_width() as u32;
+        let win_h = ui.get_window_height() as u32;
+        let win_w_px = (win_w as f32 * dpr).round() as u32;
+        let win_h_px = (win_h as f32 * dpr).round() as u32;
+        push_console(ui, console,
+            format!("[preview] params: exp={:.2}, gamma={:.2} | window={}x{} (≈{}x{} px @{}x) | view={}x{} @{}x | img={}x{} | display≈{}x{} px target={} px",
+                exposure, gamma,
+                win_w, win_h, win_w_px, win_h_px, dpr,
+                preview_w as u32, preview_h as u32, dpr,
+                img_w as u32, img_h as u32,
+                (display_w_logical * dpr).round() as u32,
+                (display_h_logical * dpr).round() as u32,
+                target));
+        *last = Some(now);
+    }
+    
+    image
+}
 
 pub fn create_layers_model(
     layers_info: &[crate::image_cache::LayerInfo],

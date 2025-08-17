@@ -367,20 +367,7 @@ fn setup_image_control_callbacks(
                 if let Some(ref cache) = *cache_guard {
                     let exposure = ui.get_exposure_value();
                     let gamma = ui.get_gamma_value();
-                    let preview_w = ui.get_preview_area_width() as f32;
-                    let preview_h = ui.get_preview_area_height() as f32;
-                    let dpr = ui.window().scale_factor() as f32;
-                    let img_w = cache.width as f32;
-                    let img_h = cache.height as f32;
-                    let container_ratio = if preview_h > 0.0 { preview_w / preview_h } else { 1.0 };
-                    let image_ratio = if img_h > 0.0 { img_w / img_h } else { 1.0 };
-                    let display_long_side_logical = if container_ratio > image_ratio { preview_h * image_ratio } else { preview_w };
-                    let target = (display_long_side_logical * dpr).round().max(1.0) as u32;
-                    let image = if cache.raw_pixels.len() > 2_000_000 {
-                        cache.process_to_thumbnail(exposure, gamma, mode, target)
-                    } else {
-                        cache.process_to_image(exposure, gamma, mode)
-                    };
+                    let image = ui_handlers::update_preview_image(&ui, cache, exposure, gamma, mode, &console);
                     ui.set_exr_image(image);
                     push_console(&ui, &console, format!("[preview] updated → tonemap mode: {}", mode));
                     ui.set_status_text(format!("Tonemap: {}", match mode {0=>"ACES",1=>"Reinhard",2=>"Linear", _=>"?"}).into());
@@ -401,6 +388,10 @@ fn setup_image_control_callbacks(
                     let exposure = ui.get_exposure_value();
                     let gamma = ui.get_gamma_value();
                     let mode = ui.get_tonemap_mode() as i32;
+                    let image = ui_handlers::update_preview_image(&ui, cache, exposure, gamma, mode, &console);
+                    ui.set_exr_image(image);
+                    
+                    // Dodatkowe logowanie dla zmiany geometrii
                     let preview_w = ui.get_preview_area_width() as f32;
                     let preview_h = ui.get_preview_area_height() as f32;
                     let dpr = ui.window().scale_factor() as f32;
@@ -408,14 +399,6 @@ fn setup_image_control_callbacks(
                     let img_h = cache.height as f32;
                     let container_ratio = if preview_h > 0.0 { preview_w / preview_h } else { 1.0 };
                     let image_ratio = if img_h > 0.0 { img_w / img_h } else { 1.0 };
-                    let display_long_side_logical = if container_ratio > image_ratio { preview_h * image_ratio } else { preview_w };
-                    let target = (display_long_side_logical * dpr).round().max(1.0) as u32;
-                    let image = if cache.raw_pixels.len() > 2_000_000 {
-                        cache.process_to_thumbnail(exposure, gamma, mode, target)
-                    } else {
-                        cache.process_to_image(exposure, gamma, mode)
-                    };
-                    ui.set_exr_image(image);
                     let display_w_logical = if container_ratio > image_ratio { preview_h * image_ratio } else { preview_w };
                     let display_h_logical = if container_ratio > image_ratio { preview_h } else { preview_w / image_ratio };
                     let win_w = ui.get_window_width() as u32;
@@ -423,13 +406,12 @@ fn setup_image_control_callbacks(
                     let win_w_px = (win_w as f32 * dpr).round() as u32;
                     let win_h_px = (win_h as f32 * dpr).round() as u32;
                     ui_handlers::push_console(&ui, &console, format!(
-                        "[preview] resized → window={}x{} (≈{}x{} px @{}x) | view={}x{} @{}x | img={}x{} | display≈{}x{} px target={} px",
+                        "[preview] resized → window={}x{} (≈{}x{} px @{}x) | view={}x{} @{}x | img={}x{} | display≈{}x{} px",
                         win_w, win_h, win_w_px, win_h_px, dpr,
                         preview_w as u32, preview_h as u32, dpr,
                         img_w as u32, img_h as u32,
                         (display_w_logical * dpr).round() as u32,
-                        (display_h_logical * dpr).round() as u32,
-                        target
+                        (display_h_logical * dpr).round() as u32
                     ));
                 }
             }
