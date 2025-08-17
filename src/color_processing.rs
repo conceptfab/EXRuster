@@ -1,6 +1,6 @@
 use std::path::Path;
 use ::exr::meta::attribute::AttributeValue;
-use glam::{DMat3, DVec3, Mat3, Vec3};
+use glam::{DMat3, DVec3, Mat3};
 
 // Make the main function public
 pub fn compute_rgb_to_srgb_matrix_from_file_for_layer(path: &Path, layer_name: &str) -> anyhow::Result<Mat3> {
@@ -84,11 +84,7 @@ fn rgb_to_xyz_from_primaries(rx: f64, ry: f64, gx: f64, gy: f64, bx: f64, by: f6
     let s = m.inverse() * w;
     let scaled = DMat3::from_cols(r * s.x, g * s.y, b * s.z);
     // Konwersja do f32
-    Mat3::from_cols(
-        Vec3::new(scaled.x_axis.x as f32, scaled.x_axis.y as f32, scaled.x_axis.z as f32),
-        Vec3::new(scaled.y_axis.x as f32, scaled.y_axis.y as f32, scaled.y_axis.z as f32),
-        Vec3::new(scaled.z_axis.x as f32, scaled.z_axis.y as f32, scaled.z_axis.z as f32),
-    )
+    scaled.as_mat3()
 }
 
 fn xyz_to_srgb_matrix() -> Mat3 {
@@ -129,11 +125,7 @@ fn bradford_adaptation_matrix(src_xy: (f64, f64), dst_xy: (f64, f64)) -> Mat3 {
     let tmp = m_inv * (scale * m);
 
     // Convert to f32 Mat3
-    Mat3::from_cols(
-        Vec3::new(tmp.x_axis.x as f32, tmp.x_axis.y as f32, tmp.x_axis.z as f32),
-        Vec3::new(tmp.y_axis.x as f32, tmp.y_axis.y as f32, tmp.y_axis.z as f32),
-        Vec3::new(tmp.z_axis.x as f32, tmp.z_axis.y as f32, tmp.z_axis.z as f32),
-    )
+    tmp.as_mat3()
 }
 
 fn xy_to_xyz(x: f64, y: f64) -> DVec3 {
