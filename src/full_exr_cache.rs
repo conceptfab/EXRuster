@@ -58,9 +58,9 @@ pub fn build_full_exr_cache(
             // Jeśli rozmiary różnią się (rzadkie), preferuj pierwszy i pomiń konfliktujące kanały
             if entry.0 != width || entry.1 != height { continue; }
             entry.2.push(short);
-            for i in 0..pixel_count {
-                entry.3.push(layer.channel_data.list[idx].sample_data.value_by_flat_index(i).to_f32());
-            }
+            let samples = (0..pixel_count)
+                .map(|i| layer.channel_data.list[idx].sample_data.value_by_flat_index(i).to_f32());
+            entry.3.extend(samples);
         }
     }
 
