@@ -1,5 +1,4 @@
 
-c
 
 ## FAZA 3: Zaawansowane funkcje GPU (Priorytet: NISKI)
 
