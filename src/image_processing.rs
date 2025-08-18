@@ -181,21 +181,20 @@ fn filmic_tonemap_simd(x: f32x4) -> f32x4 {
 
 #[inline]
 fn hable_tonemap_simd(x: f32x4) -> f32x4 {
-    let x_safe = x.simd_max(Simd::splat(0.0));
-    let a = Simd::splat(0.15);
-    let b = Simd::splat(0.50);
-    let c = Simd::splat(0.10);
-    let d = Simd::splat(0.20);
-    let e = Simd::splat(0.02);
-    let w = Simd::splat(11.2);
-    let epsilon = Simd::splat(1e-9);
+    // Uncharted 2 tone mapping (John Hable) - PRAWIDŁOWA IMPLEMENTACJA
+    let x_safe: f32x4 = x.simd_max(Simd::splat(0.0_f32));
+    let a: f32x4 = Simd::splat(0.15_f32);
+    let b: f32x4 = Simd::splat(0.50_f32);
+    let c: f32x4 = Simd::splat(0.10_f32);
+    let d: f32x4 = Simd::splat(0.20_f32);
+    let e: f32x4 = Simd::splat(0.02_f32);
+    let f: f32x4 = Simd::splat(0.30_f32);
+    let w: f32x4 = Simd::splat(11.2_f32);
     
-    let numerator = (x_safe * (a * x_safe + c * b) + d * e) * (x_safe * (a * x_safe + b) + d * c);
-    let denominator = (x_safe * (a * x_safe + b) + d * c) * (x_safe * (a * x_safe + c * b) + d * e);
+    let curr: f32x4 = ((x_safe * (a * x_safe + c * b) + d * e) / (x_safe * (a * x_safe + b) + d * f)) - e / f;
+    let white_scale: f32x4 = Simd::splat(1.0) / (((w * (a * w + c * b) + d * e) / (w * (a * w + b) + d * f)) - e / f);
     
-    let white_scale = Simd::splat(1.0) / (((w * (a * w + c * b) + d * e) * (w * (a * w + b) + d * c)) / ((w * (a * w + b) + d * c) * (w * (a * w + c * b) + d * e)));
-    
-    (numerator / (denominator + epsilon) * white_scale).simd_clamp(Simd::splat(0.0), Simd::splat(1.0))
+    (curr * white_scale).simd_clamp(Simd::splat(0.0), Simd::splat(1.0))
 }
 
 #[inline]
