@@ -137,7 +137,10 @@ export component AppWindow inherits Window {
     callback open-console-window(); // otwórz okno konsoli
     callback navigate-thumbnails(int); // nawigacja miniatur: -1 wstecz, +1 dalej
     callback key-pressed-debug(string); // diagnostyka: logowanie nazwy klawisza
-     // Export callbacks zostały usunięte
+     // Export callbacks
+     callback export-convert();
+     callback export-beauty();
+     callback export-channels();
      
      // GPU status callback
      callback gpu-status-changed();
@@ -692,7 +695,35 @@ export component AppWindow inherits Window {
                 Rectangle {
                     height: 2px;
                 }
-                // Sekcja exportu została usunięta - przyciski pozostają w UI ale nie mają funkcjonalności
+                // Export section
+                HorizontalBox {
+                    width: parent.width;
+                    spacing: 0px;
+                    Text {
+                        text: "Export";
+                        color: Kolory.tekst;
+                        font-size: 13px;
+                        font-family: "Geist";
+                        font-weight: 300;
+                        horizontal-alignment: left;
+                        vertical-alignment: center;
+                    }
+                }
+
+                // Convert: EXR -> TIFF (32F RGBA)
+                HorizontalBox { width: parent.width; height: 25px; spacing: 0px;
+                    PrzyciskAkcji { text: "Export All16 bit"; height: 25px; width: parent.width - controls_inset*2; clicked => { export-convert(); } }
+                }
+
+                // Export Beauty: 16-bit PNG (with exposure/gamma)
+                HorizontalBox { width: parent.width; height: 25px; spacing: 0px;
+                    PrzyciskAkcji { text: "Export default"; height: 25px; width: parent.width - controls_inset*2; clicked => { export-beauty(); } }
+                }
+
+                // Export Channels: PNG16 grayscale per channel
+                HorizontalBox { width: parent.width; height: 25px; spacing: 0px;
+                    PrzyciskAkcji { text: "Export prefix"; height: 25px; width: parent.width - controls_inset*2; clicked => { export-channels(); } }
+                }
             }
 
             // Nakładka maskująca prawą krawędź, aby uniknąć podwójnego obramowania przy krawędzi okna
