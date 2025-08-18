@@ -1,8 +1,8 @@
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use anyhow::Context;
 use ::exr::meta::attribute::AttributeValue;
-use crate::utils::{split_layer_and_short, human_size};
+use crate::utils::human_size;
 
 #[derive(Debug, Clone)]
 pub struct MetadataGroup {
@@ -11,39 +11,23 @@ pub struct MetadataGroup {
 }
 
 #[derive(Debug, Clone)]
-pub struct LayerChannelsGroup {
-    #[allow(dead_code)]
-    pub group_name: String,         // np. "RGB", "Alpha", "Depth", "Cryptomatte", "Normals", "Motion", "Other"
-    #[allow(dead_code)]
-    pub channels: Vec<String>,      // krótkie nazwy kanałów w tej grupie
-}
-
-#[derive(Debug, Clone)]
 pub struct LayerMetadata {
     pub name: String,               // pusta nazwa oznacza warstwę bazową bez prefiksu
     pub width: u32,
     pub height: u32,
-    #[allow(dead_code)]
-    pub channel_groups: Vec<LayerChannelsGroup>,
+    // Usunięte nieużywane pole channel_groups
     pub attributes: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone)]
 pub struct ExrMetadata {
-    #[allow(dead_code)]
-    pub path: PathBuf,
-    #[allow(dead_code)]
-    pub file_size_bytes: u64,
+    // Usunięte nieużywane pola path i file_size_bytes
     pub groups: Vec<MetadataGroup>,
     pub layers: Vec<LayerMetadata>,
 }
 
 /// Publiczne API: odczytuje metadane z pliku EXR, porządkuje je i zwraca strukturę
 pub fn read_and_group_metadata(path: &Path) -> anyhow::Result<ExrMetadata> {
-    let meta = fs::metadata(path)
-        .with_context(|| format!("Nie można pobrać metadata pliku: {}", path.display()))?;
-    let file_size_bytes = meta.len();
-
     // Odczytaj wyłącznie meta-dane (nagłówki) bez pikseli
     let meta = ::exr::meta::MetaData::read_from_file(path, /*pedantic=*/false)
         .with_context(|| format!("Błąd odczytu EXR (nagłówki): {}", path.display()))?;
@@ -51,7 +35,7 @@ pub fn read_and_group_metadata(path: &Path) -> anyhow::Result<ExrMetadata> {
     // Grupa ogólna (do UI): podstawowe informacje o pliku i obrazie
     let mut general_items: Vec<(String, String)> = Vec::new();
     general_items.push(("Ścieżka".into(), path.display().to_string()));
-    general_items.push(("Rozmiar pliku".into(), human_size(file_size_bytes)));
+    general_items.push(("Rozmiar pliku".into(), human_size(fs::metadata(path).map(|m| m.len()).unwrap_or(0))));
     general_items.push(("Warstwy".into(), meta.headers.len().to_string()));
 
     // Zbierz nagłówek pliku jako key→value. Preferuj typowane atrybuty
@@ -105,16 +89,8 @@ pub fn read_and_group_metadata(path: &Path) -> anyhow::Result<ExrMetadata> {
         let w = header.layer_size.width() as u32;
         let h = header.layer_size.height() as u32;
 
-        // Grupowanie kanałów według logiki do UI
-        let mut groups: GroupBuckets = GroupBuckets::new();
-        for ch in &header.channels.list {
-            let full = ch.name.to_string();
-            let (lname, short) = split_layer_and_short(&full, base_layer_name.as_deref());
-            let _ = lname; // lname nieużywane dalej, ale poprawne dla dopasowania
-            groups.push(short);
-        }
-
-        let channel_groups: Vec<LayerChannelsGroup> = groups.into_sorted_vec();
+        // Usunięte grupowanie kanałów - nieużywane
+        // let channel_groups: Vec<LayerChannelsGroup> = groups.into_sorted_vec();
 
         // Nazwa warstwy (pusta dla warstwy bazowej)
         let layer_name = base_layer_name.unwrap_or_else(|| "".to_string());
@@ -135,7 +111,7 @@ pub fn read_and_group_metadata(path: &Path) -> anyhow::Result<ExrMetadata> {
             let pretty_value = format_attribute_value(value, &normalized_key);
             layer_items.push((normalized_key, pretty_value));
         }
-        layers.push(LayerMetadata { name: layer_name, width: w, height: h, channel_groups, attributes: layer_items });
+        layers.push(LayerMetadata { name: layer_name, width: w, height: h, attributes: layer_items });
     }
 
     // Posortuj warstwy: najpierw bez nazwy (bazowa), potem alfabetycznie
@@ -148,7 +124,7 @@ pub fn read_and_group_metadata(path: &Path) -> anyhow::Result<ExrMetadata> {
         }
     });
 
-    Ok(ExrMetadata { path: path.to_path_buf(), file_size_bytes, groups, layers })
+    Ok(ExrMetadata { groups, layers })
 }
 
 /// Akcesorium: przygotuj proste linie tekstowe na potrzeby UI (np. lista stringów)
@@ -211,93 +187,9 @@ pub fn build_ui_rows(meta: &ExrMetadata) -> Vec<(String, String)> {
     rows
 }
 
+// Usunięte całe grupowanie kanałów - nieużywane
 // --- Pomocnicze: grupowanie kanałów ---
-
-#[derive(Default)]
-struct GroupBuckets {
-    rgb: Vec<String>,
-    alpha: Vec<String>,
-    depth: Vec<String>,
-    cryptomatte: Vec<String>,
-    normals: Vec<String>,
-    motion: Vec<String>,
-    other: Vec<String>,
-}
-
-impl GroupBuckets {
-    fn new() -> Self { Self::default() }
-
-    fn push(&mut self, short_name: String) {
-        let upper = short_name.to_ascii_uppercase();
-        let group = classify_channel_group(&upper);
-        match group {
-            ChannelGroup::Rgb => self.rgb.push(short_name),
-            ChannelGroup::Alpha => self.alpha.push(short_name),
-            ChannelGroup::Depth => self.depth.push(short_name),
-            ChannelGroup::Cryptomatte => self.cryptomatte.push(short_name),
-            ChannelGroup::Normals => self.normals.push(short_name),
-            ChannelGroup::Motion => self.motion.push(short_name),
-            ChannelGroup::Other => self.other.push(short_name),
-        }
-    }
-
-    fn into_sorted_vec(mut self) -> Vec<LayerChannelsGroup> {
-        // Posortuj kanały wewnątrz grup alfabetycznie (case-insensitive)
-    let sort_ci = |v: &mut Vec<String>| v.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
-        sort_ci(&mut self.rgb);
-        sort_ci(&mut self.alpha);
-        sort_ci(&mut self.depth);
-        sort_ci(&mut self.cryptomatte);
-        sort_ci(&mut self.normals);
-        sort_ci(&mut self.motion);
-        sort_ci(&mut self.other);
-
-        // Ustal kolejność logiczną grup
-        let mut out = Vec::new();
-        out.push(LayerChannelsGroup { group_name: "RGB".into(), channels: self.rgb });
-        out.push(LayerChannelsGroup { group_name: "Alpha".into(), channels: self.alpha });
-        out.push(LayerChannelsGroup { group_name: "Depth".into(), channels: self.depth });
-        out.push(LayerChannelsGroup { group_name: "Cryptomatte".into(), channels: self.cryptomatte });
-        out.push(LayerChannelsGroup { group_name: "Normals".into(), channels: self.normals });
-        out.push(LayerChannelsGroup { group_name: "Motion".into(), channels: self.motion });
-        out.push(LayerChannelsGroup { group_name: "Inne".into(), channels: self.other });
-        out
-    }
-}
-
-#[derive(Copy, Clone, Eq, PartialEq)]
-enum ChannelGroup { Rgb, Alpha, Depth, Cryptomatte, Normals, Motion, Other }
-
-fn classify_channel_group(upper_short: &str) -> ChannelGroup {
-    // RGB
-    if matches!(upper_short, "R" | "G" | "B") { return ChannelGroup::Rgb; }
-
-    // Alpha
-    if upper_short == "A" || upper_short.starts_with("ALPHA") { return ChannelGroup::Alpha; }
-
-    // Depth / Z / Distance
-    if upper_short == "Z" || upper_short.contains("DEPTH") || upper_short == "DISTANCE" {
-        return ChannelGroup::Depth;
-    }
-
-    // Cryptomatte
-    if upper_short.contains("CRYPT") || upper_short.contains("MATTE") {
-        return ChannelGroup::Cryptomatte;
-    }
-
-    // Normals (N, NORMAL, N.x/y/z, itp.)
-    if upper_short.starts_with('N') || upper_short.contains("NORMAL") {
-        return ChannelGroup::Normals;
-    }
-
-    // Motion (VX/VY/VZ, MOTION, SPEED)
-    if upper_short.ends_with("VX") || upper_short.ends_with("VY") || upper_short.ends_with("VZ")
-        || upper_short.contains("MOTION") || upper_short.contains("SPEED") {
-        return ChannelGroup::Motion;
-    }
-
-    ChannelGroup::Other
-}
+// struct GroupBuckets, impl GroupBuckets, enum ChannelGroup, fn classify_channel_group zostały usunięte
 
 // Funkcja pomocnicza do formatowania wartości atrybutów
 fn format_attribute_value(value: &AttributeValue, normalized_key: &str) -> String {

@@ -75,7 +75,7 @@ pub fn build_full_exr_cache(
     Ok(FullExrCacheData { layers: out_layers })
 }
 
-// Funkcja find_layer_by_name została usunięta - nie jest już używana
+// Plik został oczyszczony z nieużywanego kodu zgodnie z analizą optymalizacji
 
 
 

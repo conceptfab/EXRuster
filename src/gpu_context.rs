@@ -10,7 +10,7 @@ use std::cell::OnceCell;
 
 
 use crate::gpu_metrics::GpuMetrics;
-use crate::gpu_scheduler::{AdaptiveGpuScheduler, GpuOperation, GpuOperationParams};
+use crate::gpu_scheduler::{AdaptiveGpuScheduler, GpuOperation};
 
 /// Pool buforów GPU do wielokrotnego użytku
 #[derive(Debug)]
@@ -557,27 +557,6 @@ impl GpuContext {
 
     // === FAZA 4: Monitorowanie i optymalizacje ===
 
-    /// Rejestruje czas wykonania operacji GPU
-    pub fn record_gpu_operation_time(&self, duration: std::time::Duration) {
-        self.gpu_metrics.record_operation_time(duration);
-    }
-
-    /// Rejestruje trafienie w cache pipeline'ów
-    pub fn record_pipeline_cache_hit(&self) {
-        self.gpu_metrics.record_pipeline_cache_hit();
-    }
-
-    /// Aktualizuje użycie pamięci GPU
-    pub fn update_gpu_memory_usage(&self, bytes: u64) {
-        self.gpu_metrics.update_memory_usage(bytes);
-    }
-
-    /// Aktualizuje wykorzystanie buffer pool
-    pub fn update_buffer_pool_utilization(&self, utilization: f32) {
-        self.gpu_metrics.update_buffer_pool_utilization(utilization);
-        self.gpu_scheduler.update_gpu_load(utilization);
-    }
-
     /// Rejestruje błąd GPU
     #[allow(dead_code)]
     pub fn record_gpu_error(&self) {
@@ -596,10 +575,7 @@ impl GpuContext {
         self.gpu_scheduler.get_status_summary()
     }
 
-    /// Decyduje czy użyć GPU dla danej operacji
-    pub fn should_use_gpu_for_operation(&self, operation: GpuOperation, params: &GpuOperationParams) -> bool {
-        self.gpu_scheduler.should_use_gpu(operation, params)
-    }
+    // Usunięta nieużywana metoda should_use_gpu_for_operation
 
     /// Pobiera statystyki decyzji dla danego typu operacji
     #[allow(dead_code)]
