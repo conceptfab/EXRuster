@@ -17,12 +17,8 @@ pub enum GpuOperation {
     MipGeneration,
     /// Przetwarzanie obrazów (filtry, tone mapping)
     ImageProcessing,
-    #[allow(dead_code)] /// Operacje blur/sharpen
-    FilterOperations,
     #[allow(dead_code)] /// Eksport obrazów
     ImageExport,
-    #[allow(dead_code)] /// Operacje histogram
-    HistogramComputation,
 }
 
 /// Parametry operacji GPU
@@ -166,9 +162,7 @@ impl AdaptiveGpuScheduler {
             GpuOperation::ThumbnailGeneration => 1.5,  // GPU bardzo dobre dla thumbnail'ów
             GpuOperation::MipGeneration => 2.0,         // GPU doskonałe dla MIP
             GpuOperation::ImageProcessing => 1.3,       // GPU dobre dla przetwarzania
-            GpuOperation::FilterOperations => 1.4,      // GPU bardzo dobre dla filtrów
             GpuOperation::ImageExport => 1.1,           // GPU umiarkowanie dobre dla eksportu
-            GpuOperation::HistogramComputation => 1.2,  // GPU dobre dla histogramów
         }
     }
 

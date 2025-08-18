@@ -73,26 +73,14 @@ pub struct GpuPipelineCache {
     thumbnail_pipeline: OnceCell<ComputePipeline>,
     #[allow(dead_code)]
     mip_generation_pipeline: OnceCell<ComputePipeline>,
-    // FAZA 3: Nowe shadery
-    #[allow(dead_code)]
-    blur_pipeline: OnceCell<ComputePipeline>,
-    #[allow(dead_code)]
-    sharpen_pipeline: OnceCell<ComputePipeline>,
-    #[allow(dead_code)]
-    histogram_pipeline: OnceCell<ComputePipeline>,
+
     // Shader modules cache
     image_processing_shader: OnceCell<ShaderModule>,
     #[allow(dead_code)]
     thumbnail_shader: OnceCell<ShaderModule>,
     #[allow(dead_code)]
     mip_generation_shader: OnceCell<ShaderModule>,
-    // FAZA 3: Nowe shadery
-    #[allow(dead_code)]
-    blur_shader: OnceCell<ShaderModule>,
-    #[allow(dead_code)]
-    sharpen_shader: OnceCell<ShaderModule>,
-    #[allow(dead_code)]
-    histogram_shader: OnceCell<ShaderModule>,
+
     // Layouts cache
     image_processing_bind_group_layout: OnceCell<BindGroupLayout>,
     image_processing_pipeline_layout: OnceCell<PipelineLayout>,
@@ -104,19 +92,7 @@ pub struct GpuPipelineCache {
     mip_generation_bind_group_layout: OnceCell<BindGroupLayout>,
     #[allow(dead_code)]
     mip_generation_pipeline_layout: OnceCell<PipelineLayout>,
-    // FAZA 3: Nowe shadery
-    #[allow(dead_code)]
-    blur_bind_group_layout: OnceCell<BindGroupLayout>,
-    #[allow(dead_code)]
-    blur_pipeline_layout: OnceCell<PipelineLayout>,
-    #[allow(dead_code)]
-    sharpen_bind_group_layout: OnceCell<BindGroupLayout>,
-    #[allow(dead_code)]
-    sharpen_pipeline_layout: OnceCell<PipelineLayout>,
-    #[allow(dead_code)]
-    histogram_bind_group_layout: OnceCell<BindGroupLayout>,
-    #[allow(dead_code)]
-    histogram_pipeline_layout: OnceCell<PipelineLayout>,
+
 }
 
 impl GpuPipelineCache {
@@ -125,30 +101,18 @@ impl GpuPipelineCache {
             image_processing_pipeline: OnceCell::new(),
             thumbnail_pipeline: OnceCell::new(),
             mip_generation_pipeline: OnceCell::new(),
-            // FAZA 3: Nowe shadery
-            blur_pipeline: OnceCell::new(),
-            sharpen_pipeline: OnceCell::new(),
-            histogram_pipeline: OnceCell::new(),
+
             image_processing_shader: OnceCell::new(),
             thumbnail_shader: OnceCell::new(),
             mip_generation_shader: OnceCell::new(),
-            // FAZA 3: Nowe shadery
-            blur_shader: OnceCell::new(),
-            sharpen_shader: OnceCell::new(),
-            histogram_shader: OnceCell::new(),
+
             image_processing_bind_group_layout: OnceCell::new(),
             image_processing_pipeline_layout: OnceCell::new(),
             thumbnail_bind_group_layout: OnceCell::new(),
             thumbnail_pipeline_layout: OnceCell::new(),
             mip_generation_bind_group_layout: OnceCell::new(),
             mip_generation_pipeline_layout: OnceCell::new(),
-            // FAZA 3: Nowe shadery
-            blur_bind_group_layout: OnceCell::new(),
-            blur_pipeline_layout: OnceCell::new(),
-            sharpen_bind_group_layout: OnceCell::new(),
-            sharpen_pipeline_layout: OnceCell::new(),
-            histogram_bind_group_layout: OnceCell::new(),
-            histogram_pipeline_layout: OnceCell::new(),
+
         }
     }
 
@@ -399,258 +363,15 @@ impl GpuPipelineCache {
         })
     }
 
-    // === FAZA 3: Nowe shadery ===
 
-    // Blur shader
-    pub fn get_blur_shader(&self, device: &Device) -> &ShaderModule {
-        self.blur_shader.get_or_init(|| {
-            const SHADER_WGSL: &str = include_str!("shaders/blur.wgsl");
-            device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("exruster.blur.compute"),
-                source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(SHADER_WGSL)),
-            })
-        })
-    }
 
-    pub fn get_blur_bind_group_layout(&self, device: &Device) -> &BindGroupLayout {
-        self.blur_bind_group_layout.get_or_init(|| {
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("exruster.blur.bgl"),
-                entries: &[
-                    // binding 0: uniform (BlurParams)
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    // binding 1: input storage (read)
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    // binding 2: output storage (write)
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: false },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                ],
-            })
-        })
-    }
 
-    pub fn get_blur_pipeline_layout(&self, device: &Device) -> &PipelineLayout {
-        self.blur_pipeline_layout.get_or_init(|| {
-            let bind_group_layout = self.get_blur_bind_group_layout(device);
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("exruster.blur.pipeline_layout"),
-                bind_group_layouts: &[bind_group_layout],
-                push_constant_ranges: &[],
-            })
-        })
-    }
 
-    pub fn get_blur_pipeline(&self, device: &Device) -> &ComputePipeline {
-        self.blur_pipeline.get_or_init(|| {
-            let shader = self.get_blur_shader(device);
-            let layout = self.get_blur_pipeline_layout(device);
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some("exruster.blur.pipeline"),
-                layout: Some(layout),
-                module: shader,
-                entry_point: Some("main"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                cache: None,
-            })
-        })
-    }
 
-    // Sharpen shader
-    pub fn get_sharpen_shader(&self, device: &Device) -> &ShaderModule {
-        self.sharpen_shader.get_or_init(|| {
-            const SHADER_WGSL: &str = include_str!("shaders/sharpen.wgsl");
-            device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("exruster.sharpen.compute"),
-                source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(SHADER_WGSL)),
-            })
-        })
-    }
 
-    pub fn get_sharpen_bind_group_layout(&self, device: &Device) -> &BindGroupLayout {
-        self.sharpen_bind_group_layout.get_or_init(|| {
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("exruster.sharpen.bgl"),
-                entries: &[
-                    // binding 0: uniform (SharpenParams)
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    // binding 1: input storage (read)
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    // binding 2: output storage (write)
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: false },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                ],
-            })
-        })
-    }
 
-    pub fn get_sharpen_pipeline_layout(&self, device: &Device) -> &PipelineLayout {
-        self.sharpen_pipeline_layout.get_or_init(|| {
-            let bind_group_layout = self.get_sharpen_bind_group_layout(device);
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("exruster.sharpen.pipeline_layout"),
-                bind_group_layouts: &[bind_group_layout],
-                push_constant_ranges: &[],
-            })
-        })
-    }
 
-    pub fn get_sharpen_pipeline(&self, device: &Device) -> &ComputePipeline {
-        self.sharpen_pipeline.get_or_init(|| {
-            let shader = self.get_sharpen_shader(device);
-            let layout = self.get_sharpen_pipeline_layout(device);
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some("exruster.sharpen.pipeline"),
-                layout: Some(layout),
-                module: shader,
-                entry_point: Some("main"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                cache: None,
-            })
-        })
-    }
 
-    // Histogram shader
-    pub fn get_histogram_shader(&self, device: &Device) -> &ShaderModule {
-        self.histogram_shader.get_or_init(|| {
-            const SHADER_WGSL: &str = include_str!("shaders/histogram.wgsl");
-            device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("exruster.histogram.compute"),
-                source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(SHADER_WGSL)),
-            })
-        })
-    }
-
-    pub fn get_histogram_bind_group_layout(&self, device: &Device) -> &BindGroupLayout {
-        self.histogram_bind_group_layout.get_or_init(|| {
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("exruster.histogram.bgl"),
-                entries: &[
-                    // binding 0: uniform (HistogramParams)
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    // binding 1: input storage (read)
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    // binding 2: output storage (write)
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: false },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    // binding 3: histogram bins (atomic)
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 3,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: false },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                ],
-            })
-        })
-    }
-
-    pub fn get_histogram_pipeline_layout(&self, device: &Device) -> &PipelineLayout {
-        self.histogram_pipeline_layout.get_or_init(|| {
-            let bind_group_layout = self.get_histogram_bind_group_layout(device);
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("exruster.histogram.pipeline_layout"),
-                bind_group_layouts: &[bind_group_layout],
-                push_constant_ranges: &[],
-            })
-        })
-    }
-
-    pub fn get_histogram_pipeline(&self, device: &Device) -> &ComputePipeline {
-        self.histogram_pipeline.get_or_init(|| {
-            let shader = self.get_histogram_shader(device);
-            let layout = self.get_histogram_pipeline_layout(device);
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some("exruster.histogram.pipeline"),
-                layout: Some(layout),
-                module: shader,
-                entry_point: Some("main"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                cache: None,
-            })
-        })
-    }
 
 }
 
@@ -832,67 +553,7 @@ impl GpuContext {
         }
     }
 
-    // === FAZA 3: Nowe shadery ===
 
-    /// Pobiera pipeline do blur z cache
-    #[allow(dead_code)]
-    pub fn get_blur_pipeline(&self) -> Option<ComputePipeline> {
-        if let Ok(cache) = self.pipeline_cache.lock() {
-            Some(cache.get_blur_pipeline(&self.device).clone())
-        } else {
-            None
-        }
-    }
-
-    /// Pobiera bind group layout do blur z cache
-    #[allow(dead_code)]
-    pub fn get_blur_bind_group_layout(&self) -> Option<BindGroupLayout> {
-        if let Ok(cache) = self.pipeline_cache.lock() {
-            Some(cache.get_blur_bind_group_layout(&self.device).clone())
-        } else {
-            None
-        }
-    }
-
-    /// Pobiera pipeline do sharpen z cache
-    #[allow(dead_code)]
-    pub fn get_sharpen_pipeline(&self) -> Option<ComputePipeline> {
-        if let Ok(cache) = self.pipeline_cache.lock() {
-            Some(cache.get_sharpen_pipeline(&self.device).clone())
-        } else {
-            None
-        }
-    }
-
-    /// Pobiera bind group layout do sharpen z cache
-    #[allow(dead_code)]
-    pub fn get_sharpen_bind_group_layout(&self) -> Option<BindGroupLayout> {
-        if let Ok(cache) = self.pipeline_cache.lock() {
-            Some(cache.get_sharpen_bind_group_layout(&self.device).clone())
-        } else {
-            None
-        }
-    }
-
-    /// Pobiera pipeline do histogram z cache
-    #[allow(dead_code)]
-    pub fn get_histogram_pipeline(&self) -> Option<ComputePipeline> {
-        if let Ok(cache) = self.pipeline_cache.lock() {
-            Some(cache.get_histogram_pipeline(&self.device).clone())
-        } else {
-            None
-        }
-    }
-
-    /// Pobiera bind group layout do histogram z cache
-    #[allow(dead_code)]
-    pub fn get_histogram_bind_group_layout(&self) -> Option<BindGroupLayout> {
-        if let Ok(cache) = self.pipeline_cache.lock() {
-            Some(cache.get_histogram_bind_group_layout(&self.device).clone())
-        } else {
-            None
-        }
-    }
 
     // === FAZA 4: Monitorowanie i optymalizacje ===
 

@@ -495,41 +495,7 @@ fn setup_panel_callbacks(
         }
     });
 
-    // FAZA 3: GPU Filters callbacks
-    ui.on_apply_gpu_blur({
-        let ui_handle = ui.as_weak();
-        let image_cache = image_cache.clone();
-        let console_model = console_model.clone();
-        move |blur_type: i32, radius: i32, strength: f32| {
-            ui_handlers::apply_gpu_blur(ui_handle.clone(), image_cache.clone(), blur_type, radius, strength, console_model.clone());
-        }
-    });
 
-    ui.on_apply_gpu_sharpen({
-        let ui_handle = ui.as_weak();
-        let image_cache = image_cache.clone();
-        let console_model = console_model.clone();
-        move |sharpen_type: i32, radius: i32, strength: f32| {
-            ui_handlers::apply_gpu_sharpen(ui_handle.clone(), image_cache.clone(), sharpen_type, radius, strength, console_model.clone());
-        }
-    });
-
-    ui.on_compute_gpu_histogram({
-        let ui_handle = ui.as_weak();
-        let image_cache = image_cache.clone();
-        let console_model = console_model.clone();
-        move |histogram_type: i32| {
-            ui_handlers::compute_gpu_histogram(ui_handle.clone(), image_cache.clone(), histogram_type, console_model.clone());
-        }
-    });
-
-    ui.on_reset_gpu_filters({
-        let ui_handle = ui.as_weak();
-        let console_model = console_model.clone();
-        move || {
-            ui_handlers::reset_gpu_filters(ui_handle.clone(), console_model.clone());
-        }
-    });
 }
 
 fn setup_ui_callbacks(
