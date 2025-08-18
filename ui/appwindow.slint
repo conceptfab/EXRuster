@@ -351,7 +351,7 @@ export component AppWindow inherits Window {
             PozycjaMenu { text: "Reset View"; clicked => { show-left-panel = true; show-right-panel = true; view-menu-open = false; view-menu-timer-running = false; } }
             PozycjaMenu { text: "Open Console"; clicked => { internal-console-visible = true; view-menu-open = false; view-menu-timer-running = false; } }
             PozycjaMenu { text: "Open Meta"; clicked => { internal-meta-visible = true; view-menu-open = false; view-menu-timer-running = false; } }
-            PozycjaMenu { text: "Compute Histogram"; clicked => { internal-histogram-visible = true; view-menu-open = false; view-menu-timer-running = false; } }
+            PozycjaMenu { text: "Compute Histogram"; clicked => { internal-histogram-visible = true; histogram-requested(); view-menu-open = false; view-menu-timer-running = false; } }
         }
         
         // Auto-close timer for View menu
