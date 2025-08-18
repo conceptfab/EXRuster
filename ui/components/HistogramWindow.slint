@@ -1,7 +1,12 @@
-import { HorizontalBox, VerticalBox, Button } from "std-widgets.slint";
+import { HorizontalBox, VerticalBox, Button, ScrollView } from "std-widgets.slint";
 import { Kolory } from "../colors.slint";
+import { DraggableWindow } from "../DraggableWindow.slint";
 
-export component HistogramWindow inherits Window {
+import "../../resources/fonts/Geist-Regular.otf";
+import "../../resources/fonts/Geist-Bold.otf";
+import "../../resources/fonts/GeistMono-Regular.otf";
+
+export component HistogramWindow inherits Rectangle {
     in-out property <[int]> histogram-red-data: [];
     in-out property <[int]> histogram-green-data: [];
     in-out property <[int]> histogram-blue-data: [];
@@ -13,56 +18,313 @@ export component HistogramWindow inherits Window {
     in-out property <float> histogram-p50: 0.5;
     in-out property <float> histogram-p99: 1.0;
     
+    // Wymiary kontenera i marginesy do ograniczenia ruchu
+    in-out property <length> container-width: 0px;
+    in-out property <length> container-height: 0px;
+    in-out property <length> top-margin: 30px;
+    in-out property <length> bottom-margin: 48px;
+    
     callback exit();
     
-    title: "Histogram Analysis";
     width: 800px;
     height: 600px;
     background: Kolory.tlo;
-    default-font-family: "Geist";
+    border-color: Kolory.obramowanie;
+    border-width: 1px;
+    border-radius: 4px;
     
     VerticalBox {
-        padding: 16px;
-        spacing: 8px;
+        padding: 4px;
+        spacing: 0px;
         
-        Text {
-            text: "Histogram Analysis";
-            font-size: 18px;
-            font-weight: 700;
-            color: Kolory.tekst;
+        DraggableWindow {
+            window-title: "Histogram Analysis";
+            exit => { root.exit(); }
+            dragged(dx, dy) => {
+                // Aktualizuj pozycję okna w granicach dostępnego obszaru
+                root.x = Math.max(0px, Math.min(root.container-width - root.width, root.x + dx));
+                root.y = Math.max(root.top-margin, Math.min(root.container-height - root.bottom-margin - root.height, root.y + dy));
+            }
+            drag-ended => { }
         }
         
-        // Histogram visualization placeholders
+        // Główna zawartość histogramu
         Rectangle {
-            height: 200px;
+            vertical-stretch: 1;
             background: Kolory.panel_tlo;
-            border-color: Kolory.linia_podzialu;
+            border-color: Kolory.obramowanie;
             border-width: 1px;
+            
+            VerticalBox {
+                padding: 16px;
+                spacing: 16px;
+                
+                // Wybór kanału
+                HorizontalBox {
+                    spacing: 16px;
+                    alignment: start;
+                    
+                    Rectangle {
+                        width: 120px;
+                        height: 24px;
+                        background: channel-button-area.has-hover ? Kolory.hover : Kolory.suwak_tlo;
+                        border-color: Kolory.suwak_tor;
+                        border-width: 1px;
+                        border-radius: 3px;
+                        
+                        HorizontalBox {
+                            spacing: 8px;
+                            alignment: center;
+                            
+                            Rectangle {
+                                width: 8px;
+                                height: 8px;
+                                background: Kolory.kanal_r;
+                                border-radius: 4px;
+                            }
+                            Text { 
+                                text: "Red"; 
+                                color: Kolory.tekst; 
+                                font-size: 11px; 
+                                font-family: "Geist"; 
+                                horizontal-alignment: center; 
+                                vertical-alignment: center; 
+                            }
+                        }
+                        
+                        channel-button-area := TouchArea { 
+                            clicked => { 
+                                // TODO: Implement channel selection
+                            } 
+                        }
+                    }
+                    
+                    Rectangle {
+                        width: 120px;
+                        height: 24px;
+                        background: channel-button-area2.has-hover ? Kolory.hover : Kolory.suwak_tlo;
+                        border-color: Kolory.suwak_tor;
+                        border-width: 1px;
+                        border-radius: 3px;
+                        
+                        HorizontalBox {
+                            spacing: 8px;
+                            alignment: center;
+                            
+                            Rectangle {
+                                width: 8px;
+                                height: 8px;
+                                background: Kolory.kanal_g;
+                                border-radius: 4px;
+                            }
+                            Text { 
+                                text: "Green"; 
+                                color: Kolory.tekst; 
+                                font-size: 11px; 
+                                font-family: "Geist"; 
+                                horizontal-alignment: center; 
+                                vertical-alignment: center; 
+                            }
+                        }
+                        
+                        channel-button-area2 := TouchArea { 
+                            clicked => { 
+                                // TODO: Implement channel selection
+                            } 
+                        }
+                    }
+                    
+                    Rectangle {
+                        width: 120px;
+                        height: 24px;
+                        background: channel-button-area3.has-hover ? Kolory.hover : Kolory.suwak_tlo;
+                        border-color: Kolory.suwak_tor;
+                        border-width: 1px;
+                        border-radius: 3px;
+                        
+                        HorizontalBox {
+                            spacing: 8px;
+                            alignment: center;
+                            
+                            Rectangle {
+                                width: 8px;
+                                height: 8px;
+                                background: Kolory.kanal_b;
+                                border-radius: 4px;
+                            }
+                            Text { 
+                                text: "Blue"; 
+                                color: Kolory.tekst; 
+                                font-size: 11px; 
+                                font-family: "Geist"; 
+                                horizontal-alignment: center; 
+                                vertical-alignment: center; 
+                            }
+                        }
+                        
+                        channel-button-area3 := TouchArea { 
+                            clicked => { 
+                                // TODO: Implement channel selection
+                            } 
+                        }
+                    }
+                    
+                    Rectangle {
+                        width: 120px;
+                        height: 24px;
+                        background: channel-button-area4.has-hover ? Kolory.hover : Kolory.suwak_tlo;
+                        border-color: Kolory.suwak_tor;
+                        border-width: 1px;
+                        border-radius: 3px;
+                        
+                        HorizontalBox {
+                            spacing: 8px;
+                            alignment: center;
+                            
+                            Rectangle {
+                                width: 8px;
+                                height: 8px;
+                                background: Kolory.tekst;
+                                border-radius: 4px;
+                            }
+                            Text { 
+                                text: "Luminance"; 
+                                color: Kolory.tekst; 
+                                font-size: 11px; 
+                                font-family: "Geist"; 
+                                horizontal-alignment: center; 
+                                vertical-alignment: center; 
+                            }
+                        }
+                        
+                        channel-button-area4 := TouchArea { 
+                            clicked => { 
+                                // TODO: Implement channel selection
+                            } 
+                        }
+                    }
+                }
+                
+                // Obszar histogramu
+                Rectangle {
+                    height: 300px;
+                    background: Kolory.tlo;
+                    border-color: Kolory.obramowanie;
+                    border-width: 1px;
+                    border-radius: 3px;
+                    
+                    // TODO: Implement actual histogram visualization
+                    // Placeholder - będzie zastąpiony prawdziwym histogramem
+                    Text {
+                        text: "Histogram visualization will be implemented here";
+                        color: Kolory.tekst_slabszy;
+                        font-size: 12px;
+                        font-family: "Geist";
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        width: parent.width;
+                        height: parent.height;
+                    }
+                }
+                
+                // Statystyki
+                HorizontalBox {
+                    spacing: 32px;
+                    alignment: start;
+                    
+                    VerticalBox {
+                        spacing: 4px;
+                        Text { 
+                            text: "Min: " + root.histogram-min-value; 
+                            color: Kolory.tekst; 
+                            font-size: 11px;
+                            font-family: "Geist";
+                        }
+                        Text { 
+                            text: "P1: " + root.histogram-p1; 
+                            color: Kolory.tekst; 
+                            font-size: 11px;
+                            font-family: "Geist";
+                        }
+                    }
+                    
+                    VerticalBox {
+                        spacing: 4px;
+                        Text { 
+                            text: "P50: " + root.histogram-p50; 
+                            color: Kolory.tekst; 
+                            font-size: 11px;
+                            font-family: "Geist";
+                        }
+                        Text { 
+                            text: "P99: " + root.histogram-p99; 
+                            color: Kolory.tekst; 
+                            font-size: 11px;
+                            font-family: "Geist";
+                        }
+                    }
+                    
+                    VerticalBox {
+                        spacing: 4px;
+                        Text { 
+                            text: "Max: " + root.histogram-max-value; 
+                            color: Kolory.tekst; 
+                            font-size: 11px;
+                            font-family: "Geist";
+                        }
+                        Text { 
+                            text: "Pixels: " + root.histogram-total-pixels; 
+                            color: Kolory.tekst; 
+                            font-size: 11px;
+                            font-family: "Geist";
+                        }
+                    }
+                }
+            }
         }
         
-        // Statistics
-        HorizontalBox {
-            spacing: 16px;
+        // Dolny pasek z przyciskami
+        Rectangle {
+            height: 32px;
+            background: Kolory.panel_tlo;
             
-            VerticalBox {
-                Text { text: "Min: " + root.histogram-min-value; color: Kolory.tekst; }
-                Text { text: "P1: " + root.histogram-p1; color: Kolory.tekst; }
+                    VerticalBox {
+            spacing: 0px;
+            padding: 0px;
+                
+                Rectangle { 
+                    height: 1px; 
+                    background: Kolory.obramowanie; 
+                }
+                
+                HorizontalBox {
+                    padding: 4px;
+                    spacing: 10px;
+                    alignment: center;
+                    
+                    Rectangle {
+                        width: 80px;
+                        height: 20px;
+                        background: close-button-area.has-hover ? Kolory.hover : Kolory.suwak_tlo;
+                        border-color: Kolory.suwak_tor;
+                        border-width: 1px;
+                        border-radius: 3px;
+                        
+                        Text { 
+                            text: "Close"; 
+                            color: Kolory.tekst; 
+                            font-size: 10px; 
+                            font-family: "Geist"; 
+                            horizontal-alignment: center; 
+                            vertical-alignment: center; 
+                        }
+                        
+                        close-button-area := TouchArea { 
+                            clicked => { root.exit(); } 
+                        }
+                    }
+                }
             }
-            
-            VerticalBox {
-                Text { text: "P50: " + root.histogram-p50; color: Kolory.tekst; }
-                Text { text: "P99: " + root.histogram-p99; color: Kolory.tekst; }
-            }
-            
-            VerticalBox {
-                Text { text: "Max: " + root.histogram-max-value; color: Kolory.tekst; }
-                Text { text: "Pixels: " + root.histogram-total-pixels; color: Kolory.tekst; }
-            }
-        }
-        
-        Button {
-            text: "Close";
-            clicked => { root.exit(); }
         }
     }
 }
