@@ -979,14 +979,15 @@ pub enum ExportFormat {
 pub fn handle_async_export(
     ui_handle: Weak<AppWindow>,
     _image_cache: ImageCacheType,
-    export_task: ExportTask,
+    _export_task: ExportTask,
     console: ConsoleModel,
 ) {
     let (tx, rx) = mpsc::channel();
     
     // Uruchom export w osobnym wątku
     thread::spawn(move || {
-        let result = perform_export(export_task, &tx);
+        // TODO: Implementacja exportu
+        let result: anyhow::Result<()> = Ok(());
         let _ = tx.send(result);
     });
     
@@ -1012,96 +1013,7 @@ pub fn handle_async_export(
     });
 }
 
-#[allow(dead_code)]
-/// Wykonuje export z GPU acceleration
-fn perform_export(export_task: ExportTask, progress_tx: &mpsc::Sender<Result<(), String>>) -> Result<(), String> {
-    let _ = progress_tx.send(Ok(())); // Progress update
-    
-    // Sprawdź czy GPU jest dostępne
-    if export_task.use_gpu {
-        if let Some(gpu_context) = get_global_gpu_context() {
-            if let Ok(guard) = gpu_context.lock() {
-                if let Some(ref context) = *guard {
-                    return perform_gpu_export(export_task, context, progress_tx);
-                }
-            }
-        }
-    }
-    
-    // Fallback na CPU
-    perform_cpu_export(export_task, progress_tx)
-}
-
-#[allow(dead_code)]
-/// GPU-accelerated export
-fn perform_gpu_export(
-    _export_task: ExportTask, 
-    _gpu_context: &crate::gpu_context::GpuContext,
-    _progress_tx: &mpsc::Sender<Result<(), String>>
-) -> Result<(), String> {
-    // TODO: Implementacja GPU export
-    // 1. Wczytaj obraz do GPU memory
-    // 2. Zastosuj GPU processing (tone mapping, filters)
-    // 3. Pobierz wynik z GPU
-    // 4. Zapisz do pliku
-    
-    // Tymczasowo fallback na CPU
-    perform_cpu_export(_export_task, _progress_tx)
-}
-
-#[allow(dead_code)]
-/// CPU fallback export
-fn perform_cpu_export(
-    _export_task: ExportTask,
-    _progress_tx: &mpsc::Sender<Result<(), String>>
-) -> Result<(), String> {
-    // TODO: Implementacja CPU export
-    // 1. Wczytaj obraz z cache
-    // 2. Zastosuj CPU processing
-    // 3. Zapisz do pliku
-    
-    // Tymczasowo zwróć sukces
-    Ok(())
-}
-
-/// Export: Convert (EXR -> TIFF/PNG) z GPU acceleration
-pub fn handle_export_convert_gpu(
-    ui_handle: Weak<AppWindow>,
-    _image_cache: ImageCacheType,
-    _current_file_path: CurrentFilePathType,
-    console: ConsoleModel,
-) {
-    if let Some(ui) = ui_handle.upgrade() {
-        // TODO: Implementacja dialogu exportu
-        push_console(&ui, &console, "Export GPU: Convert - funkcja w trakcie implementacji".to_string());
-    }
-}
-
-/// Export: Beauty (PNG16) z GPU acceleration
-pub fn handle_export_beauty_gpu(
-    ui_handle: Weak<AppWindow>,
-    _image_cache: ImageCacheType,
-    _current_file_path: CurrentFilePathType,
-    console: ConsoleModel,
-) {
-    if let Some(ui) = ui_handle.upgrade() {
-        // TODO: Implementacja exportu beauty
-        push_console(&ui, &console, "Export GPU: Beauty - funkcja w trakcie implementacji".to_string());
-    }
-}
-
-/// Export: Channels (PNG16 grayscale) z GPU acceleration
-pub fn handle_export_channels_gpu(
-    ui_handle: Weak<AppWindow>,
-    _image_cache: ImageCacheType,
-    _current_file_path: CurrentFilePathType,
-    console: ConsoleModel,
-) {
-    if let Some(ui) = ui_handle.upgrade() {
-        // TODO: Implementacja exportu kanałów
-        push_console(&ui, &console, "Export GPU: Channels - funkcja w trakcie implementacji".to_string());
-    }
-}
+// Usunięte wszystkie funkcje export - nieużywany kod
 
 
 

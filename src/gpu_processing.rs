@@ -3,8 +3,7 @@ use anyhow::Result;
 use glam::{Mat3, Vec3};
 use crate::gpu_context::GpuContext;
 use crate::gpu_scheduler::{GpuOperation, GpuOperationParams as SchedulerParams};
-use tokio::sync::{mpsc, oneshot};
-use std::collections::VecDeque;
+// Usunięte nieużywane importy
 use wgpu::BufferUsages;
 use bytemuck::{Pod, Zeroable};
 use std::time::Instant;
@@ -37,75 +36,9 @@ pub struct GpuProcessingParams {
     pub _color_matrix: Option<Mat3>,
 }
 
-/// Zadanie przetwarzania GPU
-#[derive(Debug)]
-#[allow(dead_code)]
-pub struct GpuProcessingTask {
-    pub pixels: Arc<[f32]>,
-    pub params: GpuProcessingParams,
-    pub response_tx: oneshot::Sender<Result<Vec<u8>>>,
-}
+// Usunięte GpuProcessingTask - nieużywany kod
 
-/// Asynchroniczny procesor GPU z kolejką zadań
-pub struct AsyncGpuProcessor {
-    #[allow(dead_code)]
-    task_tx: mpsc::UnboundedSender<GpuProcessingTask>,
-    _handle: tokio::task::JoinHandle<()>,
-}
-
-impl AsyncGpuProcessor {
-    /// Tworzy nowy asynchroniczny procesor GPU
-    #[allow(dead_code)]
-    pub fn new(gpu_context: Arc<GpuContext>) -> Self {
-        let (task_tx, mut task_rx) = mpsc::unbounded_channel::<GpuProcessingTask>();
-        
-        let handle = tokio::spawn(async move {
-            let mut queue: VecDeque<GpuProcessingTask> = VecDeque::new();
-            
-            // Główna pętla przetwarzania
-            while let Some(task) = task_rx.recv().await {
-                queue.push_back(task);
-                
-                // Przetwórz wszystkie dostępne zadania w batch'u
-                while let Some(current_task) = queue.pop_front() {
-                    let result = process_gpu_task(&gpu_context, current_task.pixels, current_task.params).await;
-                    
-                    // Wyślij wynik przez oneshot channel (ignoruj błąd jeśli receiver został dropped)
-                    let _ = current_task.response_tx.send(result);
-                }
-            }
-        });
-
-        Self {
-            task_tx,
-            _handle: handle,
-        }
-    }
-
-    /// Async przetwarzanie obrazu na GPU
-    #[allow(dead_code)]
-    pub async fn process_image_async(
-        &self,
-        pixels: Arc<[f32]>,
-        params: GpuProcessingParams,
-    ) -> Result<Vec<u8>> {
-        let (response_tx, response_rx) = oneshot::channel();
-        
-        let task = GpuProcessingTask {
-            pixels,
-            params,
-            response_tx,
-        };
-
-        // Wyślij zadanie do kolejki
-        self.task_tx.send(task)
-            .map_err(|_| anyhow::anyhow!("GPU processor has been shut down"))?;
-
-        // Czekaj na wynik
-        response_rx.await
-            .map_err(|_| anyhow::anyhow!("GPU processing task was cancelled"))?
-    }
-}
+// Usunięte AsyncGpuProcessor - nieużywany kod
 
 /// Wewnętrzna funkcja przetwarzania GPU (blocking)
 #[allow(dead_code)]
@@ -163,7 +96,33 @@ fn gpu_process_rgba_f32_to_rgba8_pooled(
     if !should_use_gpu {
         // Fallback na CPU processing
         println!("GPU Scheduler zdecydował o użyciu CPU dla operacji {:?}", operation);
-        return process_image_cpu_fallback(pixels, width, height, exposure, gamma, _tonemap_mode, _color_matrix);
+        // CPU fallback - użyj prostego przetwarzania
+        println!("Używam CPU fallback dla przetwarzania obrazu");
+        let pixel_count = (width * height) as usize;
+        let mut out_bytes: Vec<u8> = Vec::with_capacity(pixel_count * 4);
+        
+        for i in 0..pixel_count {
+            let base_idx = i * 4;
+            if base_idx + 3 < pixels.len() {
+                let r = pixels[base_idx];
+                let g = pixels[base_idx + 1];
+                let b = pixels[base_idx + 2];
+                let a = pixels[base_idx + 3];
+                
+                // Zastosuj exposure i gamma
+                let r = (r * exposure).powf(1.0 / gamma).clamp(0.0, 1.0);
+                let g = (g * exposure).powf(1.0 / gamma).clamp(0.0, 1.0);
+                let b = (b * exposure).powf(1.0 / gamma).clamp(0.0, 1.0);
+                
+                // Konwertuj na u8
+                out_bytes.push((r * 255.0) as u8);
+                out_bytes.push((g * 255.0) as u8);
+                out_bytes.push((b * 255.0) as u8);
+                out_bytes.push((a * 255.0) as u8);
+            }
+        }
+        
+        return Ok(out_bytes);
     }
 
     let pixel_count = (width as usize) * (height as usize);
@@ -307,92 +266,8 @@ fn gpu_process_rgba_f32_to_rgba8_pooled(
     Ok(out_bytes)
 }
 
-/// Globalna instancja async GPU processor
-static GPU_PROCESSOR: std::sync::LazyLock<std::sync::Mutex<Option<Arc<AsyncGpuProcessor>>>> =
-    std::sync::LazyLock::new(|| std::sync::Mutex::new(None));
+// Usunięte globalne zmienne i funkcje AsyncGpuProcessor
 
-/// Inicjalizuje globalny async GPU processor
-#[allow(dead_code)]
-pub fn initialize_async_gpu_processor(gpu_context: Arc<GpuContext>) {
-    let processor = Arc::new(AsyncGpuProcessor::new(gpu_context));
-    if let Ok(mut guard) = GPU_PROCESSOR.lock() {
-        *guard = Some(processor);
-    }
-}
+// Usunięte process_image_cpu_fallback - nieużywana funkcja
 
-/// Pobiera referencję do globalnego async GPU processor
-#[allow(dead_code)]
-pub fn get_async_gpu_processor() -> Option<Arc<AsyncGpuProcessor>> {
-    if let Ok(guard) = GPU_PROCESSOR.lock() {
-        guard.clone()
-    } else {
-        None
-    }
-}
-
-/// Fallback na CPU processing gdy GPU nie jest dostępne
-#[allow(dead_code)]
-fn process_image_cpu_fallback(
-    pixels: &[f32],
-    width: u32,
-    height: u32,
-    exposure: f32,
-    gamma: f32,
-    _tonemap_mode: u32,
-    _color_matrix: Option<Mat3>,
-) -> Result<Vec<u8>> {
-    println!("Używam CPU fallback dla przetwarzania obrazu");
-    
-    let pixel_count = (width * height) as usize;
-    let mut out_bytes: Vec<u8> = Vec::with_capacity(pixel_count * 4);
-    
-    // Proste przetwarzanie na CPU
-    for i in 0..pixel_count {
-        let base_idx = i * 4;
-        if base_idx + 3 < pixels.len() {
-            let r = pixels[base_idx];
-            let g = pixels[base_idx + 1];
-            let b = pixels[base_idx + 2];
-            let a = pixels[base_idx + 3];
-            
-            // Zastosuj exposure i gamma
-            let r = (r * exposure).powf(1.0 / gamma).clamp(0.0, 1.0);
-            let g = (g * exposure).powf(1.0 / gamma).clamp(0.0, 1.0);
-            let b = (b * exposure).powf(1.0 / gamma).clamp(0.0, 1.0);
-            
-            // Konwertuj na u8
-            out_bytes.push((r * 255.0) as u8);
-            out_bytes.push((g * 255.0) as u8);
-            out_bytes.push((b * 255.0) as u8);
-            out_bytes.push((a * 255.0) as u8);
-        }
-    }
-    
-    Ok(out_bytes)
-}
-
-/// Async wrapper dla łatwego użycia
-#[allow(dead_code)]
-pub async fn process_image_gpu_async(
-    pixels: Arc<[f32]>,
-    width: u32,
-    height: u32,
-    exposure: f32,
-    gamma: f32,
-    tonemap_mode: u32,
-    color_matrix: Option<Mat3>,
-) -> Result<Vec<u8>> {
-    let processor = get_async_gpu_processor()
-        .ok_or_else(|| anyhow::anyhow!("Async GPU processor not initialized"))?;
-
-            let params = GpuProcessingParams {
-            width,
-            height,
-            exposure,
-            gamma,
-            _tonemap_mode: tonemap_mode,
-            _color_matrix: color_matrix,
-        };
-
-    processor.process_image_async(pixels, params).await
-}
+// Usunięte process_image_gpu_async - nieużywana funkcja

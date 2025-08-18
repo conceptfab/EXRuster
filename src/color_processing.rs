@@ -1,6 +1,16 @@
 use std::path::Path;
 use ::exr::meta::attribute::AttributeValue;
 use glam::{DMat3, DVec3, Mat3};
+use std::sync::{LazyLock, Mutex};
+use std::collections::HashMap;
+
+// Global cache dla color matrices - persistent między sesjami
+static COLOR_MATRIX_CACHE: LazyLock<Mutex<HashMap<(std::path::PathBuf, String), Mat3>>> = 
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+// Statistics
+static CACHE_HITS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static CACHE_MISSES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 // Make the main function public
 pub fn compute_rgb_to_srgb_matrix_from_file_for_layer(path: &Path, layer_name: &str) -> anyhow::Result<Mat3> {
@@ -131,4 +141,45 @@ fn bradford_adaptation_matrix(src_xy: (f64, f64), dst_xy: (f64, f64)) -> Mat3 {
 fn xy_to_xyz(x: f64, y: f64) -> DVec3 {
     let z = 1.0 - x - y;
     DVec3::new(x / y, 1.0, z / y)
+}
+
+pub fn compute_rgb_to_srgb_matrix_from_file_for_layer_cached(path: &Path, layer_name: &str) -> anyhow::Result<Mat3> {
+    let key = (path.to_path_buf(), layer_name.to_string());
+    
+    // Sprawdź cache
+    if let Ok(cache) = COLOR_MATRIX_CACHE.lock() {
+        if let Some(&matrix) = cache.get(&key) {
+            CACHE_HITS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            println!("Color matrix cache HIT for {}:{}", path.display(), layer_name);
+            return Ok(matrix);
+        }
+    }
+    
+    // Cache miss - oblicz nową macierz
+    CACHE_MISSES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    println!("Color matrix cache MISS for {}:{}, computing...", path.display(), layer_name);
+    
+    let matrix = compute_rgb_to_srgb_matrix_from_file_for_layer(path, layer_name)?;
+    
+    // Zapisz w cache z limit size
+    if let Ok(mut cache) = COLOR_MATRIX_CACHE.lock() {
+        // Limit cache size to 100 entries
+        if cache.len() >= 100 {
+            // Remove oldest entries (simple FIFO - w rzeczywistej implementacji można użyć LRU)
+            if let Some(oldest_key) = cache.keys().next().cloned() {
+                cache.remove(&oldest_key);
+            }
+        }
+        cache.insert(key, matrix);
+    }
+    
+    Ok(matrix)
+}
+
+#[allow(dead_code)]
+pub fn get_color_matrix_cache_stats() -> (u64, u64, f32) {
+    let hits = CACHE_HITS.load(std::sync::atomic::Ordering::Relaxed);
+    let misses = CACHE_MISSES.load(std::sync::atomic::Ordering::Relaxed);
+    let hit_rate = if hits + misses > 0 { hits as f32 / (hits + misses) as f32 } else { 0.0 };
+    (hits, misses, hit_rate)
 }

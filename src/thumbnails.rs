@@ -295,28 +295,9 @@ fn generate_single_exr_thumbnail_work_new(
             let exposure_mult = 2.0_f32.powf(exposure);
             let (r, g, b) = (r * exposure_mult, g * exposure_mult, b * exposure_mult);
             
-            // Tone mapping
-            let (r, g, b) = match tonemap_mode {
-                0 => { // ACES
-                    let aces_tonemap = |x: f32| {
-                        let a = 2.51;
-                        let b = 0.03;
-                        let c = 2.43;
-                        let d = 0.59;
-                        let e = 0.14;
-                        (x * (a * x + b) / (x * (c * x + d) + e)).clamp(0.0, 1.0)
-                    };
-                    (aces_tonemap(r), aces_tonemap(g), aces_tonemap(b))
-                },
-                1 => { // Reinhard
-                    let reinhard_tonemap = |x: f32| x / (1.0 + x);
-                    (reinhard_tonemap(r), reinhard_tonemap(g), reinhard_tonemap(b))
-                },
-                2 => { // Linear
-                    (r.clamp(0.0, 1.0), g.clamp(0.0, 1.0), b.clamp(0.0, 1.0))
-                },
-                _ => (r.clamp(0.0, 1.0), g.clamp(0.0, 1.0), b.clamp(0.0, 1.0))
-            };
+            // Tone mapping używając skonsolidowanej funkcji
+            let mode = crate::tone_mapping::ToneMapMode::from(tonemap_mode);
+            let (r, g, b) = crate::tone_mapping::apply_tonemap_scalar(r, g, b, mode);
 
             // Gamma correction
             let gamma_correct = |x: f32| x.powf(1.0 / gamma);

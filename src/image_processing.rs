@@ -84,22 +84,7 @@ pub fn process_pixel(
     }
 }
 
-/// ACES tone mapping - znacznie lepszy od Reinhard
-#[inline]
-fn aces_tonemap(x: f32) -> f32 {
-    let a = 2.51;
-    let b = 0.03;
-    let c = 2.43;
-    let d = 0.59;
-    let e = 0.14;
-    ((x * (a * x + b)) / (x * (c * x + d) + e)).clamp(0.0, 1.0)
-}
-
-/// Reinhard tone mapping: x / (1 + x)
-#[inline]
-fn reinhard_tonemap(x: f32) -> f32 {
-    (x / (1.0 + x)).clamp(0.0, 1.0)
-}
+// Usunięte duplikaty tone mapping - przeniesione do tone_mapping.rs
 
 
 
@@ -137,25 +122,9 @@ pub fn tone_map_and_gamma(
     let exposed_g = safe_g * exposure_multiplier;
     let exposed_b = safe_b * exposure_multiplier;
 
-    // Tone mapping wg trybu
-    let (tm_r, tm_g, tm_b) = match tonemap_mode {
-        1 => (
-            reinhard_tonemap(exposed_r),
-            reinhard_tonemap(exposed_g),
-            reinhard_tonemap(exposed_b),
-        ),
-        2 => (
-            // Linear: brak tone-map, tylko clamp do [0,1] po ekspozycji
-            exposed_r.clamp(0.0, 1.0),
-            exposed_g.clamp(0.0, 1.0),
-            exposed_b.clamp(0.0, 1.0),
-        ),
-        _ => (
-            aces_tonemap(exposed_r),
-            aces_tonemap(exposed_g),
-            aces_tonemap(exposed_b),
-        ),
-    };
+    // Tone mapping używając skonsolidowanej funkcji
+    let mode = crate::tone_mapping::ToneMapMode::from(tonemap_mode);
+    let (tm_r, tm_g, tm_b) = crate::tone_mapping::apply_tonemap_scalar(exposed_r, exposed_g, exposed_b, mode);
 
     // Korekcja wyjściowa: preferuj prawdziwą krzywą sRGB (OETF) dla gamma ~2.2/2.4; w innym wypadku użyj niestandardowej gammy
     let use_srgb = (gamma - 2.2).abs() < 0.2 || (gamma - 2.4).abs() < 0.2;
@@ -193,6 +162,40 @@ fn aces_tonemap_simd(x: f32x4) -> f32x4 {
 fn reinhard_tonemap_simd(x: f32x4) -> f32x4 {
     let one = Simd::splat(1.0);
     (x / (one + x)).simd_clamp(Simd::splat(0.0), one)
+}
+
+#[inline]
+fn filmic_tonemap_simd(x: f32x4) -> f32x4 {
+    let x_safe = x.simd_max(Simd::splat(0.0));
+    let a = Simd::splat(0.15);  // Black point
+    let b = Simd::splat(0.50);  // Toe
+    let c = Simd::splat(0.10);  // Shoulder
+    let d = Simd::splat(0.20);  // White point
+    let epsilon = Simd::splat(1e-9);
+    
+    let numerator = x_safe * (a * x_safe + c * b) + d * x_safe;
+    let denominator = x_safe * (a * x_safe + b) + d * c;
+    
+    (numerator / (denominator + epsilon)).simd_clamp(Simd::splat(0.0), Simd::splat(1.0))
+}
+
+#[inline]
+fn hable_tonemap_simd(x: f32x4) -> f32x4 {
+    let x_safe = x.simd_max(Simd::splat(0.0));
+    let a = Simd::splat(0.15);
+    let b = Simd::splat(0.50);
+    let c = Simd::splat(0.10);
+    let d = Simd::splat(0.20);
+    let e = Simd::splat(0.02);
+    let w = Simd::splat(11.2);
+    let epsilon = Simd::splat(1e-9);
+    
+    let numerator = (x_safe * (a * x_safe + c * b) + d * e) * (x_safe * (a * x_safe + b) + d * c);
+    let denominator = (x_safe * (a * x_safe + b) + d * c) * (x_safe * (a * x_safe + c * b) + d * e);
+    
+    let white_scale = Simd::splat(1.0) / (((w * (a * w + c * b) + d * e) * (w * (a * w + b) + d * c)) / ((w * (a * w + b) + d * c) * (w * (a * w + c * b) + d * e)));
+    
+    (numerator / (denominator + epsilon) * white_scale).simd_clamp(Simd::splat(0.0), Simd::splat(1.0))
 }
 
 #[inline]
@@ -251,6 +254,32 @@ pub fn tone_map_and_gamma_simd(
             exposed_g.simd_clamp(zero, Simd::splat(1.0)),
             exposed_b.simd_clamp(zero, Simd::splat(1.0)),
         ),
+        3 => (
+            filmic_tonemap_simd(exposed_r),
+            filmic_tonemap_simd(exposed_g),
+            filmic_tonemap_simd(exposed_b),
+        ),
+        4 => (
+            hable_tonemap_simd(exposed_r),
+            hable_tonemap_simd(exposed_g),
+            hable_tonemap_simd(exposed_b),
+        ),
+        5 => {
+            // Local Adaptation - uproszczona wersja bez lokalnego próbkowania
+            // Użyj globalnej średniej zamiast lokalnej
+            let global_avg = (exposed_r + exposed_g + exposed_b) / Simd::splat(3.0);
+            let local_adaptation_tonemap = |x: f32x4, avg: f32x4| {
+                let x_safe = x.simd_max(zero);
+                let avg_safe = avg.simd_max(Simd::splat(1e-6));
+                let local_contrast = x_safe / avg_safe;
+                (local_contrast / (Simd::splat(1.0) + local_contrast)).simd_clamp(zero, Simd::splat(1.0))
+            };
+            (
+                local_adaptation_tonemap(exposed_r, global_avg),
+                local_adaptation_tonemap(exposed_g, global_avg),
+                local_adaptation_tonemap(exposed_b, global_avg),
+            )
+        },
         _ => (
             aces_tonemap_simd(exposed_r),
             aces_tonemap_simd(exposed_g),

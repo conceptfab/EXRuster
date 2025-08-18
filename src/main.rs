@@ -19,12 +19,14 @@ mod gpu_processing;
 mod gpu_scheduler;
 mod gpu_thumbnails;
 mod gpu_mip;
+mod histogram;
+mod tone_mapping;
 
 #[cfg(target_os = "windows")]
 mod platform_win;
 
 use std::sync::{Arc, Mutex};
-use crate::ui_handlers::push_console;
+use crate::ui_handlers::{push_console, lock_or_recover};
 use ui_handlers::{ImageCacheType, CurrentFilePathType, FullExrCache, GpuContextType};
 use slint::{VecModel, SharedString, Model};
 use std::rc::Rc;
@@ -210,36 +212,55 @@ fn setup_menu_callbacks(
         }
     });
 
-    // Export: Convert (EXR -> TIFF) - FAZA 3 GPU
-    ui.on_export_convert_gpu({
-        let ui_handle = ui.as_weak();
-        let current_file_path = current_file_path.clone();
-        let image_cache = image_cache.clone();
-        let console = console_model.clone();
-        move || {
-            ui_handlers::handle_export_convert_gpu(ui_handle.clone(), image_cache.clone(), current_file_path.clone(), console.clone());
-        }
-    });
+    // Usunięte export callbacks - nieużywany kod
 
-    // Export: Beauty (PNG16) - FAZA 3 GPU
-    ui.on_export_beauty_gpu({
+    // Callback dla żądania histogramu
+    ui.on_histogram_requested({
         let ui_handle = ui.as_weak();
-        let current_file_path = current_file_path.clone();
         let image_cache = image_cache.clone();
         let console = console_model.clone();
         move || {
-            ui_handlers::handle_export_beauty_gpu(ui_handle.clone(), image_cache.clone(), current_file_path.clone(), console.clone());
-        }
-    });
-
-    // Export: Channels (PNG16 grayscale) - FAZA 3 GPU
-    ui.on_export_channels_gpu({
-        let ui_handle = ui.as_weak();
-        let current_file_path = current_file_path.clone();
-        let image_cache = image_cache.clone();
-        let console = console_model.clone();
-        move || {
-            ui_handlers::handle_export_channels_gpu(ui_handle.clone(), image_cache.clone(), current_file_path.clone(), console.clone());
+            if let Some(ui) = ui_handle.upgrade() {
+                let mut cache_guard = lock_or_recover(&image_cache);
+                if let Some(ref mut cache) = *cache_guard {
+                    match cache.update_histogram() {
+                        Ok(()) => {
+                            if let Some(hist_data) = cache.get_histogram_data() {
+                                // Przekaż dane histogramu do UI
+                                let red_bins: Vec<i32> = hist_data.red_bins.iter().map(|&x| x as i32).collect();
+                                let green_bins: Vec<i32> = hist_data.green_bins.iter().map(|&x| x as i32).collect();
+                                let blue_bins: Vec<i32> = hist_data.blue_bins.iter().map(|&x| x as i32).collect();
+                                let lum_bins: Vec<i32> = hist_data.luminance_bins.iter().map(|&x| x as i32).collect();
+                                
+                                ui.set_histogram_red_data(slint::ModelRc::new(slint::VecModel::from(red_bins)));
+                                ui.set_histogram_green_data(slint::ModelRc::new(slint::VecModel::from(green_bins)));
+                                ui.set_histogram_blue_data(slint::ModelRc::new(slint::VecModel::from(blue_bins)));
+                                ui.set_histogram_luminance_data(slint::ModelRc::new(slint::VecModel::from(lum_bins)));
+                                
+                                // Statystyki
+                                ui.set_histogram_min_value(hist_data.min_value);
+                                ui.set_histogram_max_value(hist_data.max_value);
+                                ui.set_histogram_total_pixels(hist_data.total_pixels as i32);
+                                
+                                // Percentyle
+                                let p1 = hist_data.get_percentile(crate::histogram::HistogramChannel::Luminance, 0.01);
+                                let p50 = hist_data.get_percentile(crate::histogram::HistogramChannel::Luminance, 0.50);
+                                let p99 = hist_data.get_percentile(crate::histogram::HistogramChannel::Luminance, 0.99);
+                                ui.set_histogram_p1(p1);
+                                ui.set_histogram_p50(p50);
+                                ui.set_histogram_p99(p99);
+                                
+                                push_console(&ui, &console, format!("[histogram] computed: min={:.3}, max={:.3}, median={:.3}", p1, p50, p99));
+                                ui.set_status_text("Histogram updated".into());
+                            }
+                        }
+                        Err(e) => {
+                            push_console(&ui, &console, format!("[error][histogram] {}", e));
+                            ui.set_status_text(format!("Histogram error: {}", e).into());
+                        }
+                    }
+                }
+            }
         }
     });
 }

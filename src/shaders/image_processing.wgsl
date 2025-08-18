@@ -118,7 +118,9 @@ fn tone_map_and_gamma(
     b: f32,
     exposure: f32,
     gamma: f32,
-    tonemap_mode: u32
+    tonemap_mode: u32,
+    current_x: u32,
+    current_y: u32
 ) -> vec3<f32> {
     let exposure_multiplier = pow(2.0, exposure);
 
@@ -168,8 +170,8 @@ fn tone_map_and_gamma(
          // Próbkowanie w promieniu (uproszczone - tylko 9 punktów)
          for (var dy = -1i; dy <= 1i; dy++) {
              for (var dx = -1i; dx <= 1i; dx++) {
-                 let sample_x = i32(global_id.x) + dx;
-                 let sample_y = i32(global_id.y) + dy;
+                 let sample_x = i32(current_x) + dx;
+                 let sample_y = i32(current_y) + dy;
                  
                  if (sample_x >= 0i && sample_x < i32(params.width) && 
                      sample_y >= 0i && sample_y < i32(params.height)) {
@@ -243,7 +245,9 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         color.b,
         params.exposure,
         params.gamma,
-        params.tonemap_mode
+        params.tonemap_mode,
+        global_id.x,
+        global_id.y
     );
     
     // NAPRAWIONE: Konwersja do u32 (4 bajty RGBA packed)

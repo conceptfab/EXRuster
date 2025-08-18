@@ -9,6 +9,7 @@ import "../resources/fonts/GeistMono-Regular.otf";
 import { ConsoleWindow } from "console_window.slint";
 import { MetaWindow } from "meta_window.slint";
 import { ParameterSlider } from "ParameterSlider.slint";
+import { HistogramWindow } from "components/HistogramWindow.slint";
 
 
 // Miniaturki folderu roboczego
@@ -77,8 +78,22 @@ export component AppWindow inherits Window {
     in-out property <[string]> meta-table-keys: [];
     in-out property <[string]> meta-table-values: [];
     in-out property <bool> internal-console-visible: false; // New property for internal console visibility
+    
+    // Histogram data properties
+    in-out property <[int]> histogram-red-data: [];
+    in-out property <[int]> histogram-green-data: [];
+    in-out property <[int]> histogram-blue-data: [];
+    in-out property <[int]> histogram-luminance-data: [];
+    in-out property <float> histogram-min-value: 0.0;
+    in-out property <float> histogram-max-value: 1.0;
+    in-out property <int> histogram-total-pixels: 0;
+    in-out property <float> histogram-p1: 0.0;
+    in-out property <float> histogram-p50: 0.5;
+    in-out property <float> histogram-p99: 1.0;
     // Meta floating window state
     in-out property <bool> internal-meta-visible: false;
+    // Histogram floating window state
+    in-out property <bool> internal-histogram-visible: false;
     callback clear-console();
 
     // Helper properties to mirror column layout for positioning elements in the menu bar
@@ -153,6 +168,9 @@ export component AppWindow inherits Window {
      callback gpu-status-changed();
      callback check-gpu-availability();
      callback toggle-gpu-acceleration();
+     
+     // Histogram callback
+     callback histogram-requested();
 
     // Menu Bar
       Rectangle {
@@ -311,7 +329,7 @@ export component AppWindow inherits Window {
         y: 30px;
         x: 4px + 40px; // align under the View button (after File's 40px)
         width: 160px;
-        height: 130px; // 5 items * 26px
+        height: 156px; // 6 items * 26px
         background: Kolory.menu_tlo;
         border-color: Kolory.menu_obramowanie;
         border-width: 1px;
@@ -333,6 +351,7 @@ export component AppWindow inherits Window {
             PozycjaMenu { text: "Reset View"; clicked => { show-left-panel = true; show-right-panel = true; view-menu-open = false; view-menu-timer-running = false; } }
             PozycjaMenu { text: "Open Console"; clicked => { internal-console-visible = true; view-menu-open = false; view-menu-timer-running = false; } }
             PozycjaMenu { text: "Open Meta"; clicked => { internal-meta-visible = true; view-menu-open = false; view-menu-timer-running = false; } }
+            PozycjaMenu { text: "Compute Histogram"; clicked => { internal-histogram-visible = true; view-menu-open = false; view-menu-timer-running = false; } }
         }
         
         // Auto-close timer for View menu
@@ -1440,6 +1459,24 @@ export component AppWindow inherits Window {
         bottom-margin: 24px + 24px; // pasek przycisków + status bar
     }
 
+    // Floating Histogram window
+    if internal-histogram-visible: HistogramWindow {
+        width: 800px;
+        height: 600px;
+        histogram-red-data: root.histogram-red-data;
+        histogram-green-data: root.histogram-green-data;
+        histogram-blue-data: root.histogram-blue-data;
+        histogram-luminance-data: root.histogram-luminance-data;
+        histogram-min-value: root.histogram-min-value;
+        histogram-max-value: root.histogram-max-value;
+        histogram-total-pixels: root.histogram-total-pixels;
+        histogram-p1: root.histogram-p1;
+        histogram-p50: root.histogram-p50;
+        histogram-p99: root.histogram-p99;
+        exit => { root.internal-histogram-visible = false; }
+        z: 1000;
+    }
+
      // Global keyboard shortcuts via FocusScope
      shortcuts := FocusScope {
          x: 0px; y: 0px;
@@ -1468,6 +1505,8 @@ export component AppWindow inherits Window {
                  root.bottom-panel-visible = !root.bottom-panel-visible; return accept;
              } else if (event.text == "~" || event.text == "`") {
                  root.internal-console-visible = !root.internal-console-visible; return accept;
+             } else if (event.text == "h" || event.text == "H") {
+                 root.internal-histogram-visible = !root.internal-histogram-visible; return accept;
              } else if (event.text == "Left" || event.text == "ArrowLeft" || event.text == "") { // U+F702
                  root.navigate-thumbnails(-1); return accept;
              } else if (event.text == "Right" || event.text == "ArrowRight" || event.text == "") { // U+F703

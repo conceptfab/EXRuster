@@ -629,6 +629,38 @@ impl GpuContext {
         println!("GPU Benchmark wykonany - GPU: {:.1} ops/s", gpu_ops_per_sec);
     }
 
+    /// Bezpieczny wrapper dla operacji GPU z automatic fallback
+    pub fn safe_gpu_operation<T, F, G>(&self, gpu_op: F, cpu_fallback: G) -> anyhow::Result<T>
+    where
+        F: FnOnce(&GpuContext) -> anyhow::Result<T>,
+        G: FnOnce() -> anyhow::Result<T>,
+    {
+        // Sprawdź czy GPU jest dostępne
+        if !self.is_available() {
+            println!("GPU not available, using CPU fallback");
+            return cpu_fallback();
+        }
+
+        // Sprawdź obciążenie GPU
+        let current_load = self.gpu_metrics.buffer_pool_utilization.load(std::sync::atomic::Ordering::Relaxed) as f32 / 1000.0;
+        if current_load > 0.95 {
+            println!("GPU overloaded ({:.1}%), using CPU fallback", current_load * 100.0);
+            return cpu_fallback();
+        }
+
+        // Wykonaj operację GPU bez panic catching (GpuContext nie jest UnwindSafe)
+        match gpu_op(self) {
+            Ok(result) => {
+                println!("GPU operation successful");
+                Ok(result)
+            },
+            Err(e) => {
+                eprintln!("GPU operation failed: {}, falling back to CPU", e);
+                cpu_fallback()
+            }
+        }
+    }
+
 }
 
 impl Drop for GpuContext {

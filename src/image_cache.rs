@@ -6,7 +6,7 @@ use rayon::prelude::*;
 use std::collections::HashMap; // potrzebne dla extract_layers_info
 use crate::utils::split_layer_and_short;
 use crate::progress::ProgressSink;
-use crate::color_processing::compute_rgb_to_srgb_matrix_from_file_for_layer;
+// use crate::color_processing::compute_rgb_to_srgb_matrix_from_file_for_layer;
 use glam::{Mat3, Vec3};
 use std::sync::Arc;
 use crate::full_exr_cache::FullExrCacheData;
@@ -69,6 +69,8 @@ pub struct ImageCache {
     full_cache: Arc<FullExrCacheData>,
     // MIP cache: przeskalowane podglądy (float RGBA) do szybkiego preview
     pub mip_levels: Vec<MipLevel>,
+    // Histogram data dla analizy kolorów
+    pub histogram: Option<Arc<crate::histogram::HistogramData>>,
 }
 
 #[derive(Clone, Debug)]
@@ -180,7 +182,7 @@ impl ImageCache {
 
         // Spróbuj wyliczyć macierz konwersji primaries → sRGB na podstawie atrybutu chromaticities (dla wybranej warstwy/partu)
         let mut color_matrices = HashMap::new();
-        let color_matrix_rgb_to_srgb = compute_rgb_to_srgb_matrix_from_file_for_layer(path, &best_layer).ok();
+        let color_matrix_rgb_to_srgb = crate::color_processing::compute_rgb_to_srgb_matrix_from_file_for_layer_cached(path, &best_layer).ok();
         if let Some(matrix) = color_matrix_rgb_to_srgb {
             color_matrices.insert(best_layer.clone(), matrix);
         }
@@ -197,6 +199,7 @@ impl ImageCache {
             current_layer_channels: Some(layer_channels),
             full_cache: full_cache,
             mip_levels,
+            histogram: None, // Będzie obliczany na żądanie
         })
     }
     
@@ -214,7 +217,7 @@ impl ImageCache {
         if self.color_matrices.contains_key(layer_name) {
             self.color_matrix_rgb_to_srgb = self.color_matrices.get(layer_name).cloned();
         } else {
-            self.color_matrix_rgb_to_srgb = compute_rgb_to_srgb_matrix_from_file_for_layer(path, layer_name).ok();
+            self.color_matrix_rgb_to_srgb = crate::color_processing::compute_rgb_to_srgb_matrix_from_file_for_layer_cached(path, layer_name).ok();
             if let Some(matrix) = self.color_matrix_rgb_to_srgb {
                 self.color_matrices.insert(layer_name.to_string(), matrix);
             }
@@ -225,51 +228,63 @@ impl ImageCache {
         Ok(())
     }
 
+    pub fn update_histogram(&mut self) -> anyhow::Result<()> {
+        let mut histogram = crate::histogram::HistogramData::new(256);
+        histogram.compute_from_rgba_pixels(&self.raw_pixels)?;
+        self.histogram = Some(Arc::new(histogram));
+        println!("Histogram updated: {} pixels processed", self.histogram.as_ref().unwrap().total_pixels);
+        Ok(())
+    }
+
+    pub fn get_histogram_data(&self) -> Option<Arc<crate::histogram::HistogramData>> {
+        self.histogram.clone()
+    }
+
     pub fn process_to_image(&self, exposure: f32, gamma: f32, tonemap_mode: i32) -> Image {
         println!("=== PROCESS_TO_IMAGE START === {}x{}", self.width, self.height);
         
         let gpu_enabled = crate::ui_handlers::is_gpu_acceleration_enabled();
         println!("GPU acceleration enabled: {}", gpu_enabled);
         
-        // Ścieżka GPU (jeśli aktywna i dostępna) - z naprawionym timeout
+        // Ścieżka GPU z bezpiecznym wrapper (jeśli aktywna i dostępna)
         if gpu_enabled {
             println!("Attempting GPU processing...");
-            let gpu_context = crate::ui_handlers::get_global_gpu_context();
-            println!("GPU context available: {}", gpu_context.is_some());
             if let Some(global_ctx_arc) = crate::ui_handlers::get_global_gpu_context() {
                 if let Ok(guard) = global_ctx_arc.lock() {
                     if let Some(ref ctx) = *guard {
-                        // Spróbuj GPU processing - jeśli nie powiedzie się, użyj CPU fallback
-                        println!("Starting GPU image processing {}x{}", self.width, self.height);
-                        match gpu_process_rgba_f32_to_rgba8(
-                            ctx,
-                            &self.raw_pixels,
-                            self.width,
-                            self.height,
-                            exposure,
-                            gamma,
-                            tonemap_mode as u32,
-                            self.color_matrix_rgb_to_srgb,
-                        ) {
-                            Ok(bytes) => {
-                                println!("GPU image processing successful");
-                                let mut buffer = SharedPixelBuffer::<Rgba8Pixel>::new(self.width, self.height);
-                                let out_slice = buffer.make_mut_slice();
-                                for (i, dst) in out_slice.iter_mut().enumerate() {
-                                    let base = i * 4;
-                                    if base + 3 < bytes.len() {
-                                        *dst = Rgba8Pixel { r: bytes[base], g: bytes[base + 1], b: bytes[base + 2], a: bytes[base + 3] };
-                                    } else {
-                                        *dst = Rgba8Pixel { r: 0, g: 0, b: 0, a: 255 };
-                                    }
+                        // Użyj bezpiecznego wrapper
+                        let gpu_result = ctx.safe_gpu_operation(
+                            |ctx| gpu_process_rgba_f32_to_rgba8(
+                                ctx,
+                                &self.raw_pixels,
+                                self.width,
+                                self.height,
+                                exposure,
+                                gamma,
+                                tonemap_mode as u32,
+                                self.color_matrix_rgb_to_srgb,
+                            ),
+                            || {
+                                // CPU fallback - nie rób nic, spadnie do dolnego kodu CPU
+                                Err(anyhow::anyhow!("Using CPU fallback"))
+                            }
+                        );
+
+                        if let Ok(bytes) = gpu_result {
+                            println!("GPU image processing successful");
+                            let mut buffer = SharedPixelBuffer::<Rgba8Pixel>::new(self.width, self.height);
+                            let out_slice = buffer.make_mut_slice();
+                            for (i, dst) in out_slice.iter_mut().enumerate() {
+                                let base = i * 4;
+                                if base + 3 < bytes.len() {
+                                    *dst = Rgba8Pixel { r: bytes[base], g: bytes[base + 1], b: bytes[base + 2], a: bytes[base + 3] };
+                                } else {
+                                    *dst = Rgba8Pixel { r: 0, g: 0, b: 0, a: 255 };
                                 }
-                                return Image::from_rgba8(buffer);
                             }
-                            Err(e) => {
-                                eprintln!("GPU image processing failed: {}", e);
-                                println!("Falling back to CPU image processing");
-                            }
+                            return Image::from_rgba8(buffer);
                         }
+                        // Jeśli GPU fallback failed, kontynuuj do CPU processing
                     }
                 }
             }
