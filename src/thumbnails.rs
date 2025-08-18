@@ -71,6 +71,152 @@ impl ColorConfig {
 
 
 /// Generuje miniaturki używając CPU (nowa, wydajna implementacja) - zwraca ExrThumbWork
+/// GPU-accelerated thumbnail generation
+pub fn generate_thumbnails_gpu_raw(
+    files: Vec<PathBuf>,
+    thumb_height: u32,
+    exposure: f32,
+    gamma: f32,
+    tonemap_mode: i32,
+    progress: Option<&dyn ProgressSink>,
+) -> anyhow::Result<Vec<ExrThumbWork>> {
+    // Sprawdź czy GPU jest dostępny
+    if !crate::ui_handlers::is_gpu_acceleration_enabled() {
+        return generate_thumbnails_cpu_raw(files, thumb_height, exposure, gamma, tonemap_mode, progress);
+    }
+
+    let gpu_context = match crate::ui_handlers::get_global_gpu_context() {
+        Some(ctx_arc) => {
+            match ctx_arc.lock() {
+                Ok(guard) => {
+                    if let Some(ref ctx) = *guard {
+                        ctx.clone()
+                    } else {
+                        return generate_thumbnails_cpu_raw(files, thumb_height, exposure, gamma, tonemap_mode, progress);
+                    }
+                }
+                Err(_) => {
+                    return generate_thumbnails_cpu_raw(files, thumb_height, exposure, gamma, tonemap_mode, progress);
+                }
+            }
+        }
+        None => {
+            return generate_thumbnails_cpu_raw(files, thumb_height, exposure, gamma, tonemap_mode, progress);
+        }
+    };
+
+    let total_files = files.len();
+    let timing_stats = TimingStats::new();
+    let color_config = ColorConfig::new(gamma, exposure, tonemap_mode);
+
+    progress.map(|p| p.set(0.05, Some("🚀 Starting GPU thumbnail generation...")));
+
+    // Przygotuj zadania batch
+    let mut batch_data = Vec::new();
+    let mut file_paths = Vec::new();
+    
+    for (i, file_path) in files.iter().enumerate() {
+        let load_start = Instant::now();
+        
+        // Wczytaj plik EXR
+        let file_stem = file_path.file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("unknown")
+            .to_string();
+
+        progress.map(|p| {
+            p.set(
+                0.1 + 0.4 * (i as f32) / (total_files as f32),
+                Some(&format!("🔄 Loading {} ({}/{})", file_stem, i + 1, total_files))
+            )
+        });
+
+        // Extract layer info
+        let _layers_result = match extract_layers_info(&file_path) {
+            Ok(layers) => layers,
+            Err(e) => {
+                eprintln!("❌ Failed to extract layers from {}: {}", file_path.display(), e);
+                continue;
+            }
+        };
+
+        // Użyj podobnego podejścia jak CPU, ale zbierz dane do batch processing
+        // Na razie jako fallback, stwórz pojedynczą miniaturkę i dodaj do batch_data
+        match generate_single_exr_thumbnail_work_new(&file_path, thumb_height, &color_config, &timing_stats) {
+            Ok(thumb_work) => {
+                // Konwertuj RGBA8 do f32 dla GPU processing (to nie jest optymalne, ale działa)
+                let mut pixels_f32 = Vec::with_capacity(thumb_work.pixels.len());
+                for chunk in thumb_work.pixels.chunks(4) {
+                    pixels_f32.push(chunk[0] as f32 / 255.0);
+                    pixels_f32.push(chunk[1] as f32 / 255.0);
+                    pixels_f32.push(chunk[2] as f32 / 255.0);
+                    pixels_f32.push(chunk[3] as f32 / 255.0);
+                }
+                
+                batch_data.push((
+                    format!("{}_{}", i, file_stem),
+                    pixels_f32,
+                    thumb_work.width,
+                    thumb_work.height,
+                ));
+                file_paths.push(file_path.clone());
+                timing_stats.add_load_time(load_start.elapsed());
+            }
+            Err(e) => {
+                eprintln!("❌ Failed to generate thumbnail for {}: {}", file_path.display(), e);
+                continue;
+            }
+        }
+    }
+
+    progress.map(|p| p.set(0.6, Some("🎯 Processing thumbnails on GPU...")));
+
+    // Użyj batch processor do generacji miniaturek na GPU
+    let thumbnails = crate::gpu_batch::batch_process_thumbnails_gpu(
+        std::sync::Arc::new(gpu_context),
+        batch_data,
+        thumb_height,
+        exposure,
+        gamma,
+        tonemap_mode,
+    );
+
+    progress.map(|p| p.set(0.8, Some("💾 Converting results...")));
+
+    // Konwertuj wyniki do ExrThumbWork
+    let mut results = Vec::new();
+    for (i, file_path) in file_paths.iter().enumerate() {
+        let file_stem = file_path.file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("unknown")
+            .to_string();
+        
+        let key = format!("{}_{}", i, file_stem);
+        
+        if let Some((bytes, width, height)) = thumbnails.get(&key) {            
+            results.push(ExrThumbWork {
+                path: file_path.clone(),
+                file_name: file_stem,
+                file_size_bytes: file_path.metadata().map(|m| m.len()).unwrap_or(0),
+                width: *width,
+                height: *height,
+                num_layers: 1, // Simplified for GPU path
+                pixels: bytes.clone(),
+            });
+        }
+    }
+
+    progress.map(|p| {
+        p.set(1.0, Some(&format!(
+            "✅ GPU thumbnails generated: {} files in {:.2}s", 
+            results.len(),
+            timing_stats.get_total_time().as_secs_f32()
+        )))
+    });
+
+    Ok(results)
+}
+
 pub fn generate_thumbnails_cpu_raw(
     files: Vec<PathBuf>,
     thumb_height: u32,

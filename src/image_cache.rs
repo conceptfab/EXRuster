@@ -78,7 +78,52 @@ pub struct MipLevel {
     pub pixels: Vec<f32>,
 }
 
-fn build_mip_chain(
+/// GPU-based MIP chain building
+fn build_mip_chain_gpu(
+    base_pixels: &[f32],
+    width: u32,
+    height: u32,
+    max_levels: usize,
+) -> Vec<MipLevel> {
+    // Sprawdź czy GPU jest dostępny
+    if crate::ui_handlers::is_gpu_acceleration_enabled() {
+        if let Some(global_ctx_arc) = crate::ui_handlers::get_global_gpu_context() {
+            if let Ok(guard) = global_ctx_arc.lock() {
+                if let Some(ref ctx) = *guard {
+                    // Użyj GPU do generowania MIP
+                    let config = crate::gpu_mip::MipConfig {
+                        filter_mode: crate::gpu_mip::MipFilterMode::Average,
+                        preserve_alpha: true,
+                        max_levels: Some(max_levels as u32),
+                    };
+                    
+                    match crate::gpu_mip::build_mip_chain_gpu(ctx, base_pixels, width, height, &config) {
+                        Ok(gpu_levels) => {
+                            // Konwertuj z formatu GPU na MipLevel
+                            let mut result = Vec::new();
+                            for (pixels, w, h) in gpu_levels.into_iter().skip(1) { // Pomiń poziom 0 (oryginalny)
+                                result.push(MipLevel {
+                                    width: w,
+                                    height: h,
+                                    pixels,
+                                });
+                            }
+                            return result;
+                        }
+                        Err(e) => {
+                            eprintln!("GPU MIP generation failed, falling back to CPU: {}", e);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // Fallback do CPU
+    build_mip_chain_cpu(base_pixels, width, height, max_levels)
+}
+
+fn build_mip_chain_cpu(
     base_pixels: &[f32],
     mut width: u32,
     mut height: u32,
@@ -138,7 +183,7 @@ impl ImageCache {
             color_matrices.insert(best_layer.clone(), matrix);
         }
 
-        let mip_levels = build_mip_chain(&raw_pixels, width, height, 4);
+        let mip_levels = build_mip_chain_gpu(&raw_pixels, width, height, 4);
         Ok(ImageCache {
             raw_pixels,
             width,
@@ -172,7 +217,7 @@ impl ImageCache {
             }
         }
         // Odbuduj MIP-y dla nowego obrazu
-        self.mip_levels = build_mip_chain(&self.raw_pixels, self.width, self.height, 4);
+        self.mip_levels = build_mip_chain_gpu(&self.raw_pixels, self.width, self.height, 4);
 
         Ok(())
     }

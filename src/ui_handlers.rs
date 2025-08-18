@@ -386,8 +386,8 @@ pub fn load_thumbnails_for_directory(
             // Użyj nowej, wydajnej funkcji do generowania miniaturek
             prog.set(0.1, Some(&format!("📁 Found {} EXR files, starting processing...", total_files)));
             
-            // Generuj miniaturki w osobnym wątku, ale bez slint::Image
-            let thumbnail_works = match crate::thumbnails::generate_thumbnails_cpu_raw(
+            // Generuj miniaturki w osobnym wątku - użyj GPU jeśli dostępny
+            let thumbnail_works = match crate::thumbnails::generate_thumbnails_gpu_raw(
                 files,
                 THUMBNAIL_HEIGHT, 
                 exposure, 
