@@ -24,6 +24,7 @@ pub struct ThumbnailParamsStd140 {
 }
 
 /// GPU thumbnail generation function
+#[allow(dead_code)]
 pub fn generate_thumbnail_gpu(
     ctx: &GpuContext,
     pixels: &[f32],
@@ -175,6 +176,7 @@ pub fn generate_thumbnail_gpu(
 }
 
 /// Helper function to calculate thumbnail dimensions maintaining aspect ratio
+#[allow(dead_code)]
 pub fn calculate_thumbnail_size(src_width: u32, src_height: u32, target_height: u32) -> (u32, u32) {
     let aspect_ratio = src_width as f32 / src_height as f32;
     let dst_height = target_height;
@@ -183,6 +185,7 @@ pub fn calculate_thumbnail_size(src_width: u32, src_height: u32, target_height: 
 }
 
 /// High-level GPU thumbnail generation function
+#[allow(dead_code)]
 pub fn generate_thumbnail_from_pixels_gpu(
     ctx: &GpuContext,
     pixels: &[f32],

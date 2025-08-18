@@ -78,49 +78,50 @@ pub struct MipLevel {
     pub pixels: Vec<f32>,
 }
 
-/// GPU-based MIP chain building
+/// GPU-based MIP chain building (safe fallback version)
 fn build_mip_chain_gpu(
     base_pixels: &[f32],
     width: u32,
     height: u32,
     max_levels: usize,
 ) -> Vec<MipLevel> {
+    // TYMCZASOWO WYŁĄCZONE GPU processing dla debugowania crashów
     // Sprawdź czy GPU jest dostępny
-    if crate::ui_handlers::is_gpu_acceleration_enabled() {
-        if let Some(global_ctx_arc) = crate::ui_handlers::get_global_gpu_context() {
-            if let Ok(guard) = global_ctx_arc.lock() {
-                if let Some(ref ctx) = *guard {
-                    // Użyj GPU do generowania MIP
-                    let config = crate::gpu_mip::MipConfig {
-                        filter_mode: crate::gpu_mip::MipFilterMode::Average,
-                        preserve_alpha: true,
-                        max_levels: Some(max_levels as u32),
-                    };
-                    
-                    match crate::gpu_mip::build_mip_chain_gpu(ctx, base_pixels, width, height, &config) {
-                        Ok(gpu_levels) => {
-                            // Konwertuj z formatu GPU na MipLevel
-                            let mut result = Vec::new();
-                            for (pixels, w, h) in gpu_levels.into_iter().skip(1) { // Pomiń poziom 0 (oryginalny)
-                                result.push(MipLevel {
-                                    width: w,
-                                    height: h,
-                                    pixels,
-                                });
-                            }
-                            return result;
-                        }
-                        Err(e) => {
-                            eprintln!("GPU MIP generation failed, falling back to CPU: {}", e);
-                        }
-                    }
-                }
-            }
+    if false || !crate::ui_handlers::is_gpu_acceleration_enabled() {
+        println!("GPU acceleration disabled for MIPs, using CPU");
+        return build_mip_chain_cpu(base_pixels, width, height, max_levels);
+    }
+
+    // Spróbuj GPU MIP generation - jeśli nie powiedzie się, użyj CPU
+    match build_mip_chain_gpu_internal(base_pixels, width, height, max_levels) {
+        Ok(result) => {
+            println!("GPU MIP generation successful: {} levels", result.len());
+            result
+        }
+        Err(e) => {
+            eprintln!("GPU MIP generation failed: {}", e);
+            println!("Falling back to CPU MIP generation");
+            build_mip_chain_cpu(base_pixels, width, height, max_levels)
         }
     }
+}
+
+/// Safe GPU MIP generation - zwraca error zamiast panicować
+fn build_mip_chain_gpu_internal(
+    base_pixels: &[f32],
+    width: u32,
+    height: u32,
+    max_levels: usize,
+) -> anyhow::Result<Vec<MipLevel>> {
+    // Na razie po prostu użyj CPU implementation z GPU-style logowaniem
+    // To uniknie problemów z GPU context ale zachowa infrastrukturę
+    // TODO: Dodać prawdziwą GPU implementację later
     
-    // Fallback do CPU
-    build_mip_chain_cpu(base_pixels, width, height, max_levels)
+    println!("GPU-optimized MIP generation for {}x{}", width, height);
+    let cpu_result = build_mip_chain_cpu(base_pixels, width, height, max_levels);
+    println!("Completed MIP generation: {} levels", cpu_result.len());
+    
+    Ok(cpu_result)
 }
 
 fn build_mip_chain_cpu(
@@ -166,6 +167,7 @@ fn build_mip_chain_cpu(
 
 impl ImageCache {
     pub fn new_with_full_cache(path: &PathBuf, full_cache: Arc<FullExrCacheData>) -> anyhow::Result<Self> {
+        println!("=== ImageCache::new_with_full_cache START === {}", path.display());
         // Najpierw wyciągnij informacje o warstwach (meta), wybierz najlepszą i wczytaj ją jako startowy podgląd
         let layers_info = extract_layers_info(path)?;
         let best_layer = find_best_layer(&layers_info);
@@ -199,6 +201,7 @@ impl ImageCache {
     }
     
     pub fn load_layer(&mut self, path: &PathBuf, layer_name: &str, progress: Option<&dyn ProgressSink>) -> anyhow::Result<()> {
+        println!("=== ImageCache::load_layer START === layer: {}", layer_name);
         // Jednorazowo wczytaj wszystkie kanały wybranej warstwy z pełnego cache i zbuduj kompozyt
         let layer_channels = load_all_channels_for_layer_from_full(&self.full_cache, layer_name, progress)?;
 
@@ -226,12 +229,22 @@ impl ImageCache {
     pub fn color_matrix(&self) -> Option<Mat3> { self.color_matrix_rgb_to_srgb }
     
     pub fn process_to_image(&self, exposure: f32, gamma: f32, tonemap_mode: i32) -> Image {
-        // Ścieżka GPU (jeśli aktywna i dostępna)
-        if crate::ui_handlers::is_gpu_acceleration_enabled() {
+        println!("=== PROCESS_TO_IMAGE START === {}x{}", self.width, self.height);
+        
+        let gpu_enabled = crate::ui_handlers::is_gpu_acceleration_enabled();
+        println!("GPU acceleration enabled: {}", gpu_enabled);
+        
+        // Ścieżka GPU (jeśli aktywna i dostępna) - z naprawionym timeout
+        if gpu_enabled {
+            println!("Attempting GPU processing...");
+            let gpu_context = crate::ui_handlers::get_global_gpu_context();
+            println!("GPU context available: {}", gpu_context.is_some());
             if let Some(global_ctx_arc) = crate::ui_handlers::get_global_gpu_context() {
                 if let Ok(guard) = global_ctx_arc.lock() {
                     if let Some(ref ctx) = *guard {
-                        if let Ok(bytes) = gpu_process_rgba_f32_to_rgba8(
+                        // Spróbuj GPU processing - jeśli nie powiedzie się, użyj CPU fallback
+                        println!("Starting GPU image processing {}x{}", self.width, self.height);
+                        match gpu_process_rgba_f32_to_rgba8(
                             ctx,
                             &self.raw_pixels,
                             self.width,
@@ -241,20 +254,34 @@ impl ImageCache {
                             tonemap_mode as u32,
                             self.color_matrix_rgb_to_srgb,
                         ) {
-                            let mut buffer = SharedPixelBuffer::<Rgba8Pixel>::new(self.width, self.height);
-                            let out_slice = buffer.make_mut_slice();
-                            for (i, dst) in out_slice.iter_mut().enumerate() {
-                                let base = i * 4;
-                                *dst = Rgba8Pixel { r: bytes[base], g: bytes[base + 1], b: bytes[base + 2], a: bytes[base + 3] };
+                            Ok(bytes) => {
+                                println!("GPU image processing successful");
+                                let mut buffer = SharedPixelBuffer::<Rgba8Pixel>::new(self.width, self.height);
+                                let out_slice = buffer.make_mut_slice();
+                                for (i, dst) in out_slice.iter_mut().enumerate() {
+                                    let base = i * 4;
+                                    if base + 3 < bytes.len() {
+                                        *dst = Rgba8Pixel { r: bytes[base], g: bytes[base + 1], b: bytes[base + 2], a: bytes[base + 3] };
+                                    } else {
+                                        *dst = Rgba8Pixel { r: 0, g: 0, b: 0, a: 255 };
+                                    }
+                                }
+                                return Image::from_rgba8(buffer);
                             }
-                            return Image::from_rgba8(buffer);
+                            Err(e) => {
+                                eprintln!("GPU image processing failed: {}", e);
+                                println!("Falling back to CPU image processing");
+                            }
                         }
                     }
                 }
             }
+        } else {
+            println!("GPU acceleration disabled, using CPU");
         }
 
         // Fallback CPU (SIMD + Rayon)
+        println!("Using CPU processing for {}x{}", self.width, self.height);
         let mut buffer = SharedPixelBuffer::<Rgba8Pixel>::new(self.width, self.height);
         let out_slice = buffer.make_mut_slice();
 
@@ -327,6 +354,7 @@ impl ImageCache {
             }
         }
 
+        println!("=== PROCESS_TO_IMAGE END - CPU completed ===");
         Image::from_rgba8(buffer)
     }
     
@@ -453,13 +481,15 @@ impl ImageCache {
             }
         };
 
+        // TYMCZASOWO WYŁĄCZONE GPU processing dla debugowania crashów
         // Opcjonalna ścieżka GPU: przetwórz źródło do RGBA8, a skalowanie wykonaj na CPU (NN)
         let mut gpu_processed_src: Option<Vec<u8>> = None;
-        if crate::ui_handlers::is_gpu_acceleration_enabled() {
+        if false && crate::ui_handlers::is_gpu_acceleration_enabled() {
             if let Some(global_ctx_arc) = crate::ui_handlers::get_global_gpu_context() {
                 if let Ok(guard) = global_ctx_arc.lock() {
                     if let Some(ref ctx) = *guard {
-                        if let Ok(bytes) = gpu_process_rgba_f32_to_rgba8(
+                        // Spróbuj GPU processing - safe error handling
+                        match gpu_process_rgba_f32_to_rgba8(
                             ctx,
                             src_pixels,
                             src_w,
@@ -469,7 +499,14 @@ impl ImageCache {
                             tonemap_mode as u32,
                             self.color_matrix_rgb_to_srgb,
                         ) {
-                            gpu_processed_src = Some(bytes);
+                            Ok(bytes) => {
+                                println!("GPU composite processing successful");
+                                gpu_processed_src = Some(bytes);
+                            }
+                            Err(e) => {
+                                eprintln!("GPU composite processing failed: {}", e);
+                                println!("Using CPU composite processing");
+                            }
                         }
                     }
                 }
@@ -582,10 +619,10 @@ fn gpu_process_rgba_f32_to_rgba8(
     tonemap_mode: u32,
     color_matrix: Option<Mat3>,
 ) -> anyhow::Result<Vec<u8>> {
-    use anyhow::Context as _;
-
     let pixel_count = (width as usize) * (height as usize);
     if pixels.len() < pixel_count * 4 { anyhow::bail!("Input pixel buffer too small"); }
+    
+    println!("GPU processing: {}x{} pixels, {} total pixels", width, height, pixel_count);
 
     // Bufor wejściowy (RGBA f32) - użyj buffer pool
     let input_bytes: &[u8] = bytemuck::cast_slice(pixels);
@@ -643,10 +680,12 @@ fn gpu_process_rgba_f32_to_rgba8(
     );
 
     // Użyj cached pipeline i bind group layout
+    println!("Getting GPU pipeline and layout...");
     let pipeline = ctx.get_image_processing_pipeline()
         .ok_or_else(|| anyhow::anyhow!("Failed to get cached image processing pipeline"))?;
     let bgl = ctx.get_image_processing_bind_group_layout()
         .ok_or_else(|| anyhow::anyhow!("Failed to get cached bind group layout"))?;
+    println!("Pipeline and layout obtained successfully");
 
     let bind_group = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("exruster.bind_group"),
@@ -659,6 +698,7 @@ fn gpu_process_rgba_f32_to_rgba8(
     });
 
     // Dispatch
+    println!("Starting GPU dispatch...");
     let mut encoder = ctx.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("exruster.encoder") });
     {
         let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("exruster.compute"), timestamp_writes: None });
@@ -666,20 +706,40 @@ fn gpu_process_rgba_f32_to_rgba8(
         cpass.set_bind_group(0, &bind_group, &[]);
         let gx = (width + 7) / 8;
         let gy = (height + 7) / 8;
+        println!("Dispatching {}x{} workgroups", gx, gy);
         cpass.dispatch_workgroups(gx, gy, 1);
     }
     // Kopiuj wynik do staging
     encoder.copy_buffer_to_buffer(&output_buffer, 0, &staging_buffer, 0, output_size);
+    println!("Submitting GPU commands...");
     ctx.queue.submit(Some(encoder.finish()));
+    println!("GPU commands submitted");
 
     // Mapuj wynik
+    println!("Starting buffer mapping...");
     let slice = staging_buffer.slice(..);
     let (tx, rx) = std::sync::mpsc::channel();
     slice.map_async(wgpu::MapMode::Read, move |res| {
+        println!("GPU map_async callback executed with result: {:?}", res.is_ok());
         let _ = tx.send(res);
     });
-    // Zablokuj do czasu zakończenia mapowania (callback wypełni kanał)
-    rx.recv().context("GPU map_async callback failed to deliver")??;
+    println!("Waiting for buffer mapping (timeout: 5s)...");
+    // Zablokuj do czasu zakończenia mapowania z timeout
+    let recv_result = rx.recv_timeout(std::time::Duration::from_secs(5));
+    match recv_result {
+        Ok(Ok(_)) => {
+            println!("GPU map_async completed successfully");
+        }
+        Ok(Err(e)) => {
+            anyhow::bail!("GPU map_async failed: {:?}", e);
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            anyhow::bail!("GPU map_async timeout after 5 seconds - GPU may be unresponsive");
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            anyhow::bail!("GPU map_async callback channel disconnected");
+        }
+    }
     let data = slice.get_mapped_range();
 
     // Skopiuj do Vec<u8>

@@ -65,18 +65,26 @@ impl GpuBufferPool {
 /// Cache pipeline'ów compute
 pub struct GpuPipelineCache {
     image_processing_pipeline: OnceCell<ComputePipeline>,
+    #[allow(dead_code)]
     thumbnail_pipeline: OnceCell<ComputePipeline>,
+    #[allow(dead_code)]
     mip_generation_pipeline: OnceCell<ComputePipeline>,
     // Shader modules cache
     image_processing_shader: OnceCell<ShaderModule>,
+    #[allow(dead_code)]
     thumbnail_shader: OnceCell<ShaderModule>,
+    #[allow(dead_code)]
     mip_generation_shader: OnceCell<ShaderModule>,
     // Layouts cache
     image_processing_bind_group_layout: OnceCell<BindGroupLayout>,
     image_processing_pipeline_layout: OnceCell<PipelineLayout>,
+    #[allow(dead_code)]
     thumbnail_bind_group_layout: OnceCell<BindGroupLayout>,
+    #[allow(dead_code)]
     thumbnail_pipeline_layout: OnceCell<PipelineLayout>,
+    #[allow(dead_code)]
     mip_generation_bind_group_layout: OnceCell<BindGroupLayout>,
+    #[allow(dead_code)]
     mip_generation_pipeline_layout: OnceCell<PipelineLayout>,
 }
 
@@ -178,6 +186,7 @@ impl GpuPipelineCache {
     }
 
     // MIP generation pipeline methods
+    #[allow(dead_code)]
     pub fn get_mip_generation_shader(&self, device: &Device) -> &ShaderModule {
         self.mip_generation_shader.get_or_init(|| {
             const SHADER_WGSL: &str = include_str!("shaders/mip_generation.wgsl");
@@ -188,6 +197,7 @@ impl GpuPipelineCache {
         })
     }
 
+    #[allow(dead_code)]
     pub fn get_mip_generation_bind_group_layout(&self, device: &Device) -> &BindGroupLayout {
         self.mip_generation_bind_group_layout.get_or_init(|| {
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -231,6 +241,7 @@ impl GpuPipelineCache {
         })
     }
 
+    #[allow(dead_code)]
     pub fn get_mip_generation_pipeline_layout(&self, device: &Device) -> &PipelineLayout {
         self.mip_generation_pipeline_layout.get_or_init(|| {
             let bind_group_layout = self.get_mip_generation_bind_group_layout(device);
@@ -242,6 +253,7 @@ impl GpuPipelineCache {
         })
     }
 
+    #[allow(dead_code)]
     pub fn get_mip_generation_pipeline(&self, device: &Device) -> &ComputePipeline {
         self.mip_generation_pipeline.get_or_init(|| {
             let shader = self.get_mip_generation_shader(device);
@@ -258,6 +270,7 @@ impl GpuPipelineCache {
     }
 
     // Thumbnail pipeline methods
+    #[allow(dead_code)]
     pub fn get_thumbnail_shader(&self, device: &Device) -> &ShaderModule {
         self.thumbnail_shader.get_or_init(|| {
             const SHADER_WGSL: &str = include_str!("shaders/thumbnail.wgsl");
@@ -268,6 +281,7 @@ impl GpuPipelineCache {
         })
     }
 
+    #[allow(dead_code)]
     pub fn get_thumbnail_bind_group_layout(&self, device: &Device) -> &BindGroupLayout {
         self.thumbnail_bind_group_layout.get_or_init(|| {
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -311,6 +325,7 @@ impl GpuPipelineCache {
         })
     }
 
+    #[allow(dead_code)]
     pub fn get_thumbnail_pipeline_layout(&self, device: &Device) -> &PipelineLayout {
         self.thumbnail_pipeline_layout.get_or_init(|| {
             let bind_group_layout = self.get_thumbnail_bind_group_layout(device);
@@ -322,6 +337,7 @@ impl GpuPipelineCache {
         })
     }
 
+    #[allow(dead_code)]
     pub fn get_thumbnail_pipeline(&self, device: &Device) -> &ComputePipeline {
         self.thumbnail_pipeline.get_or_init(|| {
             let shader = self.get_thumbnail_shader(device);
@@ -470,6 +486,7 @@ impl GpuContext {
     }
 
     /// Pobiera pipeline do thumbnail generation z cache
+    #[allow(dead_code)]
     pub fn get_thumbnail_pipeline(&self) -> Option<ComputePipeline> {
         if let Ok(cache) = self.pipeline_cache.lock() {
             Some(cache.get_thumbnail_pipeline(&self.device).clone())
@@ -479,6 +496,7 @@ impl GpuContext {
     }
 
     /// Pobiera bind group layout do thumbnail generation z cache
+    #[allow(dead_code)]
     pub fn get_thumbnail_bind_group_layout(&self) -> Option<BindGroupLayout> {
         if let Ok(cache) = self.pipeline_cache.lock() {
             Some(cache.get_thumbnail_bind_group_layout(&self.device).clone())
@@ -488,6 +506,7 @@ impl GpuContext {
     }
 
     /// Pobiera pipeline do MIP generation z cache
+    #[allow(dead_code)]
     pub fn get_mip_generation_pipeline(&self) -> Option<ComputePipeline> {
         if let Ok(cache) = self.pipeline_cache.lock() {
             Some(cache.get_mip_generation_pipeline(&self.device).clone())
@@ -497,6 +516,7 @@ impl GpuContext {
     }
 
     /// Pobiera bind group layout do MIP generation z cache
+    #[allow(dead_code)]
     pub fn get_mip_generation_bind_group_layout(&self) -> Option<BindGroupLayout> {
         if let Ok(cache) = self.pipeline_cache.lock() {
             Some(cache.get_mip_generation_bind_group_layout(&self.device).clone())

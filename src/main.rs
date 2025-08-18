@@ -17,7 +17,6 @@ mod gpu_context;
 mod gpu_processing;
 mod gpu_thumbnails;
 mod gpu_mip;
-mod gpu_batch;
 
 #[cfg(target_os = "windows")]
 mod platform_win;

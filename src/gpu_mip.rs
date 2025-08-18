@@ -18,12 +18,14 @@ pub struct MipParamsStd140 {
 }
 
 /// Tryb filtrowania dla MIP generation
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug)]
 pub enum MipFilterMode {
     Average = 0,  // Średnia z bloku 2x2
 }
 
 /// Konfiguracja MIP generation
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct MipConfig {
     pub filter_mode: MipFilterMode,
@@ -42,6 +44,7 @@ impl Default for MipConfig {
 }
 
 /// Generuje jeden poziom MIP na GPU
+#[allow(dead_code)]
 pub fn generate_mip_level_gpu(
     ctx: &GpuContext,
     src_pixels: &[f32],
@@ -174,6 +177,7 @@ pub fn generate_mip_level_gpu(
 }
 
 /// Generuje kompletny łańcuch MIP na GPU
+#[allow(dead_code)]
 pub fn build_mip_chain_gpu(
     ctx: &GpuContext,
     base_pixels: &[f32],
