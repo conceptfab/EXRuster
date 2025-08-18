@@ -920,11 +920,12 @@ pub(crate) fn load_all_channels_for_layer(
     anyhow::bail!(format!("Nie znaleziono warstwy '{}'", layer_name))
 }
 
-// Pomocnicze: buduje kompozyt RGB z mapy kanałów
+// Pomocnicze: buduje kompozyt RGB z mapy kanałów - zoptymalizowana wersja
 fn compose_composite_from_channels(layer_channels: &LayerChannels) -> Vec<f32> {
     let pixel_count = (layer_channels.width as usize) * (layer_channels.height as usize);
-    let mut out: Vec<f32> = vec![0.0; pixel_count * 4];
-
+    
+    // Pre-allocate with exact capacity to avoid reallocations
+    let mut out: Vec<f32> = Vec::with_capacity(pixel_count * 4);
     
     let pick_exact_index = |name: &str| -> Option<usize> { layer_channels.channel_names.iter().position(|n| n == name) };
     let pick_prefix_index = |prefix: char| -> Option<usize> {
@@ -947,12 +948,20 @@ fn compose_composite_from_channels(layer_channels: &LayerChannels) -> Vec<f32> {
     let b_plane = &layer_channels.channel_data[base_b..base_b + pixel_count];
     let a_plane = a_base_opt.map(|ab| &layer_channels.channel_data[ab..ab + pixel_count]);
 
-    out.par_chunks_mut(4).enumerate().for_each(|(i, chunk)| {
-        chunk[0] = r_plane[i];
-        chunk[1] = g_plane[i];
-        chunk[2] = b_plane[i];
-        chunk[3] = if let Some(a) = a_plane { a[i] } else { 1.0 };
-    });
+    // Optimized bulk memory operations - use unsafe for maximum performance
+    unsafe {
+        out.set_len(pixel_count * 4);
+        let out_ptr = out.as_mut_ptr();
+        
+        // Process pixels in chunks of 4 for better cache efficiency
+        for i in 0..pixel_count {
+            let base_idx = i * 4;
+            *out_ptr.add(base_idx) = r_plane[i];
+            *out_ptr.add(base_idx + 1) = g_plane[i];
+            *out_ptr.add(base_idx + 2) = b_plane[i];
+            *out_ptr.add(base_idx + 3) = if let Some(a) = a_plane { a[i] } else { 1.0 };
+        }
+    }
 
     out
 }

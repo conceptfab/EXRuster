@@ -77,7 +77,8 @@ pub fn read_and_group_metadata(path: &Path) -> anyhow::Result<ExrMetadata> {
             header_items.push((normalized_key, pretty_value));
         }
     }
-    let mut groups: Vec<MetadataGroup> = Vec::new();
+    // Pre-allocate groups vector with known size (at least 2 groups)
+    let mut groups: Vec<MetadataGroup> = Vec::with_capacity(2 + meta.headers.len());
     groups.push(MetadataGroup { name: "Ogólne".into(), items: general_items });
     groups.push(MetadataGroup { name: "Nagłówek".into(), items: header_items });
 
@@ -95,7 +96,8 @@ pub fn read_and_group_metadata(path: &Path) -> anyhow::Result<ExrMetadata> {
         // Nazwa warstwy (pusta dla warstwy bazowej)
         let layer_name = base_layer_name.unwrap_or_else(|| "".to_string());
         // Atrybuty warstwy: preferuj typowane wartości, fallback do Debug
-        let mut layer_items: Vec<(String, String)> = Vec::new();
+        // Pre-allocate based on estimated number of attributes
+        let mut layer_items: Vec<(String, String)> = Vec::with_capacity(header.own_attributes.other.len());
         for (raw_name, value) in header.own_attributes.other.iter() {
             let name_lower = raw_name.to_string().to_ascii_lowercase();
             let normalized_key = if name_lower == "pixel_aspect_ratio" || name_lower == "pixel_aspect" {

@@ -60,7 +60,13 @@ pub fn load_exr_dimensions(file_path: &std::path::Path) -> anyhow::Result<(u32, 
     
     // Pobierz nazwy kanałów z metadanych
     let meta = ::exr::meta::MetaData::read_from_file(file_path, false)?;
-    let mut channels: Vec<String> = Vec::new();
+    
+    // Pre-calculate total channel count for efficient allocation
+    let total_channels: usize = meta.headers.iter()
+        .map(|h| h.channels.list.len())
+        .sum();
+    
+    let mut channels: Vec<String> = Vec::with_capacity(total_channels);
     for header in meta.headers.iter() {
         for ch in header.channels.list.iter() {
             channels.push(ch.name.to_string());

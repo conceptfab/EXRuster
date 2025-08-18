@@ -35,7 +35,8 @@ pub fn build_full_exr_cache(
     // Agreguj kanały według efektywnej nazwy warstwy tak samo jak UI (extract_layers_info)
     // Mapowanie: nazwa_warstwy -> (width, height, channel_names, channel_data)
     let mut layer_map: HashMap<String, (u32, u32, Vec<String>, Vec<f32>)> = HashMap::new();
-    let mut layer_order: Vec<String> = Vec::new();
+    // Pre-allocate with estimated capacity based on image layers
+    let mut layer_order: Vec<String> = Vec::with_capacity(any_image.layer_data.len());
 
     for layer in any_image.layer_data.iter() {
         let width = layer.size.width() as u32;
