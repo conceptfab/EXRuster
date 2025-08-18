@@ -1,8 +1,168 @@
 use wgpu::{
     Adapter, Backends, Device, DeviceDescriptor, Features, Instance, Limits, PowerPreference,
-    Queue, RequestAdapterOptions,
+    Queue, RequestAdapterOptions, Buffer, BufferUsages, ComputePipeline, ShaderModule,
+    BindGroupLayout, PipelineLayout,
 };
 use anyhow::Result;
+use std::sync::{Arc, Mutex};
+use std::collections::HashMap;
+use std::cell::OnceCell;
+
+/// Pool buforów GPU do wielokrotnego użytku
+#[derive(Debug)]
+pub struct GpuBufferPool {
+    buffers_by_size_and_usage: HashMap<(u64, BufferUsages), Vec<Buffer>>,
+    max_buffers_per_type: usize,
+}
+
+impl GpuBufferPool {
+    pub fn new() -> Self {
+        Self {
+            buffers_by_size_and_usage: HashMap::new(),
+            max_buffers_per_type: 8, // Maksymalnie 8 buforów tego samego typu
+        }
+    }
+
+    pub fn get_or_create_buffer(
+        &mut self,
+        device: &Device,
+        size: u64,
+        usage: BufferUsages,
+        label: Option<&str>,
+    ) -> Buffer {
+        let key = (size, usage);
+        
+        // Sprawdź czy mamy bufor w pool'u
+        if let Some(buffers) = self.buffers_by_size_and_usage.get_mut(&key) {
+            if let Some(buffer) = buffers.pop() {
+                return buffer;
+            }
+        }
+        
+        // Utwórz nowy bufor jeśli nie ma w pool'u
+        device.create_buffer(&wgpu::BufferDescriptor {
+            label,
+            size,
+            usage,
+            mapped_at_creation: false,
+        })
+    }
+
+    pub fn return_buffer(&mut self, buffer: Buffer, size: u64, usage: BufferUsages) {
+        let key = (size, usage);
+        let buffers = self.buffers_by_size_and_usage.entry(key).or_insert_with(Vec::new);
+        
+        // Dodaj bufor do pool'u tylko jeśli nie przekroczyliśmy limitu
+        if buffers.len() < self.max_buffers_per_type {
+            buffers.push(buffer);
+        }
+        // Jeśli przekroczyliśmy limit, bufor zostanie automatycznie zniszczony (drop)
+    }
+
+
+}
+
+/// Cache pipeline'ów compute
+pub struct GpuPipelineCache {
+    image_processing_pipeline: OnceCell<ComputePipeline>,
+    // Shader modules cache
+    image_processing_shader: OnceCell<ShaderModule>,
+    // Layouts cache
+    image_processing_bind_group_layout: OnceCell<BindGroupLayout>,
+    image_processing_pipeline_layout: OnceCell<PipelineLayout>,
+}
+
+impl GpuPipelineCache {
+    pub fn new() -> Self {
+        Self {
+            image_processing_pipeline: OnceCell::new(),
+            image_processing_shader: OnceCell::new(),
+            image_processing_bind_group_layout: OnceCell::new(),
+            image_processing_pipeline_layout: OnceCell::new(),
+        }
+    }
+
+    pub fn get_image_processing_shader(&self, device: &Device) -> &ShaderModule {
+        self.image_processing_shader.get_or_init(|| {
+            const SHADER_WGSL: &str = include_str!("shaders/image_processing.wgsl");
+            device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("exruster.image_processing.compute"),
+                source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(SHADER_WGSL)),
+            })
+        })
+    }
+
+    pub fn get_image_processing_bind_group_layout(&self, device: &Device) -> &BindGroupLayout {
+        self.image_processing_bind_group_layout.get_or_init(|| {
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("exruster.image_processing.bgl"),
+                entries: &[
+                    // binding 0: uniform
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    // binding 1: input storage (read)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    // binding 2: output storage (write)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            })
+        })
+    }
+
+    pub fn get_image_processing_pipeline_layout(&self, device: &Device) -> &PipelineLayout {
+        self.image_processing_pipeline_layout.get_or_init(|| {
+            let bind_group_layout = self.get_image_processing_bind_group_layout(device);
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("exruster.image_processing.pipeline_layout"),
+                bind_group_layouts: &[bind_group_layout],
+                push_constant_ranges: &[],
+            })
+        })
+    }
+
+    pub fn get_image_processing_pipeline(&self, device: &Device) -> &ComputePipeline {
+        self.image_processing_pipeline.get_or_init(|| {
+            let shader = self.get_image_processing_shader(device);
+            let layout = self.get_image_processing_pipeline_layout(device);
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("exruster.image_processing.pipeline"),
+                layout: Some(layout),
+                module: shader,
+                entry_point: Some("main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                cache: None,
+            })
+        })
+    }
+
+
+}
 
 /// Kontekst GPU zarządzający stanem wgpu
 #[derive(Clone)]
@@ -12,6 +172,8 @@ pub struct GpuContext {
     pub adapter: Adapter,
     pub device: Device,
     pub queue: Queue,
+    buffer_pool: Arc<Mutex<GpuBufferPool>>,
+    pipeline_cache: Arc<Mutex<GpuPipelineCache>>,
 }
 
 impl GpuContext {
@@ -66,6 +228,8 @@ impl GpuContext {
             adapter,
             device,
             queue,
+            buffer_pool: Arc::new(Mutex::new(GpuBufferPool::new())),
+            pipeline_cache: Arc::new(Mutex::new(GpuPipelineCache::new())),
         })
     }
 
@@ -82,6 +246,54 @@ impl GpuContext {
     pub fn get_adapter_info(&self) -> wgpu::AdapterInfo {
         self.adapter.get_info()
     }
+
+    /// Pobiera bufor z pool'u lub tworzy nowy
+    pub fn get_or_create_buffer(
+        &self,
+        size: u64,
+        usage: BufferUsages,
+        label: Option<&str>,
+    ) -> Buffer {
+        if let Ok(mut pool) = self.buffer_pool.lock() {
+            pool.get_or_create_buffer(&self.device, size, usage, label)
+        } else {
+            // Fallback - utwórz bufor bezpośrednio
+            self.device.create_buffer(&wgpu::BufferDescriptor {
+                label,
+                size,
+                usage,
+                mapped_at_creation: false,
+            })
+        }
+    }
+
+    /// Zwraca bufor do pool'u
+    pub fn return_buffer(&self, buffer: Buffer, size: u64, usage: BufferUsages) {
+        if let Ok(mut pool) = self.buffer_pool.lock() {
+            pool.return_buffer(buffer, size, usage);
+        }
+        // Jeśli nie można zablokować mutex'a, bufor zostanie automatycznie zniszczony
+    }
+
+    /// Pobiera pipeline do przetwarzania obrazów z cache
+    pub fn get_image_processing_pipeline(&self) -> Option<ComputePipeline> {
+        if let Ok(cache) = self.pipeline_cache.lock() {
+            Some(cache.get_image_processing_pipeline(&self.device).clone())
+        } else {
+            None
+        }
+    }
+
+    /// Pobiera bind group layout do przetwarzania obrazów z cache
+    pub fn get_image_processing_bind_group_layout(&self) -> Option<BindGroupLayout> {
+        if let Ok(cache) = self.pipeline_cache.lock() {
+            Some(cache.get_image_processing_bind_group_layout(&self.device).clone())
+        } else {
+            None
+        }
+    }
+
+
 }
 
 impl Drop for GpuContext {

@@ -12,10 +12,8 @@ use std::sync::Arc;
 use crate::full_exr_cache::FullExrCacheData;
 use core::simd::{f32x4, Simd};
 use std::simd::prelude::SimdFloat;
-use std::borrow::Cow;
 
 // GPU/wgpu i narzędzia do tworzenia buforów
-use wgpu::util::DeviceExt;
 use bytemuck::{Pod, Zeroable};
 
 /// Zwraca kanoniczny skrót kanału na podstawie aliasów/nazw przyjaznych.
@@ -70,14 +68,14 @@ pub struct ImageCache {
     // Pełne dane EXR (wszystkie warstwy i kanały) w pamięci
     full_cache: Arc<FullExrCacheData>,
     // MIP cache: przeskalowane podglądy (float RGBA) do szybkiego preview
-    mip_levels: Vec<MipLevel>,
+    pub mip_levels: Vec<MipLevel>,
 }
 
 #[derive(Clone, Debug)]
-struct MipLevel {
-    width: u32,
-    height: u32,
-    pixels: Vec<f32>,
+pub struct MipLevel {
+    pub width: u32,
+    pub height: u32,
+    pub pixels: Vec<f32>,
 }
 
 fn build_mip_chain(
@@ -544,22 +542,25 @@ fn gpu_process_rgba_f32_to_rgba8(
     let pixel_count = (width as usize) * (height as usize);
     if pixels.len() < pixel_count * 4 { anyhow::bail!("Input pixel buffer too small"); }
 
-    // Bufor wejściowy (RGBA f32)
+    // Bufor wejściowy (RGBA f32) - użyj buffer pool
     let input_bytes: &[u8] = bytemuck::cast_slice(pixels);
-    let input_buffer = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("exruster.input_rgba_f32"),
-        contents: input_bytes,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-    });
+    let input_size = input_bytes.len() as u64;
+    let input_buffer = ctx.get_or_create_buffer(
+        input_size,
+        wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        Some("exruster.input_rgba_f32"),
+    );
+    
+    // Skopiuj dane do bufora wejściowego
+    ctx.queue.write_buffer(&input_buffer, 0, input_bytes);
 
-    // Bufor wyjściowy (1 u32 na piksel)
+    // Bufor wyjściowy (1 u32 na piksel) - użyj buffer pool
     let output_size: u64 = (pixel_count as u64) * 4;
-    let output_buffer = ctx.device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("exruster.output_rgba8_u32"),
-        size: output_size,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-        mapped_at_creation: false,
-    });
+    let output_buffer = ctx.get_or_create_buffer(
+        output_size,
+        wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        Some("exruster.output_rgba8_u32"),
+    );
 
     // Uniforms
     let cm = color_matrix.unwrap_or_else(|| Mat3::from_diagonal(Vec3::new(1.0, 1.0, 1.0)));
@@ -579,79 +580,28 @@ fn gpu_process_rgba_f32_to_rgba8(
         has_color_matrix: if color_matrix.is_some() { 1 } else { 0 },
         _pad2: [0; 3],
     };
-    let params_buffer = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("exruster.params"),
-        contents: bytemuck::bytes_of(&params),
-        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-    });
+    // Params buffer - użyj buffer pool
+    let params_bytes = bytemuck::bytes_of(&params);
+    let params_size = params_bytes.len() as u64;
+    let params_buffer = ctx.get_or_create_buffer(
+        params_size,
+        wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        Some("exruster.params"),
+    );
+    ctx.queue.write_buffer(&params_buffer, 0, params_bytes);
 
-    // Staging buffer do odczytu
-    let staging_buffer = ctx.device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("exruster.staging_readback"),
-        size: output_size,
-        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
+    // Staging buffer do odczytu - użyj buffer pool
+    let staging_buffer = ctx.get_or_create_buffer(
+        output_size,
+        wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        Some("exruster.staging_readback"),
+    );
 
-    // Shader
-    const SHADER_WGSL: &str = include_str!("shaders/image_processing.wgsl");
-    let shader = ctx.device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("exruster.image_processing.compute"),
-        source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(SHADER_WGSL)),
-    });
-
-    // BindGroupLayout i Pipeline
-    let bgl = ctx.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("exruster.bgl"),
-        entries: &[
-            // binding 0: uniform
-            wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-            // binding 1: input storage (read)
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-            // binding 2: output storage (write)
-            wgpu::BindGroupLayoutEntry {
-                binding: 2,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: false },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-        ],
-    });
-    let pipeline_layout = ctx.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("exruster.pipeline_layout"),
-        bind_group_layouts: &[&bgl],
-        push_constant_ranges: &[],
-    });
-    let pipeline = ctx.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: Some("exruster.pipeline"),
-        layout: Some(&pipeline_layout),
-        module: &shader,
-        entry_point: Some("main"),
-        compilation_options: wgpu::PipelineCompilationOptions::default(),
-        cache: None,
-    });
+    // Użyj cached pipeline i bind group layout
+    let pipeline = ctx.get_image_processing_pipeline()
+        .ok_or_else(|| anyhow::anyhow!("Failed to get cached image processing pipeline"))?;
+    let bgl = ctx.get_image_processing_bind_group_layout()
+        .ok_or_else(|| anyhow::anyhow!("Failed to get cached bind group layout"))?;
 
     let bind_group = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("exruster.bind_group"),
@@ -698,6 +648,12 @@ fn gpu_process_rgba_f32_to_rgba8(
 
     drop(data);
     staging_buffer.unmap();
+
+    // Zwróć buffery do pool'u dla przyszłego użycia
+    ctx.return_buffer(input_buffer, input_size, wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST);
+    ctx.return_buffer(output_buffer, output_size, wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC);
+    ctx.return_buffer(params_buffer, params_size, wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST);
+    ctx.return_buffer(staging_buffer, output_size, wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST);
 
     Ok(out_bytes)
 }

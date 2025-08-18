@@ -18,6 +18,7 @@
 
 ## FAZA 1: Optymalizacje infrastruktury GPU (Priorytet: WYSOKI)
 
+
 ### 1.1 Buffer Pooling System
 **Problem**: Każde wywołanie GPU tworzy nowe buffery (gpu_process_rgba_f32_to_rgba8:532-703)
 
