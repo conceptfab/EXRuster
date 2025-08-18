@@ -14,7 +14,7 @@ use core::simd::{f32x4, Simd};
 use std::simd::prelude::SimdFloat;
 
 // GPU/wgpu i narzędzia do tworzenia buforów
-use bytemuck::{Pod, Zeroable};
+
 
 /// Zwraca kanoniczny skrót kanału na podstawie aliasów/nazw przyjaznych.
 /// Np. "red"/"Red"/"RED"/"R"/"R8" → "R"; analogicznie dla G/B/A.
@@ -80,31 +80,19 @@ pub struct MipLevel {
     pub pixels: Vec<f32>,
 }
 
-/// GPU-based MIP chain building (safe fallback version)
-fn build_mip_chain_gpu(
+/// Ujednolicona funkcja MIP generation - automatycznie wybiera GPU lub CPU
+fn build_mip_chain(
     base_pixels: &[f32],
     width: u32,
     height: u32,
     max_levels: usize,
+    use_gpu: bool,
 ) -> Vec<MipLevel> {
-    // TYMCZASOWO WYŁĄCZONE GPU processing dla debugowania crashów
-    // Sprawdź czy GPU jest dostępny
-    if false || !crate::ui_handlers::is_gpu_acceleration_enabled() {
-        println!("GPU acceleration disabled for MIPs, using CPU");
-        return build_mip_chain_cpu(base_pixels, width, height, max_levels);
-    }
-
-    // Spróbuj GPU MIP generation - jeśli nie powiedzie się, użyj CPU
-    match build_mip_chain_gpu_internal(base_pixels, width, height, max_levels) {
-        Ok(result) => {
-            println!("GPU MIP generation successful: {} levels", result.len());
-            result
-        }
-        Err(e) => {
-            eprintln!("GPU MIP generation failed: {}", e);
-            println!("Falling back to CPU MIP generation");
-            build_mip_chain_cpu(base_pixels, width, height, max_levels)
-        }
+    if use_gpu && crate::ui_handlers::is_gpu_acceleration_enabled() {
+        build_mip_chain_gpu_internal(base_pixels, width, height, max_levels)
+            .unwrap_or_else(|_| build_mip_chain_cpu(base_pixels, width, height, max_levels))
+    } else {
+        build_mip_chain_cpu(base_pixels, width, height, max_levels)
     }
 }
 
@@ -187,7 +175,7 @@ impl ImageCache {
             color_matrices.insert(best_layer.clone(), matrix);
         }
 
-        let mip_levels = build_mip_chain_gpu(&raw_pixels, width, height, 4);
+        let mip_levels = build_mip_chain(&raw_pixels, width, height, 4, true);
         Ok(ImageCache {
             raw_pixels,
             width,
@@ -223,7 +211,7 @@ impl ImageCache {
             }
         }
         // Odbuduj MIP-y dla nowego obrazu
-        self.mip_levels = build_mip_chain_gpu(&self.raw_pixels, self.width, self.height, 4);
+        self.mip_levels = build_mip_chain(&self.raw_pixels, self.width, self.height, 4, true);
 
         Ok(())
     }
@@ -329,7 +317,7 @@ impl ImageCache {
                 r = rr; g = gg; b = bb;
             }
 
-            let (r8, g8, b8) = crate::image_processing::tone_map_and_gamma_simd(r, g, b, exposure, gamma, tonemap_mode);
+                            let (r8, g8, b8) = crate::tone_mapping::tone_map_and_gamma_simd(r, g, b, exposure, gamma, tonemap_mode);
             let a8 = a.simd_clamp(Simd::splat(0.0), Simd::splat(1.0));
 
             // Zapisz 4 piksele
@@ -407,7 +395,7 @@ impl ImageCache {
             }
 
             if lighting_rgb {
-                let (r8, g8, b8) = crate::image_processing::tone_map_and_gamma_simd(r, g, b, exposure, gamma, tonemap_mode);
+                let (r8, g8, b8) = crate::tone_mapping::tone_map_and_gamma_simd(r, g, b, exposure, gamma, tonemap_mode);
                 let a8 = a.simd_clamp(Simd::splat(0.0), Simd::splat(1.0));
 
                 let ra: [f32; 4] = r8.into();
@@ -425,7 +413,7 @@ impl ImageCache {
             } else {
                 // Grayscale processing
                 let (r_linear, g_linear, b_linear) = (r, g, b); // Keep linear for grayscale conversion
-                let (r_tm, g_tm, b_tm) = crate::image_processing::tone_map_and_gamma_simd(r_linear, g_linear, b_linear, exposure, gamma, tonemap_mode);
+                let (r_tm, g_tm, b_tm) = crate::tone_mapping::tone_map_and_gamma_simd(r_linear, g_linear, b_linear, exposure, gamma, tonemap_mode);
 
                 let gray = r_tm.simd_max(g_tm).simd_max(b_tm).simd_clamp(Simd::splat(0.0), Simd::splat(1.0));
                 let a8 = a.simd_clamp(Simd::splat(0.0), Simd::splat(1.0));
@@ -579,7 +567,7 @@ impl ImageCache {
                         }
                         rr[lane] = r; gg[lane] = g; bb[lane] = b; aa[lane] = a; valid += 1;
                     }
-                    let (r8, g8, b8) = crate::image_processing::tone_map_and_gamma_simd(
+                    let (r8, g8, b8) = crate::tone_mapping::tone_map_and_gamma_simd(
                         f32x4::from_array(rr), f32x4::from_array(gg), f32x4::from_array(bb), exposure, gamma, tonemap_mode);
                     let a8 = f32x4::from_array(aa).simd_clamp(Simd::splat(0.0), Simd::splat(1.0));
                     let ra: [f32; 4] = r8.into();
@@ -605,23 +593,8 @@ impl ImageCache {
 
 // === GPU path implementation ===
 
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-struct ParamsStd140 {
-    exposure: f32,
-    gamma: f32,
-    tonemap_mode: u32,
-    width: u32,
-    height: u32,
-    // FAZA 3: Nowe parametry tone mapping
-    local_adaptation_radius: u32,
-    _pad0: u32,
-    _pad1: [u32; 2],
-    // mat3x3 w std140: 3 kolumny vec3 z krokiem 16 bajtów → reprezentujemy jako 3 vec4
-    color_matrix: [[f32; 4]; 3],
-    has_color_matrix: u32,
-    _pad2: [u32; 3],
-}
+// Używamy konsolidowanej struktury z gpu_types.rs
+use crate::gpu_types::ParamsStd140;
 
 fn gpu_process_rgba_f32_to_rgba8(
     ctx: &crate::gpu_context::GpuContext,

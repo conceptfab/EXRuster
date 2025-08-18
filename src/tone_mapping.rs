@@ -1,5 +1,7 @@
 use core::simd::{f32x4, Simd};
 use std::simd::prelude::SimdFloat;
+use std::simd::StdFloat;
+use std::simd::cmp::SimdPartialOrd;
 
 #[derive(Debug, Clone, Copy)]
 pub enum ToneMapMode {
@@ -110,6 +112,80 @@ pub fn reinhard_tonemap_simd(x: f32x4) -> f32x4 {
 }
 
 #[allow(dead_code)]
+#[inline]
+pub fn filmic_tonemap_simd(x: f32x4) -> f32x4 {
+    let x_safe = x.simd_max(Simd::splat(0.0));
+    let a = Simd::splat(0.15);  // Black point
+    let b = Simd::splat(0.50);  // Toe
+    let c = Simd::splat(0.10);  // Shoulder
+    let d = Simd::splat(0.20);  // White point
+    let epsilon = Simd::splat(1e-9);
+    
+    let numerator = x_safe * (a * x_safe + c * b) + d * x_safe;
+    let denominator = x_safe * (a * x_safe + b) + d * c;
+    
+    (numerator / (denominator + epsilon)).simd_clamp(Simd::splat(0.0), Simd::splat(1.0))
+}
+
+#[allow(dead_code)]
+#[inline]
+pub fn hable_tonemap_simd(x: f32x4) -> f32x4 {
+    // Uncharted 2 tone mapping (John Hable) - PRAWIDŁOWA IMPLEMENTACJA
+    let x_safe: f32x4 = x.simd_max(Simd::splat(0.0_f32));
+    let a: f32x4 = Simd::splat(0.15_f32);
+    let b: f32x4 = Simd::splat(0.50_f32);
+    let c: f32x4 = Simd::splat(0.10_f32);
+    let d: f32x4 = Simd::splat(0.20_f32);
+    let e: f32x4 = Simd::splat(0.02_f32);
+    let f: f32x4 = Simd::splat(0.30_f32);
+    let w: f32x4 = Simd::splat(11.2_f32);
+    
+    let curr: f32x4 = ((x_safe * (a * x_safe + c * b) + d * e) / (x_safe * (a * x_safe + b) + d * f)) - e / f;
+    let white_scale: f32x4 = Simd::splat(1.0) / (((w * (a * w + c * b) + d * e) / (w * (a * w + b) + d * f)) - e / f);
+    
+    (curr * white_scale).simd_clamp(Simd::splat(0.0), Simd::splat(1.0))
+}
+
+#[allow(dead_code)]
+#[inline]
+pub fn srgb_oetf_simd(x: f32x4) -> f32x4 {
+    // Prawdziwa krzywa sRGB (OETF), zastosowana do wartości w [0,1]
+    let x = x.simd_clamp(Simd::splat(0.0), Simd::splat(1.0));
+    let threshold = Simd::splat(0.003_130_8);
+    let low = Simd::splat(12.92) * x;
+    let high = Simd::splat(1.055) * (x.ln() * Simd::splat(1.0 / 2.4)).exp() - Simd::splat(0.055);
+    threshold.simd_ge(x).select(low, high)
+}
+
+#[inline]
+pub fn srgb_oetf(x: f32) -> f32 {
+    // Prawdziwa krzywa sRGB (OETF), zastosowana do wartości w [0,1]
+    let x = x.clamp(0.0, 1.0);
+    if x <= 0.003_130_8 {
+        12.92 * x
+    } else {
+        1.055 * x.powf(1.0 / 2.4) - 0.055
+    }
+}
+
+#[inline]
+pub fn apply_gamma_lut(value: f32, gamma_inv: f32) -> f32 {
+    value.powf(gamma_inv)
+}
+
+#[allow(dead_code)]
+#[inline]
+pub fn apply_gamma_lut_simd(values: f32x4, gamma_inv: f32) -> f32x4 {
+    // Użyj istniejącej LUT per-lane (szybko i bezpiecznie na stable)
+    let mut arr = [0.0f32; 4];
+    let v: [f32; 4] = values.into();
+    for i in 0..4 {
+        arr[i] = apply_gamma_lut(v[i], gamma_inv);
+    }
+    f32x4::from_array(arr)
+}
+
+#[allow(dead_code)]
 pub fn apply_tonemap_simd(r: f32x4, g: f32x4, b: f32x4, mode: ToneMapMode) -> (f32x4, f32x4, f32x4) {
     match mode {
         ToneMapMode::ACES => (aces_tonemap_simd(r), aces_tonemap_simd(g), aces_tonemap_simd(b)),
@@ -119,7 +195,54 @@ pub fn apply_tonemap_simd(r: f32x4, g: f32x4, b: f32x4, mode: ToneMapMode) -> (f
             let one = Simd::splat(1.0);
             (r.simd_clamp(zero, one), g.simd_clamp(zero, one), b.simd_clamp(zero, one))
         },
-        _ => (aces_tonemap_simd(r), aces_tonemap_simd(g), aces_tonemap_simd(b)), // Fallback
+        ToneMapMode::Filmic => (filmic_tonemap_simd(r), filmic_tonemap_simd(g), filmic_tonemap_simd(b)),
+        ToneMapMode::Hable => (hable_tonemap_simd(r), hable_tonemap_simd(g), hable_tonemap_simd(b)),
+        ToneMapMode::Local => (aces_tonemap_simd(r), aces_tonemap_simd(g), aces_tonemap_simd(b)), // Fallback
+    }
+}
+
+/// SIMD: ekspozycja → tone-map → gamma/sRGB dla 4 pikseli naraz
+#[inline]
+pub fn tone_map_and_gamma_simd(
+    r: f32x4,
+    g: f32x4,
+    b: f32x4,
+    exposure: f32,
+    gamma: f32,
+    tonemap_mode: i32,
+) -> (f32x4, f32x4, f32x4) {
+    let exposure_multiplier = Simd::splat(2.0_f32.powf(exposure));
+
+    // Sprawdzenie NaN/Inf i clamp do sensownych wartości
+    let zero = Simd::splat(0.0);
+    let safe_r = r.is_finite().select(r, zero).simd_max(zero);
+    let safe_g = g.is_finite().select(g, zero).simd_max(zero);
+    let safe_b = b.is_finite().select(b, zero).simd_max(zero);
+
+    // Ekspozycja
+    let exposed_r = safe_r * exposure_multiplier;
+    let exposed_g = safe_g * exposure_multiplier;
+    let exposed_b = safe_b * exposure_multiplier;
+
+    // Tone mapping używając skonsolidowanej funkcji
+    let mode = ToneMapMode::from(tonemap_mode);
+    let (tm_r, tm_g, tm_b) = apply_tonemap_simd(exposed_r, exposed_g, exposed_b, mode);
+
+    // Gamma: preferuj sRGB OETF
+    let use_srgb = (gamma - 2.2).abs() < 0.2 || (gamma - 2.4).abs() < 0.2;
+    if use_srgb {
+        (
+            srgb_oetf_simd(tm_r),
+            srgb_oetf_simd(tm_g),
+            srgb_oetf_simd(tm_b),
+        )
+    } else {
+        let gamma_inv = 1.0 / gamma.max(1e-4);
+        (
+            apply_gamma_lut_simd(tm_r, gamma_inv),
+            apply_gamma_lut_simd(tm_g, gamma_inv),
+            apply_gamma_lut_simd(tm_b, gamma_inv),
+        )
     }
 }
 

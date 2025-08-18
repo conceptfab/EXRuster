@@ -21,6 +21,7 @@ mod gpu_thumbnails;
 mod gpu_mip;
 mod histogram;
 mod tone_mapping;
+mod gpu_types;
 
 #[cfg(target_os = "windows")]
 mod platform_win;
