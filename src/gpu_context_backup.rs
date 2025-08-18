@@ -5,6 +5,7 @@ use wgpu::{
 };
 use anyhow::Result;
 use std::sync::{Arc, Mutex};
+use std::collections::HashMap;
 use std::cell::OnceCell;
 
 
@@ -136,6 +137,174 @@ impl GpuPipelineCache {
             })
         })
     }
+}
+
+/// Kontekst GPU zarządzający stanem wgpu
+    pub fn get_mip_generation_bind_group_layout(&self, device: &Device) -> &BindGroupLayout {
+        self.mip_generation_bind_group_layout.get_or_init(|| {
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("exruster.mip_generation.bgl"),
+                entries: &[
+                    // binding 0: uniform (MipParams)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    // binding 1: input storage (read)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    // binding 2: output storage (write)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            })
+        })
+    }
+
+    #[allow(dead_code)]
+    pub fn get_mip_generation_pipeline_layout(&self, device: &Device) -> &PipelineLayout {
+        self.mip_generation_pipeline_layout.get_or_init(|| {
+            let bind_group_layout = self.get_mip_generation_bind_group_layout(device);
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("exruster.mip_generation.pipeline_layout"),
+                bind_group_layouts: &[bind_group_layout],
+                push_constant_ranges: &[],
+            })
+        })
+    }
+
+    #[allow(dead_code)]
+    pub fn get_mip_generation_pipeline(&self, device: &Device) -> &ComputePipeline {
+        self.mip_generation_pipeline.get_or_init(|| {
+            let shader = self.get_mip_generation_shader(device);
+            let layout = self.get_mip_generation_pipeline_layout(device);
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("exruster.mip_generation.pipeline"),
+                layout: Some(layout),
+                module: shader,
+                entry_point: Some("main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                cache: None,
+            })
+        })
+    }
+
+    // Thumbnail pipeline methods
+    #[allow(dead_code)]
+    pub fn get_thumbnail_shader(&self, device: &Device) -> &ShaderModule {
+        self.thumbnail_shader.get_or_init(|| {
+            const SHADER_WGSL: &str = include_str!("shaders/thumbnail.wgsl");
+            device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("exruster.thumbnail.compute"),
+                source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(SHADER_WGSL)),
+            })
+        })
+    }
+
+    #[allow(dead_code)]
+    pub fn get_thumbnail_bind_group_layout(&self, device: &Device) -> &BindGroupLayout {
+        self.thumbnail_bind_group_layout.get_or_init(|| {
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("exruster.thumbnail.bgl"),
+                entries: &[
+                    // binding 0: uniform (ThumbnailParams)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    // binding 1: input storage (read)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    // binding 2: output storage (write)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            })
+        })
+    }
+
+    #[allow(dead_code)]
+    pub fn get_thumbnail_pipeline_layout(&self, device: &Device) -> &PipelineLayout {
+        self.thumbnail_pipeline_layout.get_or_init(|| {
+            let bind_group_layout = self.get_thumbnail_bind_group_layout(device);
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("exruster.thumbnail.pipeline_layout"),
+                bind_group_layouts: &[bind_group_layout],
+                push_constant_ranges: &[],
+            })
+        })
+    }
+
+    #[allow(dead_code)]
+    pub fn get_thumbnail_pipeline(&self, device: &Device) -> &ComputePipeline {
+        self.thumbnail_pipeline.get_or_init(|| {
+            let shader = self.get_thumbnail_shader(device);
+            let layout = self.get_thumbnail_pipeline_layout(device);
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("exruster.thumbnail.pipeline"),
+                layout: Some(layout),
+                module: shader,
+                entry_point: Some("main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                cache: None,
+            })
+        })
+    }
+
+
+
+
+
+
+
+
+
+
+
 }
 
 /// Kontekst GPU zarządzający stanem wgpu
@@ -276,6 +445,48 @@ impl GpuContext {
         }
     }
 
+    /// Pobiera pipeline do thumbnail generation z cache
+    #[allow(dead_code)]
+    pub fn get_thumbnail_pipeline(&self) -> Option<ComputePipeline> {
+        if let Ok(cache) = self.pipeline_cache.lock() {
+            Some(cache.get_thumbnail_pipeline(&self.device).clone())
+        } else {
+            None
+        }
+    }
+
+    /// Pobiera bind group layout do thumbnail generation z cache
+    #[allow(dead_code)]
+    pub fn get_thumbnail_bind_group_layout(&self) -> Option<BindGroupLayout> {
+        if let Ok(cache) = self.pipeline_cache.lock() {
+            Some(cache.get_thumbnail_bind_group_layout(&self.device).clone())
+        } else {
+            None
+        }
+    }
+
+    /// Pobiera pipeline do MIP generation z cache
+    #[allow(dead_code)]
+    pub fn get_mip_generation_pipeline(&self) -> Option<ComputePipeline> {
+        if let Ok(cache) = self.pipeline_cache.lock() {
+            Some(cache.get_mip_generation_pipeline(&self.device).clone())
+        } else {
+            None
+        }
+    }
+
+    /// Pobiera bind group layout do MIP generation z cache
+    #[allow(dead_code)]
+    pub fn get_mip_generation_bind_group_layout(&self) -> Option<BindGroupLayout> {
+        if let Ok(cache) = self.pipeline_cache.lock() {
+            Some(cache.get_mip_generation_bind_group_layout(&self.device).clone())
+        } else {
+            None
+        }
+    }
+
+
+
     // === FAZA 4: Monitorowanie i optymalizacje ===
 
     /// Rejestruje błąd GPU
@@ -295,6 +506,8 @@ impl GpuContext {
     pub fn get_gpu_scheduler_status(&self) -> String {
         self.gpu_scheduler.get_status_summary()
     }
+
+    // Usunięta nieużywana metoda should_use_gpu_for_operation
 
     /// Pobiera statystyki decyzji dla danego typu operacji
     #[allow(dead_code)]
@@ -355,6 +568,7 @@ impl GpuContext {
             }
         }
     }
+
 }
 
 impl Drop for GpuContext {

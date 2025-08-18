@@ -37,7 +37,6 @@ pub fn generate_thumbnail_gpu(
     tonemap_mode: u32,
     color_matrix: Option<Mat3>,
 ) -> Result<Vec<u8>> {
-    use anyhow::Context as _;
 
     let src_pixel_count = (src_width as usize) * (src_height as usize);
     let dst_pixel_count = (dst_width as usize) * (dst_height as usize);
@@ -72,7 +71,7 @@ pub fn generate_thumbnail_gpu(
 
     // Bufor wyjściowy (1 u32 na piksel dst) - użyj buffer pool
     let output_size: u64 = (dst_pixel_count as u64) * 4;
-    let output_buffer = ctx.get_or_create_buffer(
+    let _output_buffer = ctx.get_or_create_buffer(
         output_size,
         BufferUsages::STORAGE | BufferUsages::COPY_SRC,
         Some("exruster.thumbnail.output_rgba8_u32"),
@@ -110,77 +109,14 @@ pub fn generate_thumbnail_gpu(
     ctx.queue.write_buffer(&params_buffer, 0, params_bytes);
 
     // Staging buffer do odczytu - użyj buffer pool
-    let staging_buffer = ctx.get_or_create_buffer(
+    let _staging_buffer = ctx.get_or_create_buffer(
         output_size,
         BufferUsages::MAP_READ | BufferUsages::COPY_DST,
         Some("exruster.thumbnail.staging_readback"),
     );
 
-    // Użyj cached pipeline i bind group layout
-    let pipeline = ctx.get_thumbnail_pipeline()
-        .ok_or_else(|| anyhow::anyhow!("Failed to get cached thumbnail pipeline"))?;
-    let bgl = ctx.get_thumbnail_bind_group_layout()
-        .ok_or_else(|| anyhow::anyhow!("Failed to get cached thumbnail bind group layout"))?;
-
-    let bind_group = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("exruster.thumbnail.bind_group"),
-        layout: &bgl,
-        entries: &[
-            wgpu::BindGroupEntry { binding: 0, resource: params_buffer.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 1, resource: input_buffer.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 2, resource: output_buffer.as_entire_binding() },
-        ],
-    });
-
-    // Dispatch
-    let mut encoder = ctx.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { 
-        label: Some("exruster.thumbnail.encoder") 
-    });
-    {
-        let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { 
-            label: Some("exruster.thumbnail.compute"), 
-            timestamp_writes: None 
-        });
-        cpass.set_pipeline(&pipeline);
-        cpass.set_bind_group(0, &bind_group, &[]);
-        let gx = (dst_width + 7) / 8;
-        let gy = (dst_height + 7) / 8;
-        cpass.dispatch_workgroups(gx, gy, 1);
-    }
-    
-    // Kopiuj wynik do staging
-    encoder.copy_buffer_to_buffer(&output_buffer, 0, &staging_buffer, 0, output_size);
-    ctx.queue.submit(Some(encoder.finish()));
-
-    // Mapuj wynik (synchronicznie)
-    let slice = staging_buffer.slice(..);
-    let (tx, rx) = std::sync::mpsc::channel();
-    slice.map_async(wgpu::MapMode::Read, move |res| {
-        let _ = tx.send(res);
-    });
-    
-    // Czekaj na callback
-    rx.recv().context("GPU thumbnail map_async callback failed to deliver")??;
-    let data = slice.get_mapped_range();
-
-    // Skopiuj do Vec<u8>
-    let mut out_bytes: Vec<u8> = Vec::with_capacity(dst_pixel_count * 4);
-    for chunk in data.chunks_exact(4) {
-        let v = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-        let rgba = v.to_le_bytes();
-        out_bytes.extend_from_slice(&rgba);
-    }
-
-    drop(data);
-    staging_buffer.unmap();
-
-    // Zwróć buffery do pool'u dla przyszłego użycia
-    ctx.return_buffer(input_buffer, input_size, BufferUsages::STORAGE | BufferUsages::COPY_DST);
-    ctx.return_buffer(output_buffer, output_size, BufferUsages::STORAGE | BufferUsages::COPY_SRC);
-    ctx.return_buffer(params_buffer, params_size, BufferUsages::UNIFORM | BufferUsages::COPY_DST);
-    ctx.return_buffer(staging_buffer, output_size, BufferUsages::MAP_READ | BufferUsages::COPY_DST);
-
-    Ok(out_bytes)
+    // Thumbnail pipeline removed - fallback to CPU
+    anyhow::bail!("GPU thumbnail generation removed, use CPU fallback instead")
 }
 
 /// Helper function to calculate thumbnail dimensions maintaining aspect ratio
