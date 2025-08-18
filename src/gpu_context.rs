@@ -8,6 +8,10 @@ use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
 use std::cell::OnceCell;
 
+
+use crate::gpu_metrics::GpuMetrics;
+use crate::gpu_scheduler::{AdaptiveGpuScheduler, GpuOperation, GpuOperationParams};
+
 /// Pool buforów GPU do wielokrotnego użytku
 #[derive(Debug)]
 pub struct GpuBufferPool {
@@ -660,6 +664,9 @@ pub struct GpuContext {
     pub queue: Queue,
     buffer_pool: Arc<Mutex<GpuBufferPool>>,
     pipeline_cache: Arc<Mutex<GpuPipelineCache>>,
+    // FAZA 4: Monitorowanie i optymalizacje
+    pub gpu_metrics: Arc<GpuMetrics>,
+    pub gpu_scheduler: Arc<AdaptiveGpuScheduler>,
 }
 
 impl GpuContext {
@@ -709,6 +716,10 @@ impl GpuContext {
         println!("GPU Features: {:?}", device.features());
         println!("GPU Limits: {:?}", device.limits());
 
+        // FAZA 4: Inicjalizacja metryk i scheduler'a
+        let gpu_metrics = Arc::new(GpuMetrics::new());
+        let gpu_scheduler = Arc::new(AdaptiveGpuScheduler::new(gpu_metrics.clone()));
+
         Ok(Self {
             instance,
             adapter,
@@ -716,6 +727,8 @@ impl GpuContext {
             queue,
             buffer_pool: Arc::new(Mutex::new(GpuBufferPool::new())),
             pipeline_cache: Arc::new(Mutex::new(GpuPipelineCache::new())),
+            gpu_metrics,
+            gpu_scheduler,
         })
     }
 
@@ -879,6 +892,80 @@ impl GpuContext {
         } else {
             None
         }
+    }
+
+    // === FAZA 4: Monitorowanie i optymalizacje ===
+
+    /// Rejestruje czas wykonania operacji GPU
+    pub fn record_gpu_operation_time(&self, duration: std::time::Duration) {
+        self.gpu_metrics.record_operation_time(duration);
+    }
+
+    /// Rejestruje trafienie w cache pipeline'ów
+    pub fn record_pipeline_cache_hit(&self) {
+        self.gpu_metrics.record_pipeline_cache_hit();
+    }
+
+    /// Aktualizuje użycie pamięci GPU
+    pub fn update_gpu_memory_usage(&self, bytes: u64) {
+        self.gpu_metrics.update_memory_usage(bytes);
+    }
+
+    /// Aktualizuje wykorzystanie buffer pool
+    pub fn update_buffer_pool_utilization(&self, utilization: f32) {
+        self.gpu_metrics.update_buffer_pool_utilization(utilization);
+        self.gpu_scheduler.update_gpu_load(utilization);
+    }
+
+    /// Rejestruje błąd GPU
+    #[allow(dead_code)]
+    pub fn record_gpu_error(&self) {
+        self.gpu_metrics.record_error();
+    }
+
+    /// Pobiera podsumowanie metryk GPU
+    #[allow(dead_code)]
+    pub fn get_gpu_metrics_summary(&self) -> String {
+        self.gpu_metrics.get_metrics_summary()
+    }
+
+    /// Pobiera status scheduler'a GPU
+    #[allow(dead_code)]
+    pub fn get_gpu_scheduler_status(&self) -> String {
+        self.gpu_scheduler.get_status_summary()
+    }
+
+    /// Decyduje czy użyć GPU dla danej operacji
+    pub fn should_use_gpu_for_operation(&self, operation: GpuOperation, params: &GpuOperationParams) -> bool {
+        self.gpu_scheduler.should_use_gpu(operation, params)
+    }
+
+    /// Pobiera statystyki decyzji dla danego typu operacji
+    #[allow(dead_code)]
+    pub fn get_gpu_decision_stats(&self, operation: GpuOperation) -> Option<(usize, usize)> {
+        self.gpu_scheduler.get_decision_stats(operation)
+    }
+
+    /// Resetuje wszystkie metryki GPU
+    #[allow(dead_code)]
+    pub fn reset_gpu_metrics(&self) {
+        self.gpu_metrics.reset();
+        self.gpu_scheduler.reset();
+    }
+
+    /// Wykonuje benchmark wydajności GPU
+    #[allow(dead_code)]
+    pub fn run_gpu_benchmark(&self) {
+        // Aktualizuj benchmark GPU na podstawie aktualnych metryk
+        let gpu_ops_per_sec = self.gpu_metrics.get_operations_per_second();
+        if gpu_ops_per_sec > 0.0 {
+            self.gpu_scheduler.update_gpu_benchmark(gpu_ops_per_sec);
+        }
+        
+        // Aktualizuj benchmark CPU (można dodać rzeczywiste testy)
+        self.gpu_scheduler.update_cpu_benchmark(150.0);
+        
+        println!("GPU Benchmark wykonany - GPU: {:.1} ops/s", gpu_ops_per_sec);
     }
 
 }

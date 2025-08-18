@@ -14,7 +14,9 @@ mod utils;
 mod color_processing;
 mod full_exr_cache;
 mod gpu_context;
+mod gpu_metrics;
 mod gpu_processing;
+mod gpu_scheduler;
 mod gpu_thumbnails;
 mod gpu_mip;
 

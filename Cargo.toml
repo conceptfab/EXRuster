@@ -24,6 +24,7 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 wgpu = "26.0.1"
 pollster = "0.4.0"
 bytemuck = { version = "1.23.2", features = ["derive"] }
+instant = "0.1"
 tiff = "0.10.0"
 cfg-if = "1.0"
 glam = "0.30.5"
