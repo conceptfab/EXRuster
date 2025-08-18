@@ -75,15 +75,7 @@ pub fn build_full_exr_cache(
     Ok(FullExrCacheData { layers: out_layers })
 }
 
-pub fn find_layer_by_name<'a>(cache: &'a FullExrCacheData, wanted: &str) -> Option<&'a FullLayer> {
-    let wanted_lower = wanted.to_lowercase();
-    cache.layers.iter().find(|l| {
-        let lname = l.name.to_lowercase();
-        if wanted_lower.is_empty() && lname.is_empty() { return true; }
-        if wanted_lower.is_empty() || lname.is_empty() { return false; }
-        lname == wanted_lower || lname.contains(&wanted_lower) || wanted_lower.contains(&lname)
-    })
-}
+// Funkcja find_layer_by_name została usunięta - nie jest już używana
 
 
 

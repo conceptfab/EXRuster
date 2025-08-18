@@ -225,9 +225,6 @@ impl ImageCache {
         Ok(())
     }
 
-    #[inline]
-    pub fn color_matrix(&self) -> Option<Mat3> { self.color_matrix_rgb_to_srgb }
-    
     pub fn process_to_image(&self, exposure: f32, gamma: f32, tonemap_mode: i32) -> Image {
         println!("=== PROCESS_TO_IMAGE START === {}x{}", self.width, self.height);
         

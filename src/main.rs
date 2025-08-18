@@ -209,39 +209,13 @@ fn setup_menu_callbacks(
     });
 
     // Export: Convert (EXR -> TIFF)
-    ui.on_export_convert({
-        let ui_handle = ui.as_weak();
-        let current_file_path = current_file_path.clone();
-        let image_cache = image_cache.clone();
-        let console = console_model.clone();
-        let full_exr_cache = full_exr_cache.clone();
-        move || {
-            ui_handlers::handle_export_convert(ui_handle.clone(), current_file_path.clone(), image_cache.clone(), console.clone(), full_exr_cache.clone());
-        }
-    });
+    // Callback exportu został usunięty
 
     // Export: Beauty (PNG16)
-    ui.on_export_beauty({
-        let ui_handle = ui.as_weak();
-        let current_file_path = current_file_path.clone();
-        let image_cache = image_cache.clone();
-        let console = console_model.clone();
-        move || {
-            ui_handlers::handle_export_beauty(ui_handle.clone(), current_file_path.clone(), image_cache.clone(), console.clone());
-        }
-    });
+    // Callback exportu został usunięty
 
     // Export: Channels (PNG16 grayscale)
-    ui.on_export_channels({
-        let ui_handle = ui.as_weak();
-        let current_file_path = current_file_path.clone();
-        let image_cache = image_cache.clone();
-        let console = console_model.clone();
-        let full_exr_cache = full_exr_cache.clone();
-        move || {
-            ui_handlers::handle_export_channels(ui_handle.clone(), current_file_path.clone(), image_cache.clone(), console.clone(), full_exr_cache.clone());
-        }
-    });
+    // Callback exportu został usunięty
 }
 
 fn setup_image_control_callbacks(
