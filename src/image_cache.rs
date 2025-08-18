@@ -12,6 +12,11 @@ use std::sync::Arc;
 use crate::full_exr_cache::FullExrCacheData;
 use core::simd::{f32x4, Simd};
 use std::simd::prelude::SimdFloat;
+use std::borrow::Cow;
+
+// GPU/wgpu i narzędzia do tworzenia buforów
+use wgpu::util::DeviceExt;
+use bytemuck::{Pod, Zeroable};
 
 /// Zwraca kanoniczny skrót kanału na podstawie aliasów/nazw przyjaznych.
 /// Np. "red"/"Red"/"RED"/"R"/"R8" → "R"; analogicznie dla G/B/A.
@@ -178,6 +183,35 @@ impl ImageCache {
     pub fn color_matrix(&self) -> Option<Mat3> { self.color_matrix_rgb_to_srgb }
     
     pub fn process_to_image(&self, exposure: f32, gamma: f32, tonemap_mode: i32) -> Image {
+        // Ścieżka GPU (jeśli aktywna i dostępna)
+        if crate::ui_handlers::is_gpu_acceleration_enabled() {
+            if let Some(global_ctx_arc) = crate::ui_handlers::get_global_gpu_context() {
+                if let Ok(guard) = global_ctx_arc.lock() {
+                    if let Some(ref ctx) = *guard {
+                        if let Ok(bytes) = gpu_process_rgba_f32_to_rgba8(
+                            ctx,
+                            &self.raw_pixels,
+                            self.width,
+                            self.height,
+                            exposure,
+                            gamma,
+                            tonemap_mode as u32,
+                            self.color_matrix_rgb_to_srgb,
+                        ) {
+                            let mut buffer = SharedPixelBuffer::<Rgba8Pixel>::new(self.width, self.height);
+                            let out_slice = buffer.make_mut_slice();
+                            for (i, dst) in out_slice.iter_mut().enumerate() {
+                                let base = i * 4;
+                                *dst = Rgba8Pixel { r: bytes[base], g: bytes[base + 1], b: bytes[base + 2], a: bytes[base + 3] };
+                            }
+                            return Image::from_rgba8(buffer);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Fallback CPU (SIMD + Rayon)
         let mut buffer = SharedPixelBuffer::<Rgba8Pixel>::new(self.width, self.height);
         let out_slice = buffer.make_mut_slice();
 
@@ -376,24 +410,41 @@ impl ImageCache {
             }
         };
 
+        // Opcjonalna ścieżka GPU: przetwórz źródło do RGBA8, a skalowanie wykonaj na CPU (NN)
+        let mut gpu_processed_src: Option<Vec<u8>> = None;
+        if crate::ui_handlers::is_gpu_acceleration_enabled() {
+            if let Some(global_ctx_arc) = crate::ui_handlers::get_global_gpu_context() {
+                if let Ok(guard) = global_ctx_arc.lock() {
+                    if let Some(ref ctx) = *guard {
+                        if let Ok(bytes) = gpu_process_rgba_f32_to_rgba8(
+                            ctx,
+                            src_pixels,
+                            src_w,
+                            src_h,
+                            exposure,
+                            gamma,
+                            tonemap_mode as u32,
+                            self.color_matrix_rgb_to_srgb,
+                        ) {
+                            gpu_processed_src = Some(bytes);
+                        }
+                    }
+                }
+            }
+        }
+
         // Proste nearest neighbor sampling dla szybkości, ale przetwarzanie blokami 4 pikseli
         let m = self.color_matrix_rgb_to_srgb;
         let scale_x = (src_w as f32) / (thumb_width.max(1) as f32);
         let scale_y = (src_h as f32) / (thumb_height.max(1) as f32);
         // SIMD: paczki po 4 piksele miniatury (równolegle na blokach 4 pikseli)
-        slice
-            .par_chunks_mut(4) // 4 piksele na blok
-            .enumerate()
-            .for_each(|(block_idx, out_block)| {
-                let base = block_idx * 4;
-                let mut rr = [0.0f32; 4];
-                let mut gg = [0.0f32; 4];
-                let mut bb = [0.0f32; 4];
-                let mut aa = [1.0f32; 4];
-                let mut valid = 0usize;
-                for lane in 0..4 {
-                    let i = base + lane;
-                    if i >= (thumb_width as usize) * (thumb_height as usize) { break; }
+        if let Some(ref gpu_src) = gpu_processed_src {
+            // Skalowanie NN z już przetworzonych RGBA8 (piksel-po-pikselu)
+            slice
+                .par_iter_mut()
+                .enumerate()
+                .for_each(|(i, px)| {
+                    if i >= (thumb_width as usize) * (thumb_height as usize) { return; }
                     let x = (i as u32) % thumb_width;
                     let y = (i as u32) / thumb_width;
                     let src_x = ((x as f32) * scale_x) as u32;
@@ -401,38 +452,254 @@ impl ImageCache {
                     let sx = src_x.min(src_w.saturating_sub(1)) as usize;
                     let sy = src_y.min(src_h.saturating_sub(1)) as usize;
                     let src_idx = sy * (src_w as usize) + sx;
-                    let pixel_start = src_idx * 4;
-                    let mut r = src_pixels[pixel_start];
-                    let mut g = src_pixels[pixel_start + 1];
-                    let mut b = src_pixels[pixel_start + 2];
-                    let a = src_pixels[pixel_start + 3];
-                    if let Some(mat) = m {
-                        let v = mat * Vec3::new(r, g, b);
-                        r = v.x; g = v.y; b = v.z;
+                    let base = src_idx * 4;
+                    *px = Rgba8Pixel { r: gpu_src[base], g: gpu_src[base + 1], b: gpu_src[base + 2], a: gpu_src[base + 3] };
+                });
+        } else {
+            slice
+                .par_chunks_mut(4) // 4 piksele na blok
+                .enumerate()
+                .for_each(|(block_idx, out_block)| {
+                    let base = block_idx * 4;
+                    let mut rr = [0.0f32; 4];
+                    let mut gg = [0.0f32; 4];
+                    let mut bb = [0.0f32; 4];
+                    let mut aa = [1.0f32; 4];
+                    let mut valid = 0usize;
+                    for lane in 0..4 {
+                        let i = base + lane;
+                        if i >= (thumb_width as usize) * (thumb_height as usize) { break; }
+                        let x = (i as u32) % thumb_width;
+                        let y = (i as u32) / thumb_width;
+                        let src_x = ((x as f32) * scale_x) as u32;
+                        let src_y = ((y as f32) * scale_y) as u32;
+                        let sx = src_x.min(src_w.saturating_sub(1)) as usize;
+                        let sy = src_y.min(src_h.saturating_sub(1)) as usize;
+                        let src_idx = sy * (src_w as usize) + sx;
+                        let pixel_start = src_idx * 4;
+                        let mut r = src_pixels[pixel_start];
+                        let mut g = src_pixels[pixel_start + 1];
+                        let mut b = src_pixels[pixel_start + 2];
+                        let a = src_pixels[pixel_start + 3];
+                        if let Some(mat) = m {
+                            let v = mat * Vec3::new(r, g, b);
+                            r = v.x; g = v.y; b = v.z;
+                        }
+                        rr[lane] = r; gg[lane] = g; bb[lane] = b; aa[lane] = a; valid += 1;
                     }
-                    rr[lane] = r; gg[lane] = g; bb[lane] = b; aa[lane] = a; valid += 1;
-                }
-                let (r8, g8, b8) = crate::image_processing::tone_map_and_gamma_simd(
-                    f32x4::from_array(rr), f32x4::from_array(gg), f32x4::from_array(bb), exposure, gamma, tonemap_mode);
-                let a8 = f32x4::from_array(aa).simd_clamp(Simd::splat(0.0), Simd::splat(1.0));
-                let ra: [f32; 4] = r8.into();
-                let ga: [f32; 4] = g8.into();
-                let ba: [f32; 4] = b8.into();
-                let aa: [f32; 4] = a8.into();
-                for lane in 0..valid.min(4) {
-                    out_block[lane] = Rgba8Pixel {
-                        r: (ra[lane] * 255.0).round().clamp(0.0, 255.0) as u8,
-                        g: (ga[lane] * 255.0).round().clamp(0.0, 255.0) as u8,
-                        b: (ba[lane] * 255.0).round().clamp(0.0, 255.0) as u8,
-                        a: (aa[lane] * 255.0).round().clamp(0.0, 255.0) as u8,
-                    };
-                }
-            });
+                    let (r8, g8, b8) = crate::image_processing::tone_map_and_gamma_simd(
+                        f32x4::from_array(rr), f32x4::from_array(gg), f32x4::from_array(bb), exposure, gamma, tonemap_mode);
+                    let a8 = f32x4::from_array(aa).simd_clamp(Simd::splat(0.0), Simd::splat(1.0));
+                    let ra: [f32; 4] = r8.into();
+                    let ga: [f32; 4] = g8.into();
+                    let ba: [f32; 4] = b8.into();
+                    let aa: [f32; 4] = a8.into();
+                    for lane in 0..valid.min(4) {
+                        out_block[lane] = Rgba8Pixel {
+                            r: (ra[lane] * 255.0).round().clamp(0.0, 255.0) as u8,
+                            g: (ga[lane] * 255.0).round().clamp(0.0, 255.0) as u8,
+                            b: (ba[lane] * 255.0).round().clamp(0.0, 255.0) as u8,
+                            a: (aa[lane] * 255.0).round().clamp(0.0, 255.0) as u8,
+                        };
+                    }
+                });
+        }
         
         Image::from_rgba8(buffer)
     }
 
 
+}
+
+// === GPU path implementation ===
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct ParamsStd140 {
+    exposure: f32,
+    gamma: f32,
+    tonemap_mode: u32,
+    width: u32,
+    height: u32,
+    _pad0: u32,
+    _pad1: [u32; 2],
+    // mat3x3 w std140: 3 kolumny vec3 z krokiem 16 bajtów → reprezentujemy jako 3 vec4
+    color_matrix: [[f32; 4]; 3],
+    has_color_matrix: u32,
+    _pad2: [u32; 3],
+}
+
+fn gpu_process_rgba_f32_to_rgba8(
+    ctx: &crate::gpu_context::GpuContext,
+    pixels: &[f32],
+    width: u32,
+    height: u32,
+    exposure: f32,
+    gamma: f32,
+    tonemap_mode: u32,
+    color_matrix: Option<Mat3>,
+) -> anyhow::Result<Vec<u8>> {
+    use anyhow::Context as _;
+
+    let pixel_count = (width as usize) * (height as usize);
+    if pixels.len() < pixel_count * 4 { anyhow::bail!("Input pixel buffer too small"); }
+
+    // Bufor wejściowy (RGBA f32)
+    let input_bytes: &[u8] = bytemuck::cast_slice(pixels);
+    let input_buffer = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("exruster.input_rgba_f32"),
+        contents: input_bytes,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+    });
+
+    // Bufor wyjściowy (1 u32 na piksel)
+    let output_size: u64 = (pixel_count as u64) * 4;
+    let output_buffer = ctx.device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("exruster.output_rgba8_u32"),
+        size: output_size,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+
+    // Uniforms
+    let cm = color_matrix.unwrap_or_else(|| Mat3::from_diagonal(Vec3::new(1.0, 1.0, 1.0)));
+    let params = ParamsStd140 {
+        exposure,
+        gamma,
+        tonemap_mode,
+        width,
+        height,
+        _pad0: 0,
+        _pad1: [0; 2],
+        color_matrix: [
+            [cm.x_axis.x, cm.x_axis.y, cm.x_axis.z, 0.0],
+            [cm.y_axis.x, cm.y_axis.y, cm.y_axis.z, 0.0],
+            [cm.z_axis.x, cm.z_axis.y, cm.z_axis.z, 0.0],
+        ],
+        has_color_matrix: if color_matrix.is_some() { 1 } else { 0 },
+        _pad2: [0; 3],
+    };
+    let params_buffer = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("exruster.params"),
+        contents: bytemuck::bytes_of(&params),
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+    });
+
+    // Staging buffer do odczytu
+    let staging_buffer = ctx.device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("exruster.staging_readback"),
+        size: output_size,
+        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+
+    // Shader
+    const SHADER_WGSL: &str = include_str!("shaders/image_processing.wgsl");
+    let shader = ctx.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("exruster.image_processing.compute"),
+        source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(SHADER_WGSL)),
+    });
+
+    // BindGroupLayout i Pipeline
+    let bgl = ctx.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("exruster.bgl"),
+        entries: &[
+            // binding 0: uniform
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // binding 1: input storage (read)
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // binding 2: output storage (write)
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ],
+    });
+    let pipeline_layout = ctx.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("exruster.pipeline_layout"),
+        bind_group_layouts: &[&bgl],
+        push_constant_ranges: &[],
+    });
+    let pipeline = ctx.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("exruster.pipeline"),
+        layout: Some(&pipeline_layout),
+        module: &shader,
+        entry_point: Some("main"),
+        compilation_options: wgpu::PipelineCompilationOptions::default(),
+        cache: None,
+    });
+
+    let bind_group = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("exruster.bind_group"),
+        layout: &bgl,
+        entries: &[
+            wgpu::BindGroupEntry { binding: 0, resource: params_buffer.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 1, resource: input_buffer.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 2, resource: output_buffer.as_entire_binding() },
+        ],
+    });
+
+    // Dispatch
+    let mut encoder = ctx.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("exruster.encoder") });
+    {
+        let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("exruster.compute"), timestamp_writes: None });
+        cpass.set_pipeline(&pipeline);
+        cpass.set_bind_group(0, &bind_group, &[]);
+        let gx = (width + 7) / 8;
+        let gy = (height + 7) / 8;
+        cpass.dispatch_workgroups(gx, gy, 1);
+    }
+    // Kopiuj wynik do staging
+    encoder.copy_buffer_to_buffer(&output_buffer, 0, &staging_buffer, 0, output_size);
+    ctx.queue.submit(Some(encoder.finish()));
+
+    // Mapuj wynik
+    let slice = staging_buffer.slice(..);
+    let (tx, rx) = std::sync::mpsc::channel();
+    slice.map_async(wgpu::MapMode::Read, move |res| {
+        let _ = tx.send(res);
+    });
+    // Zablokuj do czasu zakończenia mapowania (callback wypełni kanał)
+    rx.recv().context("GPU map_async callback failed to deliver")??;
+    let data = slice.get_mapped_range();
+
+    // Skopiuj do Vec<u8>
+    let mut out_bytes: Vec<u8> = Vec::with_capacity(pixel_count * 4);
+    for chunk in data.chunks_exact(4) {
+        // chunk to u32 LE
+        let v = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+        let rgba = v.to_le_bytes();
+        out_bytes.extend_from_slice(&rgba);
+    }
+
+    drop(data);
+    staging_buffer.unmap();
+
+    Ok(out_bytes)
 }
 
 

@@ -72,6 +72,24 @@ static GPU_ACCELERATION_ENABLED: std::sync::LazyLock<std::sync::Mutex<bool>> =
 
 
 
+/// Zwraca globalny kontekst GPU (jeśli został zainicjalizowany)
+pub fn get_global_gpu_context() -> Option<Arc<Mutex<Option<crate::gpu_context::GpuContext>>>> {
+    if let Ok(guard) = GPU_CONTEXT.lock() {
+        guard.as_ref().cloned()
+    } else {
+        None
+    }
+}
+
+/// Sprawdza, czy akceleracja GPU jest globalnie włączona z poziomu UI
+pub fn is_gpu_acceleration_enabled() -> bool {
+    if let Ok(guard) = GPU_ACCELERATION_ENABLED.lock() {
+        *guard
+    } else {
+        false
+    }
+}
+
 pub fn handle_layer_tree_click(
     ui_handle: Weak<AppWindow>,
     image_cache: ImageCacheType,
