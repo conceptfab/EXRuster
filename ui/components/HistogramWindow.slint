@@ -19,11 +19,12 @@ export component HistogramWindow inherits Rectangle {
     in-out property <float> histogram-p99: 1.0;
     
     // Channel selection state
-    in-out property <int> selected-channel: 3; // 0=Red, 1=Green, 2=Blue, 3=Luminance
+    in-out property <int> selected-channel: 4; // 0=Red, 1=Green, 2=Blue, 3=Luminance, 4=All Channels
     property <[int]> current-histogram-data: root.selected-channel == 0 ? root.histogram-red-data : 
                                            root.selected-channel == 1 ? root.histogram-green-data :
                                            root.selected-channel == 2 ? root.histogram-blue-data : 
-                                           root.histogram-luminance-data;
+                                           root.selected-channel == 3 ? root.histogram-luminance-data :
+                                           root.histogram-red-data; // Dla "All Channels" używamy Red jako bazę
     
     // Wymiary kontenera i marginesy do ograniczenia ruchu
     in-out property <length> container-width: 0px;
@@ -74,8 +75,8 @@ export component HistogramWindow inherits Rectangle {
                     Rectangle {
                         width: 120px;
                         height: 24px;
-                        background: channel-button-area.has-hover ? Kolory.hover : (root.selected-channel == 0 ? Kolory.panel_tlo : Kolory.suwak_tlo);
-                        border-color: root.selected-channel == 0 ? Kolory.kanal_r : Kolory.suwak_tor;
+                        background: channel-button-area.has-hover ? Kolory.hover : (root.selected-channel == 0 ? Kolory.obramowanie : #2a2d3a);
+                        border-color: root.selected-channel == 0 ? Kolory.kanal_r : #404040;
                         border-width: root.selected-channel == 0 ? 2px : 1px;
                         border-radius: 3px;
                         
@@ -91,8 +92,8 @@ export component HistogramWindow inherits Rectangle {
                             }
                             Text { 
                                 text: "Red"; 
-                                color: root.selected-channel == 0 ? Kolory.kanal_r : Kolory.tekst; 
-                                font-size: 11px; 
+                                color: #ffffff; 
+                                font-size: 14px; 
                                 font-family: "Geist"; 
                                 horizontal-alignment: center; 
                                 vertical-alignment: center; 
@@ -109,8 +110,8 @@ export component HistogramWindow inherits Rectangle {
                     Rectangle {
                         width: 120px;
                         height: 24px;
-                        background: channel-button-area2.has-hover ? Kolory.hover : (root.selected-channel == 1 ? Kolory.panel_tlo : Kolory.suwak_tlo);
-                        border-color: root.selected-channel == 1 ? Kolory.kanal_g : Kolory.suwak_tor;
+                        background: channel-button-area2.has-hover ? Kolory.hover : (root.selected-channel == 1 ? Kolory.obramowanie : #2a2d3a);
+                        border-color: root.selected-channel == 1 ? Kolory.kanal_g : #404040;
                         border-width: root.selected-channel == 1 ? 2px : 1px;
                         border-radius: 3px;
                         
@@ -126,8 +127,8 @@ export component HistogramWindow inherits Rectangle {
                             }
                             Text { 
                                 text: "Green"; 
-                                color: root.selected-channel == 1 ? Kolory.kanal_g : Kolory.tekst; 
-                                font-size: 11px; 
+                                color: #ffffff; 
+                                font-size: 14px; 
                                 font-family: "Geist"; 
                                 horizontal-alignment: center; 
                                 vertical-alignment: center; 
@@ -144,8 +145,8 @@ export component HistogramWindow inherits Rectangle {
                     Rectangle {
                         width: 120px;
                         height: 24px;
-                        background: channel-button-area3.has-hover ? Kolory.hover : (root.selected-channel == 2 ? Kolory.panel_tlo : Kolory.suwak_tlo);
-                        border-color: root.selected-channel == 2 ? Kolory.kanal_b : Kolory.suwak_tor;
+                        background: channel-button-area3.has-hover ? Kolory.hover : (root.selected-channel == 2 ? Kolory.obramowanie : #2a2d3a);
+                        border-color: root.selected-channel == 2 ? Kolory.kanal_b : #404040;
                         border-width: root.selected-channel == 2 ? 2px : 1px;
                         border-radius: 3px;
                         
@@ -161,8 +162,8 @@ export component HistogramWindow inherits Rectangle {
                             }
                             Text { 
                                 text: "Blue"; 
-                                color: root.selected-channel == 2 ? Kolory.kanal_b : Kolory.tekst; 
-                                font-size: 11px; 
+                                color: #ffffff; 
+                                font-size: 14px; 
                                 font-family: "Geist"; 
                                 horizontal-alignment: center; 
                                 vertical-alignment: center; 
@@ -179,8 +180,8 @@ export component HistogramWindow inherits Rectangle {
                     Rectangle {
                         width: 120px;
                         height: 24px;
-                        background: channel-button-area4.has-hover ? Kolory.hover : (root.selected-channel == 3 ? Kolory.panel_tlo : Kolory.suwak_tlo);
-                        border-color: root.selected-channel == 3 ? Kolory.tekst : Kolory.suwak_tor;
+                        background: channel-button-area4.has-hover ? Kolory.hover : (root.selected-channel == 3 ? Kolory.obramowanie : #2a2d3a);
+                        border-color: root.selected-channel == 3 ? Kolory.tekst_silny : #404040;
                         border-width: root.selected-channel == 3 ? 2px : 1px;
                         border-radius: 3px;
                         
@@ -196,21 +197,56 @@ export component HistogramWindow inherits Rectangle {
                             }
                             Text { 
                                 text: "Luminance"; 
-                                color: Kolory.tekst; 
-                                font-size: 11px; 
+                                color: #ffffff; 
+                                font-size: 14px; 
                                 font-family: "Geist"; 
                                 horizontal-alignment: center; 
                                 vertical-alignment: center; 
                             }
                         }
                         
-                        channel-button-area4 := TouchArea { 
-                            clicked => { 
-                                root.selected-channel = 3;
-                            } 
-                        }
-                    }
-                }
+                                                 channel-button-area4 := TouchArea { 
+                             clicked => { 
+                                 root.selected-channel = 3;
+                             } 
+                         }
+                     }
+                     
+                     Rectangle {
+                         width: 120px;
+                         height: 24px;
+                         background: channel-button-area5.has-hover ? Kolory.hover : (root.selected-channel == 4 ? Kolory.obramowanie : #2a2d3a);
+                         border-color: root.selected-channel == 4 ? Kolory.tekst_silny : #404040;
+                         border-width: root.selected-channel == 4 ? 2px : 1px;
+                         border-radius: 3px;
+                         
+                         HorizontalBox {
+                             spacing: 8px;
+                             alignment: center;
+                             
+                             Rectangle {
+                                 width: 8px;
+                                 height: 8px;
+                                 background: Kolory.tekst;
+                                 border-radius: 4px;
+                             }
+                                                                                                                   Text { 
+                                 text: "All"; 
+                                 color: #ffffff; 
+                                 font-size: 14px; 
+                                 font-family: "Geist"; 
+                                 horizontal-alignment: center; 
+                                 vertical-alignment: center; 
+                             }
+                         }
+                         
+                         channel-button-area5 := TouchArea { 
+                             clicked => { 
+                                 root.selected-channel = 4;
+                             } 
+                         }
+                     }
+                 }
                 
                 // Obszar histogramu
                 Rectangle {
@@ -228,21 +264,23 @@ export component HistogramWindow inherits Rectangle {
                         y: 8px;
                         
                         property <length> bar-width: root.current-histogram-data.length > 0 ? 
-                            (histogram-area.width - 16px) / root.current-histogram-data.length : 1px;
+                            histogram-area.width / root.current-histogram-data.length : 1px;
                         // Simplified max calculation - use a reasonable default for scaling
                         property <int> max-value: root.histogram-total-pixels > 0 ? root.histogram-total-pixels / 50 : 100;
                         
-                        for bin-value[i] in root.current-histogram-data: Rectangle {
-                            x: 8px + i * histogram-area.bar-width;
-                            y: histogram-area.height - 8px - (bin-value * (histogram-area.height - 16px)) / histogram-area.max-value;
-                            width: Math.max(1px, histogram-area.bar-width - 1px);
-                            height: (bin-value * (histogram-area.height - 16px)) / histogram-area.max-value;
-                            background: root.selected-channel == 0 ? Kolory.kanal_r :
-                                       root.selected-channel == 1 ? Kolory.kanal_g :
-                                       root.selected-channel == 2 ? Kolory.kanal_b :
-                                       Kolory.tekst;
-                            opacity: histogram-bar-touch.has-hover ? 1.0 : 0.8;
-                            border-radius: 1px;
+                                                 // Rysuj słupki dla pojedynczego kanału
+                         for bin-value[i] in root.current-histogram-data: Rectangle {
+                             x: 8px + i * histogram-area.bar-width;
+                             y: histogram-area.height - 8px - (bin-value * (histogram-area.height - 16px)) / histogram-area.max-value;
+                             width: Math.max(1px, histogram-area.bar-width - 1px);
+                             height: (bin-value * (histogram-area.height - 16px)) / histogram-area.max-value;
+                             background: root.selected-channel == 0 ? Kolory.kanal_r :
+                                        root.selected-channel == 1 ? Kolory.kanal_g :
+                                        root.selected-channel == 2 ? Kolory.kanal_b :
+                                        root.selected-channel == 3 ? Kolory.tekst :
+                                        Kolory.kanal_r; // Dla "All Channels" używamy Red jako domyślny
+                             opacity: histogram-bar-touch.has-hover ? 1.0 : 0.8;
+                             border-radius: 1px;
                             
                             histogram-bar-touch := TouchArea {
                                 if self.has-hover: Rectangle {
@@ -268,9 +306,17 @@ export component HistogramWindow inherits Rectangle {
                                     }
                                 }
                             }
-                        }
-                        
-                        if root.current-histogram-data.length == 0: Text {
+                                                 }
+                         
+                         // Rysuj wszystkie kanały jednocześnie gdy "All Channels" jest wybrane
+
+                         
+
+                         
+
+
+                         
+                         if root.current-histogram-data.length == 0: Text {
                             text: "No histogram data available";
                             color: Kolory.tekst_slabszy;
                             font-size: 12px;
@@ -361,15 +407,15 @@ export component HistogramWindow inherits Rectangle {
                     Rectangle {
                         width: 80px;
                         height: 20px;
-                        background: close-button-area.has-hover ? Kolory.hover : Kolory.suwak_tlo;
-                        border-color: Kolory.suwak_tor;
+                        background: close-button-area.has-hover ? Kolory.hover : #2a2d3a;
+                        border-color: #404040;
                         border-width: 1px;
                         border-radius: 3px;
                         
                         Text { 
                             text: "Close"; 
-                            color: Kolory.tekst; 
-                            font-size: 10px; 
+                            color: #ffffff; 
+                            font-size: 12px; 
                             font-family: "Geist"; 
                             horizontal-alignment: center; 
                             vertical-alignment: center; 

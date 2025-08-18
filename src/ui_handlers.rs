@@ -566,6 +566,40 @@ pub fn handle_open_exr_from_path(
                                                 };
                                                 ui2.set_exr_image(img);
 
+                                                // Automatycznie oblicz histogram dla nowego obrazu
+                                                {
+                                                    let mut guard = lock_or_recover(&image_cache_c);
+                                                    if let Some(ref mut cache) = *guard {
+                                                        if let Ok(()) = cache.update_histogram() {
+                                                            if let Some(hist_data) = cache.get_histogram_data() {
+                                                                // Przekaż dane histogramu do UI
+                                                                let red_bins: Vec<i32> = hist_data.red_bins.iter().map(|&x| x as i32).collect();
+                                                                let green_bins: Vec<i32> = hist_data.green_bins.iter().map(|&x| x as i32).collect();
+                                                                let blue_bins: Vec<i32> = hist_data.blue_bins.iter().map(|&x| x as i32).collect();
+                                                                let lum_bins: Vec<i32> = hist_data.luminance_bins.iter().map(|&x| x as i32).collect();
+                                                                
+                                                                ui2.set_histogram_red_data(slint::ModelRc::new(slint::VecModel::from(red_bins)));
+                                                                ui2.set_histogram_green_data(slint::ModelRc::new(slint::VecModel::from(green_bins)));
+                                                                ui2.set_histogram_blue_data(slint::ModelRc::new(slint::VecModel::from(blue_bins)));
+                                                                ui2.set_histogram_luminance_data(slint::ModelRc::new(slint::VecModel::from(lum_bins)));
+                                                                
+                                                                // Statystyki
+                                                                ui2.set_histogram_min_value(hist_data.min_value);
+                                                                ui2.set_histogram_max_value(hist_data.max_value);
+                                                                ui2.set_histogram_total_pixels(hist_data.total_pixels as i32);
+                                                                
+                                                                // Percentyle
+                                                                let p1 = hist_data.get_percentile(crate::histogram::HistogramChannel::Luminance, 0.01);
+                                                                let p50 = hist_data.get_percentile(crate::histogram::HistogramChannel::Luminance, 0.50);
+                                                                let p99 = hist_data.get_percentile(crate::histogram::HistogramChannel::Luminance, 0.99);
+                                                                ui2.set_histogram_p1(p1);
+                                                                ui2.set_histogram_p50(p50);
+                                                                ui2.set_histogram_p99(p99);
+                                                            }
+                                                        }
+                                                    }
+                                                }
+
                                                 // Zaktualizuj listę warstw
                                                 let layers_info_vec = {
                                                     let guard = lock_or_recover(&image_cache_c);
@@ -641,6 +675,41 @@ pub fn handle_open_exr_from_path(
                                                     }
                                                 };
                                                 ui2.set_exr_image(img);
+
+                                                // Automatycznie oblicz histogram dla nowego obrazu
+                                                {
+                                                    let mut guard = lock_or_recover(&image_cache_c);
+                                                    if let Some(ref mut cache) = *guard {
+                                                        if let Ok(()) = cache.update_histogram() {
+                                                            if let Some(hist_data) = cache.get_histogram_data() {
+                                                                // Przekaż dane histogramu do UI
+                                                                let red_bins: Vec<i32> = hist_data.red_bins.iter().map(|&x| x as i32).collect();
+                                                                let green_bins: Vec<i32> = hist_data.green_bins.iter().map(|&x| x as i32).collect();
+                                                                let blue_bins: Vec<i32> = hist_data.blue_bins.iter().map(|&x| x as i32).collect();
+                                                                let lum_bins: Vec<i32> = hist_data.luminance_bins.iter().map(|&x| x as i32).collect();
+                                                                
+                                                                ui2.set_histogram_red_data(slint::ModelRc::new(slint::VecModel::from(red_bins)));
+                                                                ui2.set_histogram_blue_data(slint::ModelRc::new(slint::VecModel::from(blue_bins)));
+                                                                ui2.set_histogram_green_data(slint::ModelRc::new(slint::VecModel::from(green_bins)));
+                                                                ui2.set_histogram_luminance_data(slint::ModelRc::new(slint::VecModel::from(lum_bins)));
+                                                                
+                                                                // Statystyki
+                                                                ui2.set_histogram_min_value(hist_data.min_value);
+                                                                ui2.set_histogram_max_value(hist_data.max_value);
+                                                                ui2.set_histogram_total_pixels(hist_data.total_pixels as i32);
+                                                                
+                                                                // Percentyle
+                                                                let p1 = hist_data.get_percentile(crate::histogram::HistogramChannel::Luminance, 0.01);
+                                                                let p50 = hist_data.get_percentile(crate::histogram::HistogramChannel::Luminance, 0.50);
+                                                                let p99 = hist_data.get_percentile(crate::histogram::HistogramChannel::Luminance, 0.99);
+                                                                ui2.set_histogram_p1(p1);
+                                                                ui2.set_histogram_p50(p50);
+                                                                ui2.set_histogram_p99(p99);
+                                                            }
+                                                        }
+                                                    }
+                                                }
+
                                                 if !layers_info_vec.is_empty() {
                                                     let (layers_model, layers_colors, layers_font_sizes) = create_layers_model(&layers_info_vec, &ui2);
                                                     ui2.set_layers_model(layers_model);
