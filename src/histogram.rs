@@ -165,23 +165,6 @@ pub enum HistogramChannel {
     Luminance,
 }
 
-// GPU Histogram computing
-use crate::gpu_context::GpuContext;
-
-#[allow(dead_code)]
-pub fn compute_histogram_gpu(
-    _ctx: &GpuContext,
-    pixels: &[f32],
-    _width: u32,
-    _height: u32,
-) -> anyhow::Result<HistogramData> {
-    // TODO: Implement GPU histogram computation using compute shaders
-    // For now, fallback to CPU
-    let mut histogram = HistogramData::new(256);
-    histogram.compute_from_rgba_pixels(pixels)?;
-    Ok(histogram)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

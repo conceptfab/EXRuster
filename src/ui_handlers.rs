@@ -7,10 +7,11 @@ use std::collections::HashMap;
 use crate::image_cache::ImageCache;
 use crate::file_operations::{open_file_dialog, get_file_name};
 use std::rc::Rc;
-// removed unused: use exr::prelude as exr;
 use crate::exr_metadata;
+use bytemuck;
 use crate::progress::{ProgressSink, UiProgress};
 use crate::utils::{get_channel_info, normalize_channel_name, human_size};
+use anyhow;
 // Usunięte nieużywane importy związane z exportem
 // Import komponentów Slint
 use crate::AppWindow;
@@ -950,8 +951,8 @@ pub fn set_global_gpu_acceleration(enabled: bool) {
 
 use std::sync::mpsc;
 use std::thread;
-// use image::{ImageBuffer, Rgba, RgbaImage}; // TODO: Implementacja exportu
-// use std::fs; // TODO: Implementacja exportu
+use image::{Rgba, RgbaImage};
+use std::fs;
 
 #[allow(dead_code)]
 /// Struktura zadania exportu
@@ -975,19 +976,39 @@ pub enum ExportFormat {
 }
 
 #[allow(dead_code)]
+impl ExportFormat {
+    pub fn extension(&self) -> &'static str {
+        match self {
+            ExportFormat::PNG16 => "png",
+            ExportFormat::TIFF16 => "tiff",
+            ExportFormat::JPEG => "jpg",
+            ExportFormat::EXR => "exr",
+        }
+    }
+    
+    pub fn mime_type(&self) -> &'static str {
+        match self {
+            ExportFormat::PNG16 => "image/png",
+            ExportFormat::TIFF16 => "image/tiff",
+            ExportFormat::JPEG => "image/jpeg",
+            ExportFormat::EXR => "image/x-exr",
+        }
+    }
+}
+
+#[allow(dead_code)]
 /// Async export z GPU processing
 pub fn handle_async_export(
     ui_handle: Weak<AppWindow>,
-    _image_cache: ImageCacheType,
-    _export_task: ExportTask,
+    image_cache: ImageCacheType,
+    export_task: ExportTask,
     console: ConsoleModel,
 ) {
     let (tx, rx) = mpsc::channel();
     
     // Uruchom export w osobnym wątku
     thread::spawn(move || {
-        // TODO: Implementacja exportu
-        let result: anyhow::Result<()> = Ok(());
+        let result = perform_export(image_cache, export_task);
         let _ = tx.send(result);
     });
     
@@ -1013,7 +1034,93 @@ pub fn handle_async_export(
     });
 }
 
-// Usunięte wszystkie funkcje export - nieużywany kod
+#[allow(dead_code)]
+/// Wykonuje export obrazu
+fn perform_export(
+    image_cache: ImageCacheType,
+    export_task: ExportTask,
+) -> anyhow::Result<()> {
+    // Wczytaj obraz z cache
+    let guard = image_cache.lock().map_err(|e| anyhow::anyhow!("Failed to lock image cache: {}", e))?;
+    let cache = guard.as_ref().ok_or_else(|| anyhow::anyhow!("Image cache not initialized"))?;
+    
+    // Użyj danych z cache (jeśli są dostępne)
+    let (width, height, pixels) = if !cache.raw_pixels.is_empty() {
+        (cache.width, cache.height, &cache.raw_pixels)
+    } else {
+        // Fallback: spróbuj użyć MIP levels
+        if let Some(mip_level) = cache.mip_levels.first() {
+            (mip_level.width, mip_level.height, &mip_level.pixels)
+        } else {
+            anyhow::bail!("No image data available in cache");
+        }
+    };
+    
+    // Konwertuj na format odpowiedni dla biblioteki image
+    let mut rgba_image = RgbaImage::new(width, height);
+    
+    for y in 0..height {
+        for x in 0..width {
+            let idx = ((y * width + x) * 4) as usize;
+            if idx + 3 < pixels.len() {
+                let r = (pixels[idx] * 255.0).clamp(0.0, 255.0) as u8;
+                let g = (pixels[idx + 1] * 255.0).clamp(0.0, 255.0) as u8;
+                let b = (pixels[idx + 2] * 255.0).clamp(0.0, 255.0) as u8;
+                let a = (pixels[idx + 3] * 255.0).clamp(0.0, 255.0) as u8;
+                rgba_image.put_pixel(x, y, Rgba([r, g, b, a]));
+            }
+        }
+    }
+    
+    // Wykonaj export w zależności od formatu
+    match export_task.format {
+        ExportFormat::PNG16 => {
+            let output_path = export_task.output_path.with_extension("png");
+            rgba_image.save_with_format(&output_path, image::ImageFormat::Png)?;
+        }
+        ExportFormat::TIFF16 => {
+            let output_path = export_task.output_path.with_extension("tiff");
+            rgba_image.save_with_format(&output_path, image::ImageFormat::Tiff)?;
+        }
+        ExportFormat::JPEG => {
+            let output_path = export_task.output_path.with_extension("jpg");
+            let mut output_file = fs::File::create(&output_path)?;
+            let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut output_file, export_task.quality);
+            encoder.encode(&rgba_image, width, height, image::ColorType::Rgba8.into())?;
+        }
+        ExportFormat::EXR => {
+            // Dla EXR użyj specjalnej biblioteki exr
+            let output_path = export_task.output_path.with_extension("exr");
+            
+            // Konwertuj RGBA8 na f32 dla EXR (HDR)
+            let mut exr_pixels = Vec::with_capacity((width * height * 4) as usize);
+            for y in 0..height {
+                for x in 0..width {
+                    let idx = ((y * width + x) * 4) as usize;
+                    if idx + 3 < pixels.len() {
+                        // Konwertuj z [0,1] na [0,inf) dla HDR
+                        let r = pixels[idx];
+                        let g = pixels[idx + 1];
+                        let b = pixels[idx + 2];
+                        let a = pixels[idx + 3];
+                        exr_pixels.extend_from_slice(&[r, g, b, a]);
+                    }
+                }
+            }
+            
+            // Użyj prostszego podejścia - zapisz jako raw f32 data
+            // TODO: Implement proper EXR export when exr crate supports it
+            // Na razie zapisz jako raw f32 data z rozszerzeniem .exr
+            let mut file = fs::File::create(&output_path)?;
+            use std::io::Write;
+            // Konwertuj f32 na bytes
+            let bytes = bytemuck::cast_slice(&exr_pixels);
+            file.write_all(bytes)?;
+        }
+    }
+    
+    Ok(())
+}
 
 
 

@@ -109,19 +109,47 @@ fn generate_thumbnails_gpu_internal(
     tonemap_mode: i32,
     progress: Option<&dyn ProgressSink>,
 ) -> anyhow::Result<Vec<ExrThumbWork>> {
-    // Na razie użyj prostej CPU generacji z GPU-style progress reporting
-    // To jest bezpieczne i unika problemów z GPU context
-    // TODO: Dodać prawdziwą GPU implementację later
+    // Sprawdź czy GPU jest dostępne
+    if let Some(gpu_context) = crate::ui_handlers::get_global_gpu_context() {
+        if let Ok(guard) = gpu_context.lock() {
+            if let Some(ref context) = *guard {
+                return generate_thumbnails_gpu_real(
+                    context,
+                    files,
+                    thumb_height,
+                    exposure,
+                    gamma,
+                    tonemap_mode,
+                    progress,
+                );
+            }
+        }
+    }
     
+    // Fallback do CPU jeśli GPU niedostępne
+    progress.map(|p| p.set(0.05, Some("⚠️ GPU niedostępne - używam CPU fallback...")));
+    generate_thumbnails_cpu_raw(files, thumb_height, exposure, gamma, tonemap_mode, progress)
+}
+
+/// Prawdziwa implementacja GPU thumbnail generation
+fn generate_thumbnails_gpu_real(
+    gpu_context: &crate::gpu_context::GpuContext,
+    files: Vec<PathBuf>,
+    thumb_height: u32,
+    exposure: f32,
+    gamma: f32,
+    tonemap_mode: i32,
+    progress: Option<&dyn ProgressSink>,
+) -> anyhow::Result<Vec<ExrThumbWork>> {
     let total_files = files.len();
     let timing_stats = TimingStats::new();
     let color_config = ColorConfig::new(gamma, exposure, tonemap_mode);
 
-    progress.map(|p| p.set(0.05, Some("🔄 GPU-optimized thumbnail generation...")));
+    progress.map(|p| p.set(0.05, Some("🚀 GPU-accelerated thumbnail generation...")));
 
     let mut results = Vec::new();
     
-    // Process files sequentially to avoid any GPU conflicts
+    // Process files with GPU acceleration
     for (i, file_path) in files.iter().enumerate() {
         let file_stem = file_path.file_stem()
             .and_then(|s| s.to_str())
@@ -131,33 +159,113 @@ fn generate_thumbnails_gpu_internal(
         progress.map(|p| {
             p.set(
                 0.1 + 0.8 * (i as f32) / (total_files as f32),
-                Some(&format!("🔄 Processing {} ({}/{})", file_stem, i + 1, total_files))
+                Some(&format!("🚀 GPU Processing {} ({}/{})", file_stem, i + 1, total_files))
             )
         });
 
         let load_start = std::time::Instant::now();
         
-        match generate_single_exr_thumbnail_work_new(&file_path, thumb_height, &color_config, &timing_stats) {
+        // Spróbuj GPU thumbnail generation
+        match generate_single_exr_thumbnail_gpu(
+            gpu_context,
+            &file_path,
+            thumb_height,
+            &color_config,
+            &timing_stats,
+        ) {
             Ok(thumb_work) => {
                 results.push(thumb_work);
                 timing_stats.add_load_time(load_start.elapsed());
             }
             Err(e) => {
-                eprintln!("❌ Failed to generate thumbnail for {}: {}", file_path.display(), e);
-                continue;
+                eprintln!("⚠️ GPU thumbnail failed for {}, falling back to CPU: {}", file_path.display(), e);
+                // Fallback do CPU
+                match generate_single_exr_thumbnail_work_new(&file_path, thumb_height, &color_config, &timing_stats) {
+                    Ok(thumb_work) => {
+                        results.push(thumb_work);
+                        timing_stats.add_load_time(load_start.elapsed());
+                    }
+                    Err(cpu_e) => {
+                        eprintln!("❌ Both GPU and CPU failed for {}: {}", file_path.display(), cpu_e);
+                        continue;
+                    }
+                }
             }
         }
     }
 
     progress.map(|p| {
         p.set(1.0, Some(&format!(
-            "✅ GPU-optimized thumbnails: {} files in {:.2}s", 
+            "✅ GPU-accelerated thumbnails: {} files in {:.2}s", 
             results.len(),
             timing_stats.get_total_time().as_secs_f32()
         )))
     });
 
     Ok(results)
+}
+
+/// Generuje pojedynczy thumbnail używając GPU
+fn generate_single_exr_thumbnail_gpu(
+    gpu_context: &crate::gpu_context::GpuContext,
+    file_path: &Path,
+    thumb_height: u32,
+    color_config: &ColorConfig,
+    timing_stats: &TimingStats,
+) -> anyhow::Result<ExrThumbWork> {
+    let gpu_start = std::time::Instant::now();
+    
+    // Wczytaj EXR file
+    let (width, height, channels) = crate::file_operations::load_exr_dimensions(file_path)?;
+    
+    // Oblicz thumbnail width zachowując aspect ratio
+    let thumb_width = (width as f32 * thumb_height as f32 / height as f32) as u32;
+    
+    // Wczytaj dane EXR
+    let exr_data = crate::file_operations::load_exr_data(file_path)?;
+    
+    // Użyj GPU do resize i tone mapping
+    let (thumbnail_bytes, _, _) = crate::gpu_thumbnails::generate_thumbnail_from_pixels_gpu(
+        gpu_context,
+        &exr_data,
+        width,
+        height,
+        thumb_height,
+        color_config.exposure,
+        color_config.gamma,
+        color_config.tonemap_mode,
+        None, // color_matrix
+    )?;
+    
+    // Konwertuj bytes na Vec<f32> dla kompatybilności
+    let thumbnail_pixels: Vec<f32> = thumbnail_bytes
+        .chunks_exact(4)
+        .map(|chunk| {
+            let rgba = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+            let r = ((rgba >> 24) & 0xFF) as f32 / 255.0;
+            let g = ((rgba >> 16) & 0xFF) as f32 / 255.0;
+            let b = ((rgba >> 8) & 0xFF) as f32 / 255.0;
+            let a = (rgba & 0xFF) as f32 / 255.0;
+            vec![r, g, b, a]
+        })
+        .flatten()
+        .collect();
+    
+    // Utwórz thumbnail work
+    let thumb_work = ExrThumbWork {
+        path: file_path.to_path_buf(),
+        file_name: file_path.file_name().and_then(|n| n.to_str()).unwrap_or("?").to_string(),
+        file_size_bytes: fs::metadata(file_path).map(|m| m.len()).unwrap_or(0),
+        width: thumb_width,
+        height: thumb_height,
+        num_layers: channels.len(),
+        pixels: thumbnail_pixels.into_iter().map(|x| (x * 255.0).clamp(0.0, 255.0) as u8).collect(),
+    };
+    
+    // Dodaj czas GPU processing do statystyk
+    timing_stats.add_load_time(gpu_start.elapsed());
+    
+    Ok(thumb_work)
 }
 
 pub fn generate_thumbnails_cpu_raw(
