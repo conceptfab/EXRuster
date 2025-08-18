@@ -96,7 +96,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     ui_handlers::set_global_gpu_context(gpu_context_clone.clone());
                     
                     // Inicjalizuj async GPU processor
-                    gpu_processing::initialize_async_gpu_processor(std::sync::Arc::new(context));
+                    // gpu_processing::initialize_async_gpu_processor(std::sync::Arc::new(context));
                     
                     // Zaktualizuj UI z informacją o GPU
                     if let Some(ui) = ui_weak.upgrade() {

@@ -25,6 +25,7 @@ pub struct ParamsStd140 {
 
 /// Parametry do przetwarzania GPU
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct GpuProcessingParams {
     pub width: u32,
     pub height: u32,
@@ -36,6 +37,7 @@ pub struct GpuProcessingParams {
 
 /// Zadanie przetwarzania GPU
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct GpuProcessingTask {
     pub pixels: Arc<[f32]>,
     pub params: GpuProcessingParams,
@@ -51,6 +53,7 @@ pub struct AsyncGpuProcessor {
 
 impl AsyncGpuProcessor {
     /// Tworzy nowy asynchroniczny procesor GPU
+    #[allow(dead_code)]
     pub fn new(gpu_context: Arc<GpuContext>) -> Self {
         let (task_tx, mut task_rx) = mpsc::unbounded_channel::<GpuProcessingTask>();
         
@@ -103,6 +106,7 @@ impl AsyncGpuProcessor {
 }
 
 /// Wewnętrzna funkcja przetwarzania GPU (blocking)
+#[allow(dead_code)]
 async fn process_gpu_task(
     ctx: &GpuContext,
     pixels: Arc<[f32]>,
@@ -127,6 +131,7 @@ async fn process_gpu_task(
 }
 
 /// Ulepszona wersja GPU processing z buffer pooling
+#[allow(dead_code)]
 fn gpu_process_rgba_f32_to_rgba8_pooled(
     ctx: &GpuContext,
     pixels: &[f32],
@@ -271,6 +276,7 @@ static GPU_PROCESSOR: std::sync::LazyLock<std::sync::Mutex<Option<Arc<AsyncGpuPr
     std::sync::LazyLock::new(|| std::sync::Mutex::new(None));
 
 /// Inicjalizuje globalny async GPU processor
+#[allow(dead_code)]
 pub fn initialize_async_gpu_processor(gpu_context: Arc<GpuContext>) {
     let processor = Arc::new(AsyncGpuProcessor::new(gpu_context));
     if let Ok(mut guard) = GPU_PROCESSOR.lock() {

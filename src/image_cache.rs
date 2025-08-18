@@ -627,6 +627,14 @@ fn gpu_process_rgba_f32_to_rgba8(
     // Bufor wejściowy (RGBA f32) - użyj buffer pool
     let input_bytes: &[u8] = bytemuck::cast_slice(pixels);
     let input_size = input_bytes.len() as u64;
+    let limits = ctx.device.limits();
+    if input_size > limits.max_storage_buffer_binding_size.into() {
+        anyhow::bail!(
+            "Input image too large for GPU processing (size: {} > max: {})",
+            input_size,
+            limits.max_storage_buffer_binding_size
+        );
+    }
     let input_buffer = ctx.get_or_create_buffer(
         input_size,
         wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,

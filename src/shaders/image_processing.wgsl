@@ -17,7 +17,7 @@ struct Params {
 @group(0) @binding(1) var<storage, read> input_pixels: array<vec4<f32>>;
 
 // Bufor wyjściowy (piksele jako u32 - NAPRAWIONE: bardziej kompatybilne)
-@group(0) @binding(2) var<storage, write> output_pixels: array<u32>;
+@group(0) @binding(2) var<storage, read_write> output_pixels: array<u32>;
 
 // Uniformy
 @group(0) @binding(0) var<uniform> params: Params;
@@ -38,11 +38,12 @@ fn aces_tonemap(x: f32) -> f32 {
 
 // Reinhard tone mapping: x / (1 + x) (bezpieczniejsza wersja)
 fn reinhard_tonemap(x: f32) -> f32 {
-    // Sprawdź czy wejście jest poprawne
-    if (x != x || x < 0.0) {
-        return 0.0; // NaN lub ujemne -> 0
+    if (x >= 1e10) { // Treat large numbers as infinity
+        return 1.0;
     }
-    
+    if (x != x || x < 0.0) {
+        return 0.0; // NaN or negative -> 0
+    }
     let result = x / (1.0 + x);
     return clamp(result, 0.0, 1.0);
 }

@@ -1,0 +1,1 @@
+EXruster_nightly.exe > out.log 2> err.log

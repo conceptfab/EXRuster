@@ -12,9 +12,10 @@ struct ThumbnailParams {
     tonemap_mode: u32,        // Tryb tone mapping: 0=ACES, 1=Reinhard, 2=Linear
     scale_x: f32,             // Skala X (src_width / dst_width)
     scale_y: f32,             // Skala Y (src_height / dst_height)
+    _pad0: vec3<u32>,         // Padding
     color_matrix: mat3x3<f32>, // Macierz transformacji kolorów
     has_color_matrix: u32,    // Flaga użycia macierzy (0 lub 1)
-    _pad0: u32,               // Padding dla wyrównania
+    _pad1: vec3<u32>,         // Padding
 }
 
 // Wszystkie bindingi w jednej grupie (group 0)
@@ -24,7 +25,7 @@ struct ThumbnailParams {
 @group(0) @binding(1) var<storage, read> input_pixels: array<vec4<f32>>;
 
 // Bufor wyjściowy (piksele jako u32 - packed RGBA)
-@group(0) @binding(2) var<storage, write> output_pixels: array<u32>;
+@group(0) @binding(2) var<storage, read_write> output_pixels: array<u32>;
 
 // ACES tone mapping
 fn aces_tonemap(x: f32) -> f32 {
@@ -41,8 +42,11 @@ fn aces_tonemap(x: f32) -> f32 {
 
 // Reinhard tone mapping
 fn reinhard_tonemap(x: f32) -> f32 {
+    if (x >= 1e10) { // Treat large numbers as infinity
+        return 1.0;
+    }
     if (x != x || x < 0.0) {
-        return 0.0; // NaN lub ujemne -> 0
+        return 0.0; // NaN or negative -> 0
     }
     let result = x / (1.0 + x);
     return clamp(result, 0.0, 1.0);

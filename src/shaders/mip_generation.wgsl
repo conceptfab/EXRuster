@@ -20,7 +20,7 @@ struct MipParams {
 @group(0) @binding(1) var<storage, read> input_pixels: array<vec4<f32>>;
 
 // Bufor wyjściowy (piksele HDR jako vec4<f32>)
-@group(0) @binding(2) var<storage, write> output_pixels: array<vec4<f32>>;
+@group(0) @binding(2) var<storage, read_write> output_pixels: array<vec4<f32>>;
 
 // Bezpieczne pobieranie piksela z kontrolą granic
 fn get_pixel_safe(x: u32, y: u32) -> vec4<f32> {
