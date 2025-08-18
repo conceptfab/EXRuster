@@ -5,11 +5,13 @@
 struct Params {
     exposure: f32,           // Korekcja ekspozycji
     gamma: f32,              // Wartość gamma
-    tonemap_mode: u32,       // Tryb tone mapping: 0=ACES, 1=Reinhard, 2=Linear
+    tonemap_mode: u32,       // Tryb tone mapping: 0=ACES, 1=Reinhard, 2=Linear, 3=Filmic, 4=Hable, 5=LocalAdaptation
     width: u32,              // Szerokość obrazu
     height: u32,             // Wysokość obrazu
     color_matrix: mat3x3<f32>, // Nowe pole: macierz transformacji kolorów
     has_color_matrix: u32,    // Nowe pole: flaga użycia macierzy (0 lub 1)
+    local_adaptation_radius: u32, // Promień dla local adaptation (domyślnie 16)
+    _pad0: u32,              // Padding dla wyrównania
 }
 
 // Wszystkie bindingi w jednej grupie (group 0)
@@ -21,6 +23,53 @@ struct Params {
 
 // Uniformy
 @group(0) @binding(0) var<uniform> params: Params;
+
+// Filmic tone mapping - bardziej zaawansowana krzywa filmowa
+fn filmic_tonemap(x: f32) -> f32 {
+    let x_safe = max(x, 0.0);
+    let a = 0.15;  // Black point
+    let b = 0.50;  // Toe
+    let c = 0.10;  // Shoulder
+    let d = 0.20;  // White point
+    
+    let numerator = (x_safe * (a * x_safe + c * b) + d * x_safe);
+    let denominator = (x_safe * (a * x_safe + b) + d * c);
+    
+    return clamp(numerator / (denominator + 1e-9), 0.0, 1.0);
+}
+
+// Hable tone mapping - Uncharted 2 style
+fn hable_tonemap(x: f32) -> f32 {
+    let x_safe = max(x, 0.0);
+    let A = 0.15;
+    let B = 0.50;
+    let C = 0.10;
+    let D = 0.20;
+    let E = 0.02;
+    let F = 0.30;
+    let W = 11.2;
+    
+    let numerator = ((x_safe * (A * x_safe + C * B) + D * E) * (x_safe * (A * x_safe + B) + D * C));
+    let denominator = ((x_safe * (A * x_safe + B) + D * C) * (x_safe * (A * x_safe + C * B) + D * E));
+    
+    let white_scale = 1.0 / (((W * (A * W + C * B) + D * E) * (W * (A * W + B) + D * C)) / ((W * (A * W + B) + D * C) * (W * (A * W + C * B) + D * E)));
+    
+    return clamp(numerator / (denominator + 1e-9) * white_scale, 0.0, 1.0);
+}
+
+// Local adaptation tone mapping - uwzględnia lokalny kontrast
+fn local_adaptation_tonemap(x: f32, local_avg: f32) -> f32 {
+    let x_safe = max(x, 0.0);
+    let local_avg_safe = max(local_avg, 1e-6);
+    
+    // Oblicz lokalny kontrast
+    let local_contrast = x_safe / local_avg_safe;
+    
+    // Zastosuj adaptive tone mapping
+    let adapted_value = local_contrast / (1.0 + local_contrast);
+    
+    return clamp(adapted_value, 0.0, 1.0);
+}
 
 // ACES tone mapping - znacznie lepszy od Reinhard (bezpieczniejsza wersja)
 fn aces_tonemap(x: f32) -> f32 {
@@ -98,6 +147,49 @@ fn tone_map_and_gamma(
         tm_r = select(0.0, select(1.0, exposed_r, exposed_r < 1.0), exposed_r > 0.0);
         tm_g = select(0.0, select(1.0, exposed_g, exposed_g < 1.0), exposed_g > 0.0);
         tm_b = select(0.0, select(1.0, exposed_b, exposed_b < 1.0), exposed_b > 0.0);
+    } else if (tonemap_mode == 3u) {
+        // Filmic
+        tm_r = filmic_tonemap(exposed_r);
+        tm_g = filmic_tonemap(exposed_g);
+        tm_b = filmic_tonemap(exposed_b);
+    } else if (tonemap_mode == 4u) {
+        // Hable
+        tm_r = hable_tonemap(exposed_r);
+        tm_g = hable_tonemap(exposed_g);
+        tm_b = hable_tonemap(exposed_b);
+         } else if (tonemap_mode == 5u) {
+         // Local Adaptation - oblicz średnią lokalną w promieniu
+         let radius = params.local_adaptation_radius;
+         var local_sum_r: f32 = 0.0;
+         var local_sum_g: f32 = 0.0;
+         var local_sum_b: f32 = 0.0;
+         var sample_count: u32 = 0u;
+         
+         // Próbkowanie w promieniu (uproszczone - tylko 9 punktów)
+         for (var dy = -1i; dy <= 1i; dy++) {
+             for (var dx = -1i; dx <= 1i; dx++) {
+                 let sample_x = i32(global_id.x) + dx;
+                 let sample_y = i32(global_id.y) + dy;
+                 
+                 if (sample_x >= 0i && sample_x < i32(params.width) && 
+                     sample_y >= 0i && sample_y < i32(params.height)) {
+                     let sample_index = u32(sample_y) * params.width + u32(sample_x);
+                     let sample_pixel = input_pixels[sample_index];
+                     local_sum_r += sample_pixel.r;
+                     local_sum_g += sample_pixel.g;
+                     local_sum_b += sample_pixel.b;
+                     sample_count += 1u;
+                 }
+             }
+         }
+         
+         let local_avg_r = local_sum_r / f32(sample_count);
+         let local_avg_g = local_sum_g / f32(sample_count);
+         let local_avg_b = local_sum_b / f32(sample_count);
+
+         tm_r = local_adaptation_tonemap(exposed_r, local_avg_r);
+         tm_g = local_adaptation_tonemap(exposed_g, local_avg_g);
+         tm_b = local_adaptation_tonemap(exposed_b, local_avg_b);
     } else {
         // ACES (domyślny)
         tm_r = aces_tonemap(exposed_r);

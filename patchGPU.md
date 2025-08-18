@@ -1,6 +1,6 @@
 
 
-## FAZA 3: Zaawansowane funkcje GPU (Priorytet: NISKI)
+ca
 
 ### 3.1 Advanced Tone Mapping
 **Rozszerzenie istniejącego shadera**:

@@ -208,14 +208,38 @@ fn setup_menu_callbacks(
         }
     });
 
-    // Export: Convert (EXR -> TIFF)
-    // Callback exportu został usunięty
+    // Export: Convert (EXR -> TIFF) - FAZA 3 GPU
+    ui.on_export_convert_gpu({
+        let ui_handle = ui.as_weak();
+        let current_file_path = current_file_path.clone();
+        let image_cache = image_cache.clone();
+        let console = console_model.clone();
+        move || {
+            ui_handlers::handle_export_convert_gpu(ui_handle.clone(), image_cache.clone(), current_file_path.clone(), console.clone());
+        }
+    });
 
-    // Export: Beauty (PNG16)
-    // Callback exportu został usunięty
+    // Export: Beauty (PNG16) - FAZA 3 GPU
+    ui.on_export_beauty_gpu({
+        let ui_handle = ui.as_weak();
+        let current_file_path = current_file_path.clone();
+        let image_cache = image_cache.clone();
+        let console = console_model.clone();
+        move || {
+            ui_handlers::handle_export_beauty_gpu(ui_handle.clone(), image_cache.clone(), current_file_path.clone(), console.clone());
+        }
+    });
 
-    // Export: Channels (PNG16 grayscale)
-    // Callback exportu został usunięty
+    // Export: Channels (PNG16 grayscale) - FAZA 3 GPU
+    ui.on_export_channels_gpu({
+        let ui_handle = ui.as_weak();
+        let current_file_path = current_file_path.clone();
+        let image_cache = image_cache.clone();
+        let console = console_model.clone();
+        move || {
+            ui_handlers::handle_export_channels_gpu(ui_handle.clone(), image_cache.clone(), current_file_path.clone(), console.clone());
+        }
+    });
 }
 
 fn setup_image_control_callbacks(
@@ -274,7 +298,7 @@ fn setup_image_control_callbacks(
                     let image = ui_handlers::update_preview_image(&ui, cache, exposure, gamma, mode, &console);
                     ui.set_exr_image(image);
                     push_console(&ui, &console, format!("[preview] updated → tonemap mode: {}", mode));
-                    ui.set_status_text(format!("Tonemap: {}", match mode {0=>"ACES",1=>"Reinhard",2=>"Linear", _=>"?"}).into());
+                    ui.set_status_text(format!("Tonemap: {}", match mode {0=>"ACES",1=>"Reinhard",2=>"Linear",3=>"Filmic",4=>"Hable",5=>"Local", _=>"?"}).into());
                 }
             }
         }
@@ -466,6 +490,42 @@ fn setup_panel_callbacks(
                     }
                 }
             }
+        }
+    });
+
+    // FAZA 3: GPU Filters callbacks
+    ui.on_apply_gpu_blur({
+        let ui_handle = ui.as_weak();
+        let image_cache = image_cache.clone();
+        let console_model = console_model.clone();
+        move |blur_type: i32, radius: i32, strength: f32| {
+            ui_handlers::apply_gpu_blur(ui_handle.clone(), image_cache.clone(), blur_type, radius, strength, console_model.clone());
+        }
+    });
+
+    ui.on_apply_gpu_sharpen({
+        let ui_handle = ui.as_weak();
+        let image_cache = image_cache.clone();
+        let console_model = console_model.clone();
+        move |sharpen_type: i32, radius: i32, strength: f32| {
+            ui_handlers::apply_gpu_sharpen(ui_handle.clone(), image_cache.clone(), sharpen_type, radius, strength, console_model.clone());
+        }
+    });
+
+    ui.on_compute_gpu_histogram({
+        let ui_handle = ui.as_weak();
+        let image_cache = image_cache.clone();
+        let console_model = console_model.clone();
+        move |histogram_type: i32| {
+            ui_handlers::compute_gpu_histogram(ui_handle.clone(), image_cache.clone(), histogram_type, console_model.clone());
+        }
+    });
+
+    ui.on_reset_gpu_filters({
+        let ui_handle = ui.as_weak();
+        let console_model = console_model.clone();
+        move || {
+            ui_handlers::reset_gpu_filters(ui_handle.clone(), console_model.clone());
         }
     });
 }

@@ -946,6 +946,250 @@ pub fn set_global_gpu_acceleration(enabled: bool) {
     }
 }
 
+// === FAZA 3: GPU-accelerated Export ===
+
+use std::sync::mpsc;
+use std::thread;
+// use image::{ImageBuffer, Rgba, RgbaImage}; // TODO: Implementacja exportu
+// use std::fs; // TODO: Implementacja exportu
+
+#[allow(dead_code)]
+/// Struktura zadania exportu
+#[derive(Debug)]
+pub struct ExportTask {
+    pub task_id: String,
+    pub source_path: PathBuf,
+    pub output_path: PathBuf,
+    pub format: ExportFormat,
+    pub quality: u8,
+    pub use_gpu: bool,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub enum ExportFormat {
+    PNG16,
+    TIFF16,
+    JPEG,
+    EXR,
+}
+
+#[allow(dead_code)]
+/// Async export z GPU processing
+pub fn handle_async_export(
+    ui_handle: Weak<AppWindow>,
+    _image_cache: ImageCacheType,
+    export_task: ExportTask,
+    console: ConsoleModel,
+) {
+    let (tx, rx) = mpsc::channel();
+    
+    // Uruchom export w osobnym wątku
+    thread::spawn(move || {
+        let result = perform_export(export_task, &tx);
+        let _ = tx.send(result);
+    });
+    
+    // Sprawdź wyniki w głównym wątku
+    let ui_handle_clone = ui_handle.clone();
+    let timer = Timer::default();
+    timer.start(TimerMode::Repeated, Duration::from_millis(100), move || {
+        if let Ok(result) = rx.try_recv() {
+            match result {
+                Ok(_) => {
+                    if let Some(ui) = ui_handle_clone.upgrade() {
+                        push_console(&ui, &console, "Export zakończony pomyślnie".to_string());
+                    }
+                }
+                Err(e) => {
+                    if let Some(ui) = ui_handle_clone.upgrade() {
+                        push_console(&ui, &console, format!("Błąd exportu: {}", e));
+                    }
+                }
+            }
+            // Timer automatycznie się zatrzyma po zakończeniu
+        }
+    });
+}
+
+#[allow(dead_code)]
+/// Wykonuje export z GPU acceleration
+fn perform_export(export_task: ExportTask, progress_tx: &mpsc::Sender<Result<(), String>>) -> Result<(), String> {
+    let _ = progress_tx.send(Ok(())); // Progress update
+    
+    // Sprawdź czy GPU jest dostępne
+    if export_task.use_gpu {
+        if let Some(gpu_context) = get_global_gpu_context() {
+            if let Ok(guard) = gpu_context.lock() {
+                if let Some(ref context) = *guard {
+                    return perform_gpu_export(export_task, context, progress_tx);
+                }
+            }
+        }
+    }
+    
+    // Fallback na CPU
+    perform_cpu_export(export_task, progress_tx)
+}
+
+#[allow(dead_code)]
+/// GPU-accelerated export
+fn perform_gpu_export(
+    _export_task: ExportTask, 
+    _gpu_context: &crate::gpu_context::GpuContext,
+    _progress_tx: &mpsc::Sender<Result<(), String>>
+) -> Result<(), String> {
+    // TODO: Implementacja GPU export
+    // 1. Wczytaj obraz do GPU memory
+    // 2. Zastosuj GPU processing (tone mapping, filters)
+    // 3. Pobierz wynik z GPU
+    // 4. Zapisz do pliku
+    
+    // Tymczasowo fallback na CPU
+    perform_cpu_export(_export_task, _progress_tx)
+}
+
+#[allow(dead_code)]
+/// CPU fallback export
+fn perform_cpu_export(
+    _export_task: ExportTask,
+    _progress_tx: &mpsc::Sender<Result<(), String>>
+) -> Result<(), String> {
+    // TODO: Implementacja CPU export
+    // 1. Wczytaj obraz z cache
+    // 2. Zastosuj CPU processing
+    // 3. Zapisz do pliku
+    
+    // Tymczasowo zwróć sukces
+    Ok(())
+}
+
+/// Export: Convert (EXR -> TIFF/PNG) z GPU acceleration
+pub fn handle_export_convert_gpu(
+    ui_handle: Weak<AppWindow>,
+    _image_cache: ImageCacheType,
+    _current_file_path: CurrentFilePathType,
+    console: ConsoleModel,
+) {
+    if let Some(ui) = ui_handle.upgrade() {
+        // TODO: Implementacja dialogu exportu
+        push_console(&ui, &console, "Export GPU: Convert - funkcja w trakcie implementacji".to_string());
+    }
+}
+
+/// Export: Beauty (PNG16) z GPU acceleration
+pub fn handle_export_beauty_gpu(
+    ui_handle: Weak<AppWindow>,
+    _image_cache: ImageCacheType,
+    _current_file_path: CurrentFilePathType,
+    console: ConsoleModel,
+) {
+    if let Some(ui) = ui_handle.upgrade() {
+        // TODO: Implementacja exportu beauty
+        push_console(&ui, &console, "Export GPU: Beauty - funkcja w trakcie implementacji".to_string());
+    }
+}
+
+/// Export: Channels (PNG16 grayscale) z GPU acceleration
+pub fn handle_export_channels_gpu(
+    ui_handle: Weak<AppWindow>,
+    _image_cache: ImageCacheType,
+    _current_file_path: CurrentFilePathType,
+    console: ConsoleModel,
+) {
+    if let Some(ui) = ui_handle.upgrade() {
+        // TODO: Implementacja exportu kanałów
+        push_console(&ui, &console, "Export GPU: Channels - funkcja w trakcie implementacji".to_string());
+    }
+}
+
+// === FAZA 3: GPU Filters Implementation ===
+
+/// Zastosuj GPU blur do aktualnego obrazu
+pub fn apply_gpu_blur(
+    ui_handle: Weak<AppWindow>,
+    _image_cache: ImageCacheType,
+    blur_type: i32,
+    radius: i32,
+    strength: f32,
+    console: ConsoleModel,
+) {
+    if let Some(ui) = ui_handle.upgrade() {
+        push_console(&ui, &console, format!("[GPU] Applying blur: type={}, radius={}, strength={}", blur_type, radius, strength));
+        
+        // TODO: Implementacja GPU blur
+        // 1. Pobierz aktualny obraz z cache
+        // 2. Wczytaj do GPU memory
+        // 3. Zastosuj blur shader
+        // 4. Pobierz wynik i zaktualizuj preview
+        
+        ui.set_status_text(format!("GPU Blur: type={}, radius={}, strength={}", blur_type, radius, strength).into());
+    }
+}
+
+/// Zastosuj GPU sharpen do aktualnego obrazu
+pub fn apply_gpu_sharpen(
+    ui_handle: Weak<AppWindow>,
+    _image_cache: ImageCacheType,
+    sharpen_type: i32,
+    radius: i32,
+    strength: f32,
+    console: ConsoleModel,
+) {
+    if let Some(ui) = ui_handle.upgrade() {
+        push_console(&ui, &console, format!("[GPU] Applying sharpen: type={}, radius={}, strength={}", sharpen_type, radius, strength));
+        
+        // TODO: Implementacja GPU sharpen
+        // 1. Pobierz aktualny obraz z cache
+        // 2. Wczytaj do GPU memory
+        // 3. Zastosuj sharpen shader
+        // 4. Pobierz wynik i zaktualizuj preview
+        
+        ui.set_status_text(format!("GPU Sharpen: type={}, radius={}, strength={}", sharpen_type, radius, strength).into());
+    }
+}
+
+/// Oblicz GPU histogram dla aktualnego obrazu
+pub fn compute_gpu_histogram(
+    ui_handle: Weak<AppWindow>,
+    _image_cache: ImageCacheType,
+    histogram_type: i32,
+    console: ConsoleModel,
+) {
+    if let Some(ui) = ui_handle.upgrade() {
+        push_console(&ui, &console, format!("[GPU] Computing histogram: type={}", histogram_type));
+        
+        // TODO: Implementacja GPU histogram
+        // 1. Pobierz aktualny obraz z cache
+        // 2. Wczytaj do GPU memory
+        // 3. Zastosuj histogram shader
+        // 4. Pobierz wynik i wyświetl histogram
+        
+        ui.set_status_text(format!("GPU Histogram: type={}", histogram_type).into());
+    }
+}
+
+/// Resetuj filtry GPU do domyślnych wartości
+pub fn reset_gpu_filters(
+    ui_handle: Weak<AppWindow>,
+    console: ConsoleModel,
+) {
+    if let Some(ui) = ui_handle.upgrade() {
+        push_console(&ui, &console, "[GPU] Resetting filters to default values".to_string());
+        
+        // Resetuj wartości do domyślnych
+        ui.set_blur_type(0);        // Gaussian
+        ui.set_blur_radius(8.0);    // 8
+        ui.set_blur_strength(0.5);  // 0.5
+        ui.set_sharpen_type(0);     // Unsharp
+        ui.set_sharpen_radius(1.0); // 1
+        ui.set_sharpen_strength(0.8); // 0.8
+        ui.set_histogram_type(0);   // RGB
+        
+        ui.set_status_text("GPU Filters: reset to defaults".into());
+    }
+}
+
 
 
 

@@ -142,6 +142,26 @@ export component AppWindow inherits Window {
      callback export-beauty();
      callback export-channels();
      
+     // FAZA 3: GPU-accelerated Export callbacks
+     callback export-convert-gpu();
+     callback export-beauty-gpu();
+     callback export-channels-gpu();
+     
+     // FAZA 3: GPU Filters properties
+     in-out property <int> blur-type: 0;        // 0=Gaussian, 1=Box, 2=Motion
+     in-out property <float> blur-radius: 8.0;  // 1-32
+     in-out property <float> blur-strength: 0.5; // 0.0-1.0
+     in-out property <int> sharpen-type: 0;     // 0=Unsharp, 1=HighPass, 2=Edge
+     in-out property <float> sharpen-radius: 1.0; // 1-16
+     in-out property <float> sharpen-strength: 0.8; // 0.0-2.0
+     in-out property <int> histogram-type: 0;   // 0=RGB, 1=Luminance, 2=Channels
+     
+     // FAZA 3: GPU Filters callbacks
+     callback reset-gpu-filters();
+     callback apply-gpu-blur(int, int, float);
+     callback apply-gpu-sharpen(int, int, float);
+     callback compute-gpu-histogram(int);
+     
      // GPU status callback
      callback gpu-status-changed();
      callback check-gpu-availability();
@@ -670,6 +690,37 @@ export component AppWindow inherits Window {
                      }
                     
                  }
+
+                // FAZA 3: Zaawansowane tone mapping
+                HorizontalBox {
+                    width: parent.width;
+                    height: 25px;
+                    spacing: 12px;
+                    // Filmic
+                     PrzyciskAkcji {
+                         text: "Filmic";
+                         height: 22px;
+                         width: (parent.width - controls_inset*2 - 24px) / 3;
+                         highlighted: root.tonemap-mode == 3;
+                         clicked => { root.tonemap-mode = 3; root.tonemap-mode-changed(3); }
+                     }
+                     // Hable
+                     PrzyciskAkcji {
+                         text: "Hable";
+                         height: 22px;
+                         width: (parent.width - controls_inset*2 - 24px) / 3;
+                         highlighted: root.tonemap-mode == 4;
+                         clicked => { root.tonemap-mode = 4; root.tonemap-mode-changed(4); }
+                     }
+                     // Local Adaptation
+                     PrzyciskAkcji {
+                         text: "Local";
+                         height: 22px;
+                         width: (parent.width - controls_inset*2 - 24px) / 3;
+                         highlighted: root.tonemap-mode == 5;
+                         clicked => { root.tonemap-mode = 5; root.tonemap-mode-changed(5); }
+                     }
+                }
                 
                 HorizontalBox {
                     width: parent.width;
@@ -695,6 +746,212 @@ export component AppWindow inherits Window {
                 Rectangle {
                     height: 2px;
                 }
+                
+                // FAZA 3: GPU Filters section
+                HorizontalBox {
+                    width: parent.width;
+                    spacing: 0px;
+                    Text {
+                        text: "GPU Filters";
+                        color: Kolory.tekst;
+                        font-size: 13px;
+                        font-family: "Geist";
+                        font-weight: 300;
+                        horizontal-alignment: left;
+                        vertical-alignment: center;
+                    }
+                }
+
+                // GPU Blur z kontrolkami
+                VerticalBox { width: parent.width; spacing: 2px;
+                    Text { 
+                        text: "GPU Blur"; 
+                        color: Kolory.tekst; 
+                        font-size: 12px; 
+                        font-weight: 300;
+                        horizontal-alignment: left;
+                    }
+                    HorizontalBox { width: parent.width; height: 20px; spacing: 4px;
+                        Text { text: "Typ:"; color: Kolory.tekst_slabszy; font-size: 11px; width: 25px; }
+                        HorizontalBox { spacing: 2px;
+                            PrzyciskAkcji { 
+                                text: "Gaussian"; 
+                                height: 18px; 
+                                width: 45px; 
+                                highlighted: root.blur-type == 0;
+                                clicked => { root.blur-type = 0; }
+                            }
+                            PrzyciskAkcji { 
+                                text: "Box"; 
+                                height: 18px; 
+                                width: 30px; 
+                                highlighted: root.blur-type == 1;
+                                clicked => { root.blur-type = 1; }
+                            }
+                            PrzyciskAkcji { 
+                                text: "Motion"; 
+                                height: 18px; 
+                                width: 40px; 
+                                highlighted: root.blur-type == 2;
+                                clicked => { root.blur-type = 2; }
+                            }
+                        }
+                    }
+                    ParameterSlider {
+                        label-text: "Radius:";
+                        value: root.blur-radius;
+                        min-value: 1.0;
+                        max-value: 32.0;
+                        slider-width: parent.width - controls_inset*2;
+                        value-changed(new-value) => { root.blur-radius = new-value; }
+                    }
+                    ParameterSlider {
+                        label-text: "Siła:";
+                        value: root.blur-strength;
+                        min-value: 0.0;
+                        max-value: 1.0;
+                        slider-width: parent.width - controls_inset*2;
+                        value-changed(new-value) => { root.blur-strength = new-value; }
+                    }
+                    HorizontalBox { width: parent.width; height: 25px; spacing: 4px;
+                        PrzyciskAkcji { 
+                            text: "Zastosuj Blur"; 
+                            height: 22px; 
+                            width: 80px; 
+                            clicked => { apply-gpu-blur(root.blur-type, root.blur-radius, root.blur-strength); } 
+                        }
+                        PrzyciskAkcji { 
+                            text: "Reset"; 
+                            height: 22px; 
+                            width: 50px; 
+                            clicked => { reset-gpu-filters(); } 
+                        }
+                    }
+                }
+
+                // GPU Sharpen z kontrolkami
+                VerticalBox { width: parent.width; spacing: 2px;
+                    Text { 
+                        text: "GPU Sharpen"; 
+                        color: Kolory.tekst; 
+                        font-size: 12px; 
+                        font-weight: 300;
+                        horizontal-alignment: left;
+                    }
+                    HorizontalBox { width: parent.width; height: 20px; spacing: 4px;
+                        Text { text: "Typ:"; color: Kolory.tekst_slabszy; font-size: 11px; width: 25px; }
+                        HorizontalBox { spacing: 2px;
+                            PrzyciskAkcji { 
+                                text: "Unsharp"; 
+                                height: 18px; 
+                                width: 50px; 
+                                highlighted: root.sharpen-type == 0;
+                                clicked => { root.sharpen-type = 0; }
+                            }
+                            PrzyciskAkcji { 
+                                text: "HighPass"; 
+                                height: 18px; 
+                                width: 50px; 
+                                highlighted: root.sharpen-type == 1;
+                                clicked => { root.sharpen-type = 1; }
+                            }
+                            PrzyciskAkcji { 
+                                text: "Edge"; 
+                                height: 18px; 
+                                width: 40px; 
+                                highlighted: root.sharpen-type == 2;
+                                clicked => { root.sharpen-type = 2; }
+                            }
+                        }
+                    }
+                    ParameterSlider {
+                        label-text: "Radius:";
+                        value: root.sharpen-radius;
+                        min-value: 1.0;
+                        max-value: 16.0;
+                        slider-width: parent.width - controls_inset*2;
+                        value-changed(new-value) => { root.sharpen-radius = new-value; }
+                    }
+                    ParameterSlider {
+                        label-text: "Siła:";
+                        value: root.sharpen-strength;
+                        min-value: 0.0;
+                        max-value: 2.0;
+                        slider-width: parent.width - controls_inset*2;
+                        value-changed(new-value) => { root.sharpen-strength = new-value; }
+                    }
+                    HorizontalBox { width: parent.width; height: 25px; spacing: 4px;
+                        PrzyciskAkcji { 
+                            text: "Zastosuj Sharpen"; 
+                            height: 22px; 
+                            width: 90px; 
+                            clicked => { apply-gpu-sharpen(root.sharpen-type, root.sharpen-radius, root.sharpen-strength); } 
+                        }
+                        PrzyciskAkcji { 
+                            text: "Reset"; 
+                            height: 22px; 
+                            width: 50px; 
+                            clicked => { reset-gpu-filters(); } 
+                        }
+                    }
+                }
+
+                // GPU Histogram z kontrolkami
+                VerticalBox { width: parent.width; spacing: 2px;
+                    Text { 
+                        text: "GPU Histogram"; 
+                        color: Kolory.tekst; 
+                        font-size: 12px; 
+                        font-weight: 300;
+                        horizontal-alignment: left;
+                    }
+                    HorizontalBox { width: parent.width; height: 20px; spacing: 4px;
+                        Text { text: "Typ:"; color: Kolory.tekst_slabszy; font-size: 11px; width: 25px; }
+                        HorizontalBox { spacing: 2px;
+                            PrzyciskAkcji { 
+                                text: "RGB"; 
+                                height: 18px; 
+                                width: 35px; 
+                                highlighted: root.histogram-type == 0;
+                                clicked => { root.histogram-type = 0; }
+                            }
+                            PrzyciskAkcji { 
+                                text: "Luminance"; 
+                                height: 18px; 
+                                width: 60px; 
+                                highlighted: root.histogram-type == 1;
+                                clicked => { root.histogram-type = 1; }
+                            }
+                            PrzyciskAkcji { 
+                                text: "Channels"; 
+                                height: 18px; 
+                                width: 55px; 
+                                highlighted: root.histogram-type == 2;
+                                clicked => { root.histogram-type = 2; }
+                            }
+                        }
+                    }
+                    HorizontalBox { width: parent.width; height: 25px; spacing: 4px;
+                        PrzyciskAkcji { 
+                            text: "Oblicz Histogram"; 
+                            height: 22px; 
+                            width: 100px; 
+                            clicked => { compute-gpu-histogram(root.histogram-type); } 
+                        }
+                        PrzyciskAkcji { 
+                            text: "Reset"; 
+                            height: 22px; 
+                            width: 50px; 
+                            clicked => { reset-gpu-filters(); } 
+                        }
+                    }
+                }
+
+                // Spacer
+                Rectangle {
+                    height: 2px;
+                }
+                
                 // Export section
                 HorizontalBox {
                     width: parent.width;
@@ -723,6 +980,19 @@ export component AppWindow inherits Window {
                 // Export Channels: PNG16 grayscale per channel
                 HorizontalBox { width: parent.width; height: 25px; spacing: 0px;
                     PrzyciskAkcji { text: "Export prefix"; height: 25px; width: parent.width - controls_inset*2; clicked => { export-channels(); } }
+                }
+
+                // FAZA 3: GPU-accelerated Export
+                HorizontalBox { width: parent.width; height: 25px; spacing: 0px;
+                    PrzyciskAkcji { text: "Export All16 GPU"; height: 25px; width: parent.width - controls_inset*2; clicked => { export-convert-gpu(); } }
+                }
+
+                HorizontalBox { width: parent.width; height: 25px; spacing: 0px;
+                    PrzyciskAkcji { text: "Export default GPU"; height: 25px; width: parent.width - controls_inset*2; clicked => { export-beauty-gpu(); } }
+                }
+
+                HorizontalBox { width: parent.width; height: 25px; spacing: 0px;
+                    PrzyciskAkcji { text: "Export prefix GPU"; height: 25px; width: parent.width - controls_inset*2; clicked => { export-channels-gpu(); } }
                 }
             }
 

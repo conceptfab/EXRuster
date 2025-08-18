@@ -598,6 +598,8 @@ struct ParamsStd140 {
     tonemap_mode: u32,
     width: u32,
     height: u32,
+    // FAZA 3: Nowe parametry tone mapping
+    local_adaptation_radius: u32,
     _pad0: u32,
     _pad1: [u32; 2],
     // mat3x3 w std140: 3 kolumny vec3 z krokiem 16 bajtów → reprezentujemy jako 3 vec4
@@ -657,6 +659,8 @@ fn gpu_process_rgba_f32_to_rgba8(
         tonemap_mode,
         width,
         height,
+        // FAZA 3: Nowe parametry tone mapping
+        local_adaptation_radius: 16, // Domyślny promień dla local adaptation
         _pad0: 0,
         _pad1: [0; 2],
         color_matrix: [
