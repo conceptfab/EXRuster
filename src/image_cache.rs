@@ -546,19 +546,6 @@ impl ImageCache {
 
 // GPU functions removed - using CPU-only processing
 
-// GPU processing removed - function disabled
-fn gpu_process_rgba_f32_to_rgba8(
-    _pixels: &[f32],
-    _width: u32,
-    _height: u32,
-    _exposure: f32,
-    _gamma: f32,
-    _tonemap_mode: u32,
-    _color_matrix: Option<Mat3>,
-) -> anyhow::Result<Vec<u8>> {
-    anyhow::bail!("GPU processing disabled - use CPU fallback");
-}
-
 
 
 pub(crate) fn extract_layers_info(path: &PathBuf) -> anyhow::Result<Vec<LayerInfo>> {
