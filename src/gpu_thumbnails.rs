@@ -1,7 +1,6 @@
 use anyhow::Result;
-use glam::{Mat3, Vec3};
+use glam::Mat3;
 use crate::gpu_context::GpuContext;
-use wgpu::BufferUsages;
 use bytemuck::{Pod, Zeroable};
 
 /// Parametry do GPU thumbnail generation - alignment zgodny z WGSL std140 layout
