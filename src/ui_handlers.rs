@@ -8,14 +8,47 @@ use crate::image_cache::ImageCache;
 use crate::file_operations::{open_file_dialog, get_file_name};
 use std::rc::Rc;
 use crate::exr_metadata;
-use bytemuck;
+// Removed unused import: bytemuck
 use crate::progress::{ProgressSink, UiProgress};
 use crate::utils::{get_channel_info, normalize_channel_name, human_size};
-use anyhow;
+use anyhow::{Result, Context};
 // Usunięte nieużywane importy związane z exportem
 // Import komponentów Slint
 use crate::AppWindow;
 use crate::ThumbItem;
+
+/// Centralny stan aplikacji - zastępuje globalne static variables
+/// TODO: Implement full migration from global statics to dependency injection
+#[allow(dead_code)]
+pub struct AppState {
+    pub item_to_layer: HashMap<String, String>,
+    pub display_to_real_layer: HashMap<String, String>,
+    pub gpu_context: Option<Arc<Mutex<Option<crate::gpu_context::GpuContext>>>>,
+    pub gpu_acceleration_enabled: bool,
+    pub current_file_path: Option<PathBuf>,
+    pub last_preview_log: Option<Instant>,
+}
+
+#[allow(dead_code)]
+impl AppState {
+    pub fn new() -> Self {
+        Self {
+            item_to_layer: HashMap::new(),
+            display_to_real_layer: HashMap::new(),
+            gpu_context: None,
+            gpu_acceleration_enabled: false,
+            current_file_path: None,
+            last_preview_log: None,
+        }
+    }
+    
+    /// Synchronizuje stan z globalnymi zmiennymi (przejściowe rozwiązanie)
+    pub fn sync_with_globals(&mut self) {
+        // W przyszłości: migracja krok po kroku z globalnych na dependency injection
+        self.gpu_acceleration_enabled = is_gpu_acceleration_enabled();
+        // TODO: Implement proper sync with current_file_path global
+    }
+}
 
 pub type ImageCacheType = Arc<Mutex<Option<ImageCache>>>;
 pub type CurrentFilePathType = Arc<Mutex<Option<PathBuf>>>;
@@ -40,6 +73,16 @@ static LAST_PREVIEW_LOG: std::sync::Mutex<Option<Instant>> = std::sync::Mutex::n
 
 
 
+/// Standardowy wzorzec dla bezpiecznego dostępu do Mutex z kontekstem błędu
+/// TODO: Replace lock_or_recover usage with this function for better error handling
+#[allow(dead_code)]
+#[inline]
+pub(crate) fn safe_lock<'a, T>(mutex: &'a Arc<Mutex<T>>, context: &'static str) -> Result<MutexGuard<'a, T>> {
+    mutex.lock()
+        .map_err(|_| anyhow::anyhow!("Mutex poisoned: {}", context))
+}
+
+/// Kompatybilność wsteczna - używa panic recovery
 #[inline]
 pub(crate) fn lock_or_recover<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     match m.lock() {
@@ -772,27 +815,23 @@ fn load_metadata(
     path: &Path,
     console: &ConsoleModel,
 ) -> Result<(), anyhow::Error> {
-    // Zbuduj i wyświetl metadane w zakładce Meta
-    match exr_metadata::read_and_group_metadata(path) {
-        Ok(meta) => {
-            // Tekstowa wersja (zostawiona jako fallback)
-            let lines = exr_metadata::build_ui_lines(&meta);
-            let text = lines.join("\n");
-            ui.set_meta_text(text.into());
-            // Tabelaryczna wersja 2 kolumny
-            let rows = exr_metadata::build_ui_rows(&meta);
-            let (keys, vals): (Vec<_>, Vec<_>) = rows.into_iter().unzip();
-            ui.set_meta_table_keys(ModelRc::new(VecModel::from(keys.into_iter().map(SharedString::from).collect::<Vec<_>>())));
-            ui.set_meta_table_values(ModelRc::new(VecModel::from(vals.into_iter().map(SharedString::from).collect::<Vec<_>>())));
-            push_console(ui, console, format!("[meta] layers: {}", meta.layers.len()));
-            Ok(())
-        }
-        Err(e) => {
-            ui.set_meta_text(format!("Błąd odczytu metadanych: {}", e).into());
-            push_console(ui, console, format!("[error][meta] {}", e));
-            Err(e)
-        }
-    }
+    // Zbuduj i wyświetl metadane w zakładce Meta z lepszą obsługą błędów
+    let meta = exr_metadata::read_and_group_metadata(path)
+        .with_context(|| format!("Failed to read EXR metadata from: {}", path.display()))?;
+    
+    // Tekstowa wersja (zostawiona jako fallback)
+    let lines = exr_metadata::build_ui_lines(&meta);
+    let text = lines.join("\n");
+    ui.set_meta_text(text.into());
+    
+    // Tabelaryczna wersja 2 kolumny
+    let rows = exr_metadata::build_ui_rows(&meta);
+    let (keys, vals): (Vec<_>, Vec<_>) = rows.into_iter().unzip();
+    ui.set_meta_table_keys(ModelRc::new(VecModel::from(keys.into_iter().map(SharedString::from).collect::<Vec<_>>())));
+    ui.set_meta_table_values(ModelRc::new(VecModel::from(vals.into_iter().map(SharedString::from).collect::<Vec<_>>())));
+    push_console(ui, console, format!("[meta] layers: {}", meta.layers.len()));
+    
+    Ok(())
 }
 
 // Ulepszona funkcja obsługi ekspozycji I gamma z throttling
@@ -1018,178 +1057,7 @@ pub fn set_global_gpu_acceleration(enabled: bool) {
 
 // === FAZA 3: GPU-accelerated Export ===
 
-use std::sync::mpsc;
-use std::thread;
-use image::{Rgba, RgbaImage};
-use std::fs;
-
-#[allow(dead_code)]
-/// Struktura zadania exportu
-#[derive(Debug)]
-pub struct ExportTask {
-    pub task_id: String,
-    pub source_path: PathBuf,
-    pub output_path: PathBuf,
-    pub format: ExportFormat,
-    pub quality: u8,
-    pub use_gpu: bool,
-}
-
-#[allow(dead_code)]
-#[derive(Debug, Clone)]
-pub enum ExportFormat {
-    PNG16,
-    TIFF16,
-    JPEG,
-    EXR,
-}
-
-#[allow(dead_code)]
-impl ExportFormat {
-    pub fn extension(&self) -> &'static str {
-        match self {
-            ExportFormat::PNG16 => "png",
-            ExportFormat::TIFF16 => "tiff",
-            ExportFormat::JPEG => "jpg",
-            ExportFormat::EXR => "exr",
-        }
-    }
-    
-    pub fn mime_type(&self) -> &'static str {
-        match self {
-            ExportFormat::PNG16 => "image/png",
-            ExportFormat::TIFF16 => "image/tiff",
-            ExportFormat::JPEG => "image/jpeg",
-            ExportFormat::EXR => "image/x-exr",
-        }
-    }
-}
-
-#[allow(dead_code)]
-/// Async export z GPU processing
-pub fn handle_async_export(
-    ui_handle: Weak<AppWindow>,
-    image_cache: ImageCacheType,
-    export_task: ExportTask,
-    console: ConsoleModel,
-) {
-    let (tx, rx) = mpsc::channel();
-    
-    // Uruchom export w osobnym wątku
-    thread::spawn(move || {
-        let result = perform_export(image_cache, export_task);
-        let _ = tx.send(result);
-    });
-    
-    // Sprawdź wyniki w głównym wątku
-    let ui_handle_clone = ui_handle.clone();
-    let timer = Timer::default();
-    timer.start(TimerMode::Repeated, Duration::from_millis(100), move || {
-        if let Ok(result) = rx.try_recv() {
-            match result {
-                Ok(_) => {
-                    if let Some(ui) = ui_handle_clone.upgrade() {
-                        push_console(&ui, &console, "Export zakończony pomyślnie".to_string());
-                    }
-                }
-                Err(e) => {
-                    if let Some(ui) = ui_handle_clone.upgrade() {
-                        push_console(&ui, &console, format!("Błąd exportu: {}", e));
-                    }
-                }
-            }
-            // Timer automatycznie się zatrzyma po zakończeniu
-        }
-    });
-}
-
-#[allow(dead_code)]
-/// Wykonuje export obrazu
-fn perform_export(
-    image_cache: ImageCacheType,
-    export_task: ExportTask,
-) -> anyhow::Result<()> {
-    // Wczytaj obraz z cache
-    let guard = image_cache.lock().map_err(|e| anyhow::anyhow!("Failed to lock image cache: {}", e))?;
-    let cache = guard.as_ref().ok_or_else(|| anyhow::anyhow!("Image cache not initialized"))?;
-    
-    // Użyj danych z cache (jeśli są dostępne)
-    let (width, height, pixels) = if !cache.raw_pixels.is_empty() {
-        (cache.width, cache.height, &cache.raw_pixels)
-    } else {
-        // Fallback: spróbuj użyć MIP levels
-        if let Some(mip_level) = cache.mip_levels.first() {
-            (mip_level.width, mip_level.height, &mip_level.pixels)
-        } else {
-            anyhow::bail!("No image data available in cache");
-        }
-    };
-    
-    // Konwertuj na format odpowiedni dla biblioteki image
-    let mut rgba_image = RgbaImage::new(width, height);
-    
-    for y in 0..height {
-        for x in 0..width {
-            let idx = ((y * width + x) * 4) as usize;
-            if idx + 3 < pixels.len() {
-                let r = (pixels[idx] * 255.0).clamp(0.0, 255.0) as u8;
-                let g = (pixels[idx + 1] * 255.0).clamp(0.0, 255.0) as u8;
-                let b = (pixels[idx + 2] * 255.0).clamp(0.0, 255.0) as u8;
-                let a = (pixels[idx + 3] * 255.0).clamp(0.0, 255.0) as u8;
-                rgba_image.put_pixel(x, y, Rgba([r, g, b, a]));
-            }
-        }
-    }
-    
-    // Wykonaj export w zależności od formatu
-    match export_task.format {
-        ExportFormat::PNG16 => {
-            let output_path = export_task.output_path.with_extension("png");
-            rgba_image.save_with_format(&output_path, image::ImageFormat::Png)?;
-        }
-        ExportFormat::TIFF16 => {
-            let output_path = export_task.output_path.with_extension("tiff");
-            rgba_image.save_with_format(&output_path, image::ImageFormat::Tiff)?;
-        }
-        ExportFormat::JPEG => {
-            let output_path = export_task.output_path.with_extension("jpg");
-            let mut output_file = fs::File::create(&output_path)?;
-            let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut output_file, export_task.quality);
-            encoder.encode(&rgba_image, width, height, image::ColorType::Rgba8.into())?;
-        }
-        ExportFormat::EXR => {
-            // Dla EXR użyj specjalnej biblioteki exr
-            let output_path = export_task.output_path.with_extension("exr");
-            
-            // Konwertuj RGBA8 na f32 dla EXR (HDR)
-            let mut exr_pixels = Vec::with_capacity((width * height * 4) as usize);
-            for y in 0..height {
-                for x in 0..width {
-                    let idx = ((y * width + x) * 4) as usize;
-                    if idx + 3 < pixels.len() {
-                        // Konwertuj z [0,1] na [0,inf) dla HDR
-                        let r = pixels[idx];
-                        let g = pixels[idx + 1];
-                        let b = pixels[idx + 2];
-                        let a = pixels[idx + 3];
-                        exr_pixels.extend_from_slice(&[r, g, b, a]);
-                    }
-                }
-            }
-            
-            // Użyj prostszego podejścia - zapisz jako raw f32 data
-            // TODO: Implement proper EXR export when exr crate supports it
-            // Na razie zapisz jako raw f32 data z rozszerzeniem .exr
-            let mut file = fs::File::create(&output_path)?;
-            use std::io::Write;
-            // Konwertuj f32 na bytes
-            let bytes = bytemuck::cast_slice(&exr_pixels);
-            file.write_all(bytes)?;
-        }
-    }
-    
-    Ok(())
-}
+// Export functionality removed as per optimization analysis
 
 
 
