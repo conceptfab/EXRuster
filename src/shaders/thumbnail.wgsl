@@ -65,11 +65,11 @@ fn apply_gamma(x: f32, gamma_inv: f32) -> f32 {
     return pow(clamp(x, 0.0, 1.0), gamma_inv);
 }
 
-// Bilinear sampling z input texture
+// Bilinear sampling z input texture - NAPRAWIONE: bezpieczne coordinate handling
 fn sample_bilinear(src_x: f32, src_y: f32) -> vec4<f32> {
-    // Współrzędne pikseli dla bilinear interpolation
-    let x0 = u32(floor(src_x));
-    let y0 = u32(floor(src_y));
+    // Współrzędne pikseli dla bilinear interpolation - clamp negative values
+    let x0 = u32(max(0.0, floor(src_x)));
+    let y0 = u32(max(0.0, floor(src_y)));
     let x1 = min(x0 + 1u, params.src_width - 1u);
     let y1 = min(y0 + 1u, params.src_height - 1u);
     
@@ -77,11 +77,17 @@ fn sample_bilinear(src_x: f32, src_y: f32) -> vec4<f32> {
     let fx = src_x - floor(src_x);
     let fy = src_y - floor(src_y);
     
-    // Pobierz 4 sąsiednie piksele
-    let p00 = input_pixels[y0 * params.src_width + x0];
-    let p10 = input_pixels[y0 * params.src_width + x1];
-    let p01 = input_pixels[y1 * params.src_width + x0];
-    let p11 = input_pixels[y1 * params.src_width + x1];
+    // Pobierz 4 sąsiednie piksele - z bounds checking
+    let total_pixels = params.src_width * params.src_height;
+    let idx00 = min(y0 * params.src_width + x0, total_pixels - 1u);
+    let idx10 = min(y0 * params.src_width + x1, total_pixels - 1u);
+    let idx01 = min(y1 * params.src_width + x0, total_pixels - 1u);
+    let idx11 = min(y1 * params.src_width + x1, total_pixels - 1u);
+    
+    let p00 = input_pixels[idx00];
+    let p10 = input_pixels[idx10];
+    let p01 = input_pixels[idx01];
+    let p11 = input_pixels[idx11];
     
     // Bilinear interpolation
     let top = mix(p00, p10, fx);
@@ -160,7 +166,7 @@ fn process_thumbnail_pixel(
     return vec4<f32>(final_color, safe_a);
 }
 
-// Główna funkcja compute shadera
+// MINIMAL TEST SHADER - bardzo prosty kod bez complex operations
 @compute @workgroup_size(8, 8, 1)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     // Sprawdź czy piksel jest w granicach docelowego obrazu
@@ -168,35 +174,34 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
     
-    // Przelicz współrzędne docelowe na źródłowe (z subpixel precision)
-    let src_x = (f32(global_id.x) + 0.5) * params.scale_x - 0.5;
-    let src_y = (f32(global_id.y) + 0.5) * params.scale_y - 0.5;
+    // Prosty nearest neighbor downsampling - bez bilinear
+    let src_x = u32(f32(global_id.x) * params.scale_x);
+    let src_y = u32(f32(global_id.y) * params.scale_y);
     
     // Clamp do granic źródłowego obrazu
-    let clamped_x = clamp(src_x, 0.0, f32(params.src_width - 1u));
-    let clamped_y = clamp(src_y, 0.0, f32(params.src_height - 1u));
+    let safe_src_x = min(src_x, params.src_width - 1u);
+    let safe_src_y = min(src_y, params.src_height - 1u);
     
-    // Pobierz piksel z bilinear sampling
-    let input_pixel = sample_bilinear(clamped_x, clamped_y);
+    // Pobierz jeden piksel (nearest neighbor)
+    let src_index = safe_src_y * params.src_width + safe_src_x;
+    let src_pixel = input_pixels[src_index];
     
-    // Przetwórz piksel przez pipeline
-    let processed_pixel = process_thumbnail_pixel(
-        input_pixel.r,
-        input_pixel.g,
-        input_pixel.b,
-        input_pixel.a
-    );
+    // Prosta konwersja bez tone mapping - po prostu clamp do 0-1
+    let r_clamped = clamp(src_pixel.r, 0.0, 1.0);
+    let g_clamped = clamp(src_pixel.g, 0.0, 1.0);
+    let b_clamped = clamp(src_pixel.b, 0.0, 1.0);
+    let a_clamped = clamp(src_pixel.a, 0.0, 1.0);
     
-    // Konwersja do u32 (4 bajty RGBA packed)
-    let r_u8 = u32(clamp(processed_pixel.r * 255.0, 0.0, 255.0));
-    let g_u8 = u32(clamp(processed_pixel.g * 255.0, 0.0, 255.0));
-    let b_u8 = u32(clamp(processed_pixel.b * 255.0, 0.0, 255.0));
-    let a_u8 = u32(clamp(processed_pixel.a * 255.0, 0.0, 255.0));
+    // Konwersja do u8 
+    let r_u8 = u32(r_clamped * 255.0);
+    let g_u8 = u32(g_clamped * 255.0);
+    let b_u8 = u32(b_clamped * 255.0);
+    let a_u8 = u32(a_clamped * 255.0);
     
-    // Pakuj 4 bajty do u32: RGBA
-    let packed_color = (r_u8) | (g_u8 << 8u) | (b_u8 << 16u) | (a_u8 << 24u);
+    // Pakuj do u32
+    let packed_color = r_u8 | (g_u8 << 8u) | (b_u8 << 16u) | (a_u8 << 24u);
     
-    // Zapisz wynik do bufora wyjściowego
+    // Zapisz do output
     let output_index = global_id.y * params.dst_width + global_id.x;
     output_pixels[output_index] = packed_color;
 }

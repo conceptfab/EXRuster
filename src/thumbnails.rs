@@ -264,14 +264,15 @@ fn generate_single_exr_thumbnail_gpu(
     )?;
     
     // Konwertuj bytes na Vec<f32> dla kompatybilności
+    // Shader pakuje jako: r | (g << 8) | (b << 16) | (a << 24)
     let thumbnail_pixels: Vec<f32> = thumbnail_bytes
         .chunks_exact(4)
         .map(|chunk| {
             let rgba = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-            let r = ((rgba >> 24) & 0xFF) as f32 / 255.0;
-            let g = ((rgba >> 16) & 0xFF) as f32 / 255.0;
-            let b = ((rgba >> 8) & 0xFF) as f32 / 255.0;
-            let a = (rgba & 0xFF) as f32 / 255.0;
+            let r = (rgba & 0xFF) as f32 / 255.0;         // Najmłodsze bajty
+            let g = ((rgba >> 8) & 0xFF) as f32 / 255.0;
+            let b = ((rgba >> 16) & 0xFF) as f32 / 255.0;
+            let a = ((rgba >> 24) & 0xFF) as f32 / 255.0; // Najstarsze bajty
             vec![r, g, b, a]
         })
         .flatten()

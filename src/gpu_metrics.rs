@@ -238,7 +238,7 @@ mod tests {
         
         metrics.update_buffer_pool_utilization(0.75);
         
-        assert_eq!(metrics.buffer_pool_utilization.load(Ordering::Relaxed), 0.75);
+        assert_eq!(metrics.buffer_pool_utilization.load(Ordering::Relaxed), 750);
     }
 
     #[test]

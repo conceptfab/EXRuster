@@ -289,7 +289,6 @@ impl AdaptiveGpuScheduler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
 
     #[test]
     fn test_scheduler_creation() {
@@ -297,7 +296,7 @@ mod tests {
         let scheduler = AdaptiveGpuScheduler::new(metrics);
         
         assert!(scheduler.gpu_available.load(Ordering::Relaxed));
-        assert_eq!(scheduler.current_load.load(Ordering::Relaxed), 0.0);
+        assert_eq!(scheduler.current_load.load(Ordering::Relaxed), 0);
     }
 
     #[test]
@@ -318,14 +317,14 @@ mod tests {
         let scheduler = AdaptiveGpuScheduler::new(metrics);
         
         scheduler.update_gpu_load(0.75);
-        assert_eq!(scheduler.current_load.load(Ordering::Relaxed), 0.75);
+        assert_eq!(scheduler.current_load.load(Ordering::Relaxed), 750);
         
         // Test clamp'owania
         scheduler.update_gpu_load(1.5);
-        assert_eq!(scheduler.current_load.load(Ordering::Relaxed), 1.0);
+        assert_eq!(scheduler.current_load.load(Ordering::Relaxed), 1000);
         
         scheduler.update_gpu_load(-0.5);
-        assert_eq!(scheduler.current_load.load(Ordering::Relaxed), 0.0);
+        assert_eq!(scheduler.current_load.load(Ordering::Relaxed), 0);
     }
 
     #[test]
@@ -334,10 +333,10 @@ mod tests {
         let scheduler = AdaptiveGpuScheduler::new(metrics);
         
         scheduler.update_cpu_benchmark(150.0);
-        assert_eq!(scheduler.cpu_benchmark.load(Ordering::Relaxed), 150.0);
+        assert_eq!(scheduler.cpu_benchmark.load(Ordering::Relaxed), 150);
         
         scheduler.update_gpu_benchmark(300.0);
-        assert_eq!(scheduler.gpu_benchmark.load(Ordering::Relaxed), 300.0);
+        assert_eq!(scheduler.gpu_benchmark.load(Ordering::Relaxed), 300);
     }
 
     #[test]
@@ -390,7 +389,7 @@ mod tests {
         // Reset
         scheduler.reset();
         
-        assert_eq!(scheduler.current_load.load(Ordering::Relaxed), 0.0);
-        assert_eq!(scheduler.cpu_benchmark.load(Ordering::Relaxed), 100.0);
+        assert_eq!(scheduler.current_load.load(Ordering::Relaxed), 0);
+        assert_eq!(scheduler.cpu_benchmark.load(Ordering::Relaxed), 100);
     }
 }
