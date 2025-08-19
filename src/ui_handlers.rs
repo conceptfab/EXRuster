@@ -995,15 +995,41 @@ pub fn create_layers_model(
 
 // Funkcja handle_export_channels została usunięta
 
-/// Aktualizuje status GPU w interfejsie użytkownika
-pub fn update_gpu_status(ui: &AppWindow, _gpu_context: &std::sync::Arc<std::sync::Mutex<Option<()>>>) {
-    ui.set_gpu_status_text("GPU: wgpu removed, preparing for CUDA".into());
+/// Aktualizuje status CUDA w interfejsie użytkownika
+pub fn update_cuda_status(ui: &AppWindow, cuda_context: &crate::cuda_context::CudaContextType) {
+    if let Ok(guard) = cuda_context.lock() {
+        if let Some(ref context) = *guard {
+            let device_info = context.get_device_info();
+            let status_text = format!("CUDA: {} - dostępny", device_info.name);
+            ui.set_gpu_status_text(status_text.into());
+        } else {
+            ui.set_gpu_status_text("CUDA: niedostępny (tryb CPU)".into());
+        }
+    } else {
+        ui.set_gpu_status_text("CUDA: błąd dostępu".into());
+    }
 }
 
-/// Sprawdza czy GPU jest dostępne i aktualizuje status
-pub fn check_gpu_availability(ui: &AppWindow, _gpu_context: &std::sync::Arc<std::sync::Mutex<Option<()>>>) -> bool {
-    ui.set_gpu_status_text("GPU: wgpu removed, preparing for CUDA".into());
-    false
+/// Sprawdza czy CUDA jest dostępne i aktualizuje status
+pub fn check_cuda_availability(ui: &AppWindow, cuda_context: &crate::cuda_context::CudaContextType) -> bool {
+    if let Ok(guard) = cuda_context.lock() {
+        if let Some(ref context) = *guard {
+            if context.is_available() {
+                let device_info = context.get_device_info();
+                ui.set_gpu_status_text(format!("CUDA: {} - aktywny", device_info.name).into());
+                return true;
+            } else {
+                ui.set_gpu_status_text("CUDA: błąd urządzenia".into());
+                return false;
+            }
+        } else {
+            ui.set_gpu_status_text("CUDA: niedostępny (tryb CPU)".into());
+            return false;
+        }
+    } else {
+        ui.set_gpu_status_text("CUDA: błąd dostępu".into());
+        return false;
+    }
 }
 
 // GPU context setter removed - CUDA will be added here

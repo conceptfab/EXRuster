@@ -22,7 +22,7 @@ rayon = "1.11"
 num_cpus = "1.17"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "hdr", "tiff", "webp", "bmp", "ico", "pnm", "tga", "dds", "exr"] }
 # wgpu removed - preparing for CUDA
-# pollster removed with wgpu
+pollster = "0.4.0"  # For async CUDA operations
 # bytemuck removed with wgpu
 instant = "0.1"
 tiff = "0.10.0"
