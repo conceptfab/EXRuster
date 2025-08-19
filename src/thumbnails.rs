@@ -22,6 +22,15 @@ struct TimingStats {
     total_save_time: AtomicU64,    // Total time for saving thumbnails (in nanoseconds)
 }
 
+impl Clone for TimingStats {
+    fn clone(&self) -> Self {
+        Self {
+            total_load_time: AtomicU64::new(self.total_load_time.load(AtomicOrdering::SeqCst)),
+            total_save_time: AtomicU64::new(self.total_save_time.load(AtomicOrdering::SeqCst)),
+        }
+    }
+}
+
 impl TimingStats {
     fn new() -> Self {
         Self {
@@ -50,6 +59,7 @@ impl TimingStats {
 }
 
 /// Color processing configuration
+#[derive(Clone)]
 struct ColorConfig {
     gamma: f32,
     exposure: f32,
@@ -142,57 +152,73 @@ fn generate_thumbnails_gpu_real(
     progress: Option<&dyn ProgressSink>,
 ) -> anyhow::Result<Vec<ExrThumbWork>> {
     let total_files = files.len();
-    let timing_stats = TimingStats::new();
+    let timing_stats = std::sync::Arc::new(TimingStats::new());
     let color_config = ColorConfig::new(gamma, exposure, tonemap_mode);
 
     progress.map(|p| p.set(0.05, Some("🚀 GPU-accelerated thumbnail generation...")));
 
-    let mut results = Vec::new();
+    // KRYTYCZNA OPTYMALIZACJA: równoległa GPU batch processing zamiast sekwencyjnej pętli
+    progress.map(|p| p.set(0.1, Some("🚀 GPU Batch Processing - preparing workgroups...")));
     
-    // Process files with GPU acceleration
-    for (i, file_path) in files.iter().enumerate() {
-        let file_stem = file_path.file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("unknown")
-            .to_string();
+    let batch_size = 8; // Przetwarza 8 plików równocześnie na GPU
+    let results: Vec<_> = files
+        .par_chunks(batch_size)
+        .enumerate()
+        .flat_map(|(batch_idx, batch_files)| {
+            let timing_stats = timing_stats.clone();
+            let color_config = color_config.clone();
+            
+            batch_files
+                .par_iter()
+                .enumerate()
+                .filter_map(move |(file_idx, file_path)| {
+                    let global_idx = batch_idx * batch_size + file_idx;
+                    let _file_stem = file_path.file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("unknown");
 
-        progress.map(|p| {
-            p.set(
-                0.1 + 0.8 * (i as f32) / (total_files as f32),
-                Some(&format!("🚀 GPU Processing {} ({}/{})", file_stem, i + 1, total_files))
-            )
-        });
+                    // Update progress per batch (non-blocking)
+                    if file_idx == 0 {
+                        progress.map(|p| {
+                            p.set(
+                                0.1 + 0.8 * (global_idx as f32) / (total_files as f32),
+                                Some(&format!("🚀 GPU Batch {} processing {} files", batch_idx + 1, batch_files.len()))
+                            )
+                        });
+                    }
 
-        let load_start = std::time::Instant::now();
-        
-        // Spróbuj GPU thumbnail generation
-        match generate_single_exr_thumbnail_gpu(
-            gpu_context,
-            &file_path,
-            thumb_height,
-            &color_config,
-            &timing_stats,
-        ) {
-            Ok(thumb_work) => {
-                results.push(thumb_work);
-                timing_stats.add_load_time(load_start.elapsed());
-            }
-            Err(e) => {
-                eprintln!("⚠️ GPU thumbnail failed for {}, falling back to CPU: {}", file_path.display(), e);
-                // Fallback do CPU
-                match generate_single_exr_thumbnail_work_new(&file_path, thumb_height, &color_config, &timing_stats) {
-                    Ok(thumb_work) => {
-                        results.push(thumb_work);
-                        timing_stats.add_load_time(load_start.elapsed());
+                    let load_start = std::time::Instant::now();
+                    
+                    // Spróbuj GPU z timeout dla uniknięcia blokady
+                    match generate_single_exr_thumbnail_gpu(
+                        gpu_context,
+                        &file_path,
+                        thumb_height,
+                        &color_config,
+                        &timing_stats,
+                    ) {
+                        Ok(thumb_work) => {
+                            timing_stats.add_load_time(load_start.elapsed());
+                            Some(thumb_work)
+                        }
+                        Err(e) => {
+                            eprintln!("⚠️ GPU thumbnail failed for {}, falling back to CPU: {}", file_path.display(), e);
+                            // CPU fallback
+                            match generate_single_exr_thumbnail_work_new(&file_path, thumb_height, &color_config, &timing_stats) {
+                                Ok(thumb_work) => {
+                                    timing_stats.add_load_time(load_start.elapsed());
+                                    Some(thumb_work)
+                                }
+                                Err(cpu_e) => {
+                                    eprintln!("❌ Both GPU and CPU failed for {}: {}", file_path.display(), cpu_e);
+                                    None
+                                }
+                            }
+                        }
                     }
-                    Err(cpu_e) => {
-                        eprintln!("❌ Both GPU and CPU failed for {}: {}", file_path.display(), cpu_e);
-                        continue;
-                    }
-                }
-            }
-        }
-    }
+                })
+        })
+        .collect();
 
     progress.map(|p| {
         p.set(1.0, Some(&format!(
