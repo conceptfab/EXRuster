@@ -96,22 +96,15 @@ fn build_mip_chain(
     }
 }
 
-/// Safe GPU MIP generation - zwraca error zamiast panicować
+/// OPTYMALIZACJA: wyłącz fake GPU MIP generation - używa CPU z overhead
 fn build_mip_chain_gpu_internal(
     base_pixels: &[f32],
     width: u32,
     height: u32,
     max_levels: usize,
 ) -> anyhow::Result<Vec<MipLevel>> {
-    // Na razie po prostu użyj CPU implementation z GPU-style logowaniem
-    // To uniknie problemów z GPU context ale zachowa infrastrukturę
-    // TODO: Dodać prawdziwą GPU implementację later
-    
-    println!("GPU-optimized MIP generation for {}x{}", width, height);
-    let cpu_result = build_mip_chain_cpu(base_pixels, width, height, max_levels);
-    println!("Completed MIP generation: {} levels", cpu_result.len());
-    
-    Ok(cpu_result)
+    // Fake GPU implementation gorsza od CPU - wyłącz
+    anyhow::bail!("GPU MIP generation disabled - using CPU fallback")
 }
 
 fn build_mip_chain_cpu(
@@ -638,8 +631,6 @@ fn gpu_process_rgba_f32_to_rgba8(
 ) -> anyhow::Result<Vec<u8>> {
     let pixel_count = (width as usize) * (height as usize);
     if pixels.len() < pixel_count * 4 { anyhow::bail!("Input pixel buffer too small"); }
-    
-    println!("GPU processing: {}x{} pixels, {} total pixels", width, height, pixel_count);
 
     // Bufor wejściowy (RGBA f32) - użyj buffer pool
     let input_bytes: &[u8] = bytemuck::cast_slice(pixels);
@@ -707,12 +698,10 @@ fn gpu_process_rgba_f32_to_rgba8(
     );
 
     // Użyj cached pipeline i bind group layout
-    println!("Getting GPU pipeline and layout...");
     let pipeline = ctx.get_image_processing_pipeline()
         .ok_or_else(|| anyhow::anyhow!("Failed to get cached image processing pipeline"))?;
     let bgl = ctx.get_image_processing_bind_group_layout()
         .ok_or_else(|| anyhow::anyhow!("Failed to get cached bind group layout"))?;
-    println!("Pipeline and layout obtained successfully");
 
     let bind_group = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("exruster.bind_group"),
@@ -724,8 +713,7 @@ fn gpu_process_rgba_f32_to_rgba8(
         ],
     });
 
-    // Dispatch
-    println!("Starting GPU dispatch...");
+    // OPTYMALIZACJA: Dispatch bez zbędnych print'ów
     let mut encoder = ctx.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("exruster.encoder") });
     {
         let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("exruster.compute"), timestamp_writes: None });
@@ -734,32 +722,24 @@ fn gpu_process_rgba_f32_to_rgba8(
         // Optymalizacja dla RTX 4070: workgroup 16x16 = 256 threads  
         let gx = (width + 15) / 16;
         let gy = (height + 15) / 16;
-        println!("Dispatching {}x{} workgroups (16x16 threads each)", gx, gy);
         cpass.dispatch_workgroups(gx, gy, 1);
     }
     // Kopiuj wynik do staging
     encoder.copy_buffer_to_buffer(&output_buffer, 0, &staging_buffer, 0, output_size);
-    println!("Submitting GPU commands...");
     ctx.queue.submit(Some(encoder.finish()));
-    println!("GPU commands submitted");
 
-    // Mapuj wynik
-    println!("Starting buffer mapping...");
+    // OPTYMALIZACJA: Usunięto zbędne print'y dla wydajności
     let slice = staging_buffer.slice(..);
     let (tx, rx) = std::sync::mpsc::channel();
     slice.map_async(wgpu::MapMode::Read, move |res| {
-        println!("GPU map_async callback executed with result: {:?}", res.is_ok());
         let _ = tx.send(res);
     });
-    // Optymalizacja: usuń problematyczne polling - wgpu automatycznie zarządza synchronizacją
-    // ctx.device.poll() nie jest potrzebne w najnowszej wersji wgpu
-    println!("Waiting for buffer mapping...");
     
     // Timeout zwiększony do 30s jako zabezpieczenie
     let recv_result = rx.recv_timeout(std::time::Duration::from_secs(30));
     match recv_result {
         Ok(Ok(_)) => {
-            println!("GPU map_async completed successfully");
+            // Buffer mapping successful
         }
         Ok(Err(e)) => {
             anyhow::bail!("GPU map_async failed: {:?}", e);
@@ -773,14 +753,8 @@ fn gpu_process_rgba_f32_to_rgba8(
     }
     let data = slice.get_mapped_range();
 
-    // Skopiuj do Vec<u8>
-    let mut out_bytes: Vec<u8> = Vec::with_capacity(pixel_count * 4);
-    for chunk in data.chunks_exact(4) {
-        // chunk to u32 LE
-        let v = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-        let rgba = v.to_le_bytes();
-        out_bytes.extend_from_slice(&rgba);
-    }
+    // KRYTYCZNA OPTYMALIZACJA: bezpośrednie kopiowanie zamiast loop-per-pixel
+    let out_bytes: Vec<u8> = data.to_vec();
 
     drop(data);
     staging_buffer.unmap();
