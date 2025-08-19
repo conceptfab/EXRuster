@@ -23,7 +23,11 @@ num_cpus = "1.17"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "hdr", "tiff", "webp", "bmp", "ico", "pnm", "tga", "dds", "exr"] }
 # wgpu removed - preparing for CUDA
 pollster = "0.4.0"  # For async CUDA operations
-# bytemuck removed with wgpu
+itertools = "0.12"  # For CUDA batch processing
+
+# Optional CUDA dependencies  
+cudarc = { version = "0.13", features = ["driver", "runtime", "cublas", "curand", "nvrtc", "cuda-12000"], optional = true }
+half = { version = "2.6", optional = true }
 instant = "0.1"
 tiff = "0.10.0"
 cfg-if = "1.0"
@@ -92,3 +96,8 @@ sign-commit = false
 sign-tag = false
 pre-release-commit-message = "chore: Release {{version}}"
 tag-message = "chore: Release {{version}}"
+
+# Feature flags for optional CUDA support
+[features]
+default = []
+cuda = ["cudarc", "half"]

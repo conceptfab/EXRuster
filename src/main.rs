@@ -15,9 +15,15 @@ mod color_processing;
 mod full_exr_cache;
 mod histogram;
 mod tone_mapping;
-// CUDA modules
+// CUDA modules (optional - only when cuda feature is enabled)
+#[cfg(feature = "cuda")]
 mod cuda_context;
+#[cfg(feature = "cuda")]
 mod cuda_processing;
+#[cfg(feature = "cuda")]
+mod cuda_kernels;
+#[cfg(feature = "cuda")]
+mod cuda_thumbnails;
 
 #[cfg(target_os = "windows")]
 mod platform_win;
@@ -27,8 +33,13 @@ use crate::ui_handlers::{push_console, lock_or_recover};
 use ui_handlers::{ImageCacheType, CurrentFilePathType, FullExrCache};
 use slint::{VecModel, SharedString, Model};
 use std::rc::Rc;
-// CUDA imports
+// CUDA imports (conditional)
+#[cfg(feature = "cuda")]
 use cuda_context::{CudaContext, CudaContextType};
+
+// Placeholder type when CUDA is disabled
+#[cfg(not(feature = "cuda"))]
+type CudaContextType = Arc<Mutex<Option<()>>>;
 
 fn main() -> Result<(), slint::PlatformError> {
     // Ustaw obsługę panic aby aplikacja nie znikała
@@ -77,34 +88,51 @@ fn main() -> Result<(), slint::PlatformError> {
         
 
         std::thread::spawn(move || {
-            // CUDA initialization
-            let cuda_result = pollster::block_on(async {
-                CudaContext::new().await
-            });
-            
-            match cuda_result {
-                Ok(context) => {
-                    let device_info = context.get_device_info();
-                    println!("CUDA: {} - initialization successful", device_info.name);
-                    
-                    // Update CUDA context
-                    if let Ok(mut guard) = cuda_context_clone.lock() {
-                        *guard = Some(context);
+            #[cfg(feature = "cuda")]
+            {
+                // CUDA initialization
+                let cuda_result = pollster::block_on(async {
+                    CudaContext::new().await
+                });
+                
+                match cuda_result {
+                    Ok(context) => {
+                        let device_info = context.get_device_info();
+                        println!("CUDA: {} - initialization successful", device_info.name);
+                        
+                        // Update CUDA context
+                        if let Ok(mut guard) = cuda_context_clone.lock() {
+                            *guard = Some(context.clone());
+                        }
+                        
+                        // Set global CUDA context in ui_handlers
+                        ui_handlers::set_global_cuda_context(cuda_context_clone.clone());
+                        
+                        // Update UI with CUDA status
+                        if let Some(ui) = ui_weak.upgrade() {
+                            ui.set_gpu_status_text(format!("CUDA: {} - available", device_info.name).into());
+                        }
                     }
-                    
-                    // Update UI with CUDA status
-                    if let Some(ui) = ui_weak.upgrade() {
-                        ui.set_gpu_status_text(format!("CUDA: {} - available", device_info.name).into());
+                    Err(e) => {
+                        println!("CUDA: initialization failed - {}", e);
+                        println!("Application running in CPU mode");
+                        
+                        // Update UI with CUDA status
+                        if let Some(ui) = ui_weak.upgrade() {
+                            ui.set_gpu_status_text("CUDA: not available (CPU mode)".into());
+                        }
                     }
                 }
-                Err(e) => {
-                    println!("CUDA: initialization failed - {}", e);
-                    println!("Application running in CPU mode");
-                    
-                    // Update UI with CUDA status
-                    if let Some(ui) = ui_weak.upgrade() {
-                        ui.set_gpu_status_text("CUDA: not available (CPU mode)".into());
-                    }
+            }
+            
+            #[cfg(not(feature = "cuda"))]
+            {
+                println!("CUDA: feature disabled - compile with --features cuda to enable");
+                println!("Application running in CPU mode");
+                
+                // Update UI with status
+                if let Some(ui) = ui_weak.upgrade() {
+                    ui.set_gpu_status_text("CUDA: feature disabled (CPU mode)".into());
                 }
             }
         });

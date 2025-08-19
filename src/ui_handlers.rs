@@ -996,6 +996,7 @@ pub fn create_layers_model(
 // Funkcja handle_export_channels została usunięta
 
 /// Aktualizuje status CUDA w interfejsie użytkownika
+#[cfg(feature = "cuda")]
 pub fn update_cuda_status(ui: &AppWindow, cuda_context: &crate::cuda_context::CudaContextType) {
     if let Ok(guard) = cuda_context.lock() {
         if let Some(ref context) = *guard {
@@ -1010,7 +1011,14 @@ pub fn update_cuda_status(ui: &AppWindow, cuda_context: &crate::cuda_context::Cu
     }
 }
 
+/// Aktualizuje status CUDA w interfejsie użytkownika (disabled version)
+#[cfg(not(feature = "cuda"))]
+pub fn update_cuda_status(ui: &AppWindow, _cuda_context: &std::sync::Arc<std::sync::Mutex<Option<()>>>) {
+    ui.set_gpu_status_text("CUDA: feature disabled (CPU mode)".into());
+}
+
 /// Sprawdza czy CUDA jest dostępne i aktualizuje status
+#[cfg(feature = "cuda")]
 pub fn check_cuda_availability(ui: &AppWindow, cuda_context: &crate::cuda_context::CudaContextType) -> bool {
     if let Ok(guard) = cuda_context.lock() {
         if let Some(ref context) = *guard {
@@ -1032,7 +1040,47 @@ pub fn check_cuda_availability(ui: &AppWindow, cuda_context: &crate::cuda_contex
     }
 }
 
-// GPU context setter removed - CUDA will be added here
+/// Sprawdza czy CUDA jest dostępne i aktualizuje status (disabled version)
+#[cfg(not(feature = "cuda"))]
+pub fn check_cuda_availability(ui: &AppWindow, _cuda_context: &std::sync::Arc<std::sync::Mutex<Option<()>>>) -> bool {
+    ui.set_gpu_status_text("CUDA: feature disabled (CPU mode)".into());
+    false
+}
+
+// CUDA context management (conditional)
+#[cfg(feature = "cuda")]
+static CUDA_CONTEXT: std::sync::LazyLock<std::sync::Mutex<Option<crate::cuda_context::CudaContextType>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(None));
+
+/// Get global CUDA context (if initialized)
+#[cfg(feature = "cuda")]
+pub fn get_global_cuda_context() -> Option<crate::cuda_context::CudaContextType> {
+    if let Ok(guard) = CUDA_CONTEXT.lock() {
+        guard.as_ref().cloned()
+    } else {
+        None
+    }
+}
+
+/// Get global CUDA context (disabled version)
+#[cfg(not(feature = "cuda"))]
+pub fn get_global_cuda_context() -> Option<std::sync::Arc<std::sync::Mutex<Option<()>>>> {
+    None
+}
+
+/// Set global CUDA context
+#[cfg(feature = "cuda")]
+pub fn set_global_cuda_context(cuda_context: crate::cuda_context::CudaContextType) {
+    if let Ok(mut guard) = CUDA_CONTEXT.lock() {
+        *guard = Some(cuda_context);
+    }
+}
+
+/// Set global CUDA context (disabled version)
+#[cfg(not(feature = "cuda"))]
+pub fn set_global_cuda_context(_cuda_context: std::sync::Arc<std::sync::Mutex<Option<()>>>) {
+    // No-op when CUDA is disabled
+}
 
 /// Ustawia globalny stan akceleracji GPU
 pub fn set_global_gpu_acceleration(enabled: bool) {

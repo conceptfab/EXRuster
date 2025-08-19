@@ -17,7 +17,7 @@ use exr::prelude as exr;
 use image;
 
 /// Statistics for timing operations
-struct TimingStats {
+pub struct TimingStats {
     total_load_time: AtomicU64,    // Total time for loading/creating thumbnails (in nanoseconds)
     total_save_time: AtomicU64,    // Total time for saving thumbnails (in nanoseconds)
 }
@@ -60,7 +60,7 @@ impl TimingStats {
 
 /// Color processing configuration
 #[derive(Clone)]
-struct ColorConfig {
+pub struct ColorConfig {
     gamma: f32,
     exposure: f32,
     tonemap_mode: i32,
@@ -81,7 +81,7 @@ impl ColorConfig {
 
 
 /// Generuje miniaturki używając CPU (nowa, wydajna implementacja) - zwraca ExrThumbWork
-/// GPU-accelerated thumbnail generation (safe fallback version)
+/// CUDA-accelerated thumbnail generation (safe fallback version)
 pub fn generate_thumbnails_gpu_raw(
     files: Vec<PathBuf>,
     thumb_height: u32,
@@ -90,28 +90,40 @@ pub fn generate_thumbnails_gpu_raw(
     tonemap_mode: i32,
     progress: Option<&dyn ProgressSink>,
 ) -> anyhow::Result<Vec<ExrThumbWork>> {
-    // Sprawdź czy GPU jest dostępny
+    // Check if GPU acceleration is enabled
     if !crate::ui_handlers::is_gpu_acceleration_enabled() {
         println!("GPU acceleration disabled, falling back to CPU");
         return generate_thumbnails_cpu_raw(files, thumb_height, exposure, gamma, tonemap_mode, progress);
     }
 
-    // Spróbuj GPU - jeśli nie powiedzie się, użyj CPU
-    match generate_thumbnails_gpu_internal(files.clone(), thumb_height, exposure, gamma, tonemap_mode, progress) {
+    // Try CUDA - if it fails, use CPU
+    let cuda_result = pollster::block_on(
+        generate_thumbnails_cuda_internal(
+            files.clone(), 
+            thumb_height, 
+            exposure, 
+            gamma, 
+            tonemap_mode, 
+            progress
+        )
+    );
+    
+    match cuda_result {
         Ok(results) => {
-            println!("GPU thumbnail generation successful: {} thumbnails", results.len());
+            println!("CUDA thumbnail generation successful: {} thumbnails", results.len());
             Ok(results)
         }
         Err(e) => {
-            eprintln!("GPU thumbnail generation failed: {}", e);
+            eprintln!("CUDA thumbnail generation failed: {}", e);
             println!("Falling back to CPU thumbnail generation");
             generate_thumbnails_cpu_raw(files, thumb_height, exposure, gamma, tonemap_mode, progress)
         }
     }
 }
 
-/// Bezpośrednia GPU thumbnail generation - zwraca error zamiast panicować
-fn generate_thumbnails_gpu_internal(
+/// CUDA-accelerated thumbnail generation with fallback
+#[cfg(feature = "cuda")]
+async fn generate_thumbnails_cuda_internal(
     files: Vec<PathBuf>,
     thumb_height: u32,
     exposure: f32,
@@ -119,8 +131,42 @@ fn generate_thumbnails_gpu_internal(
     tonemap_mode: i32,
     progress: Option<&dyn ProgressSink>,
 ) -> anyhow::Result<Vec<ExrThumbWork>> {
-    // GPU removed - using CPU processing only
-    progress.map(|p| p.set(0.05, Some("Using CPU processing...")));
+    // Try to get CUDA context from ui_handlers
+    if let Some(cuda_context_arc) = crate::ui_handlers::get_global_cuda_context() {
+        if let Ok(guard) = cuda_context_arc.lock() {
+            if let Some(ref cuda_ctx) = *guard {
+                if cuda_ctx.is_available() {
+                    // Use CUDA acceleration
+                    return crate::cuda_thumbnails::generate_thumbnails_cuda_batch(
+                        cuda_ctx,
+                        files,
+                        thumb_height,
+                        exposure,
+                        gamma,
+                        tonemap_mode,
+                        progress,
+                    ).await;
+                }
+            }
+        }
+    }
+    
+    // Fallback to CPU if CUDA not available
+    progress.map(|p| p.set(0.05, Some("CUDA not available - using CPU...")));
+    generate_thumbnails_cpu_raw(files, thumb_height, exposure, gamma, tonemap_mode, progress)
+}
+
+/// CPU-only thumbnail generation (when CUDA feature is disabled)
+#[cfg(not(feature = "cuda"))]
+async fn generate_thumbnails_cuda_internal(
+    files: Vec<PathBuf>,
+    thumb_height: u32,
+    exposure: f32,
+    gamma: f32,
+    tonemap_mode: i32,
+    progress: Option<&dyn ProgressSink>,
+) -> anyhow::Result<Vec<ExrThumbWork>> {
+    progress.map(|p| p.set(0.05, Some("CUDA feature disabled - using CPU...")));
     generate_thumbnails_cpu_raw(files, thumb_height, exposure, gamma, tonemap_mode, progress)
 }
 
@@ -229,7 +275,7 @@ pub struct ExrThumbWork {
 }
 
 /// NOWA, WYDAJNA FUNKCJA generowania miniaturki używająca nowoczesnego API exr
-fn generate_single_exr_thumbnail_work_new(
+pub fn generate_single_exr_thumbnail_work_new(
     exr_path: &Path,
     thumb_height: u32,
     color_config: &ColorConfig,
