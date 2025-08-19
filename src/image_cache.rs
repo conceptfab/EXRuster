@@ -120,7 +120,7 @@ fn build_mip_chain_cpu(
     mut height: u32,
     max_levels: usize,
 ) -> Vec<MipLevel> {
-    let mut levels: Vec<MipLevel> = Vec::new();
+    let mut levels: Vec<MipLevel> = Vec::with_capacity(max_levels);
     let mut prev: Vec<f32> = base_pixels.to_vec();
     for _ in 0..max_levels {
         if width <= 1 && height <= 1 { break; }
@@ -287,75 +287,92 @@ impl ImageCache {
 
         let color_m = self.color_matrix_rgb_to_srgb;
 
-        // SIMD: przetwarzaj paczki po 4 piksele
-        let in_chunks = self.raw_pixels.par_chunks_exact(16); // 4 piksele * 4 kanały RGBA
-        let out_chunks = out_slice.par_chunks_mut(4);
-        in_chunks.zip(out_chunks).for_each(|(in16, out4)| {
-            // Zbierz do rejestrów SIMD - 4 piksele RGBA
-            let (mut r, mut g, mut b, a) = {
-                let r = f32x4::from_array([in16[0], in16[4], in16[8], in16[12]]);
-                let g = f32x4::from_array([in16[1], in16[5], in16[9], in16[13]]);
-                let b = f32x4::from_array([in16[2], in16[6], in16[10], in16[14]]);
-                let a = f32x4::from_array([in16[3], in16[7], in16[11], in16[15]]);
-                (r, g, b, a)
-            };
-
-            // Macierz kolorów (primaries → sRGB) jeśli dostępna
-            if let Some(mat) = color_m {
-                let m00 = Simd::splat(mat.x_axis.x);
-                let m01 = Simd::splat(mat.y_axis.x);
-                let m02 = Simd::splat(mat.z_axis.x);
-                let m10 = Simd::splat(mat.x_axis.y);
-                let m11 = Simd::splat(mat.y_axis.y);
-                let m12 = Simd::splat(mat.z_axis.y);
-                let m20 = Simd::splat(mat.x_axis.z);
-                let m21 = Simd::splat(mat.y_axis.z);
-                let m22 = Simd::splat(mat.z_axis.z);
-                let rr = m00 * r + m01 * g + m02 * b;
-                let gg = m10 * r + m11 * g + m12 * b;
-                let bb = m20 * r + m21 * g + m22 * b;
-                r = rr; g = gg; b = bb;
-            }
-
-                            let (r8, g8, b8) = crate::tone_mapping::tone_map_and_gamma_simd(r, g, b, exposure, gamma, tonemap_mode);
-            let a8 = a.simd_clamp(Simd::splat(0.0), Simd::splat(1.0));
-
-            // Zapisz 4 piksele
-            let ra: [f32; 4] = r8.into();
-            let ga: [f32; 4] = g8.into();
-            let ba: [f32; 4] = b8.into();
-            let aa: [f32; 4] = a8.into();
-            for i in 0..4 {
-                out4[i] = Rgba8Pixel {
-                    r: (ra[i] * 255.0).round().clamp(0.0, 255.0) as u8,
-                    g: (ga[i] * 255.0).round().clamp(0.0, 255.0) as u8,
-                    b: (ba[i] * 255.0).round().clamp(0.0, 255.0) as u8,
-                    a: (aa[i] * 255.0).round().clamp(0.0, 255.0) as u8,
-                };
-            }
-        });
-
-        // Remainder (0..3 piksele)
-        let rem = (self.raw_pixels.len() / 4) % 4;
-        if rem > 0 {
-            let start = (self.raw_pixels.len() / 4 - rem) * 4;
-            for i in 0..rem {
-                let pixel_start = start + i * 4;
-                let r0 = self.raw_pixels[pixel_start];
-                let g0 = self.raw_pixels[pixel_start + 1];
-                let b0 = self.raw_pixels[pixel_start + 2];
-                let a0 = self.raw_pixels[pixel_start + 3];
-                let mut r = r0; let mut g = g0; let mut b = b0;
-                if let Some(mat) = color_m {
-                    let v = mat * Vec3::new(r, g, b);
-                    r = v.x; g = v.y; b = v.z;
-                }
-                out_slice[start / 4 + i] = process_pixel(r, g, b, a0, exposure, gamma, tonemap_mode);
-            }
-        }
+        // Optymalizowana SIMD: separuj SIMD od skalarnej reszty  
+        self.process_rgba_chunks_optimized(&self.raw_pixels, out_slice, exposure, gamma, tonemap_mode, color_m);
 
         println!("=== PROCESS_TO_IMAGE END - CPU completed ===");
         Image::from_rgba8(buffer)
+    }
+    
+    fn process_rgba_chunks_optimized(&self, input: &[f32], output: &mut [Rgba8Pixel], exposure: f32, gamma: f32, tonemap_mode: i32, color_m: Option<Mat3>) {
+        const CHUNK_SIZE: usize = 16; // 4 piksele * 4 kanały
+        
+        // SIMD processing for complete chunks
+        input.par_chunks_exact(CHUNK_SIZE)
+            .zip(output.par_chunks_exact_mut(4))
+            .for_each(|(in16, out4)| {
+                self.process_simd_chunk(in16, out4, exposure, gamma, tonemap_mode, color_m);
+            });
+        
+        // Handle remainder without mixing with main loop
+        let remainder_start = (input.len() / CHUNK_SIZE) * CHUNK_SIZE;
+        if remainder_start < input.len() {
+            self.process_scalar_remainder(&input[remainder_start..], 
+                                        &mut output[remainder_start / 4..], 
+                                        exposure, gamma, tonemap_mode, color_m);
+        }
+    }
+    
+    fn process_simd_chunk(&self, in16: &[f32], out4: &mut [Rgba8Pixel], exposure: f32, gamma: f32, tonemap_mode: i32, color_m: Option<Mat3>) {
+        // Zbierz do rejestrów SIMD - 4 piksele RGBA
+        let (mut r, mut g, mut b, a) = {
+            let r = f32x4::from_array([in16[0], in16[4], in16[8], in16[12]]);
+            let g = f32x4::from_array([in16[1], in16[5], in16[9], in16[13]]);
+            let b = f32x4::from_array([in16[2], in16[6], in16[10], in16[14]]);
+            let a = f32x4::from_array([in16[3], in16[7], in16[11], in16[15]]);
+            (r, g, b, a)
+        };
+
+        // Macierz kolorów (primaries → sRGB) jeśli dostępna
+        if let Some(mat) = color_m {
+            let m00 = Simd::splat(mat.x_axis.x);
+            let m01 = Simd::splat(mat.y_axis.x);
+            let m02 = Simd::splat(mat.z_axis.x);
+            let m10 = Simd::splat(mat.x_axis.y);
+            let m11 = Simd::splat(mat.y_axis.y);
+            let m12 = Simd::splat(mat.z_axis.y);
+            let m20 = Simd::splat(mat.x_axis.z);
+            let m21 = Simd::splat(mat.y_axis.z);
+            let m22 = Simd::splat(mat.z_axis.z);
+            let rr = m00 * r + m01 * g + m02 * b;
+            let gg = m10 * r + m11 * g + m12 * b;
+            let bb = m20 * r + m21 * g + m22 * b;
+            r = rr; g = gg; b = bb;
+        }
+
+        let (r8, g8, b8) = crate::tone_mapping::tone_map_and_gamma_simd(r, g, b, exposure, gamma, tonemap_mode);
+        let a8 = a.simd_clamp(Simd::splat(0.0), Simd::splat(1.0));
+
+        // Zapisz 4 piksele
+        let ra: [f32; 4] = r8.into();
+        let ga: [f32; 4] = g8.into();
+        let ba: [f32; 4] = b8.into();
+        let aa: [f32; 4] = a8.into();
+        for i in 0..4 {
+            out4[i] = Rgba8Pixel {
+                r: (ra[i] * 255.0).round().clamp(0.0, 255.0) as u8,
+                g: (ga[i] * 255.0).round().clamp(0.0, 255.0) as u8,
+                b: (ba[i] * 255.0).round().clamp(0.0, 255.0) as u8,
+                a: (aa[i] * 255.0).round().clamp(0.0, 255.0) as u8,
+            };
+        }
+    }
+    
+    fn process_scalar_remainder(&self, input: &[f32], output: &mut [Rgba8Pixel], exposure: f32, gamma: f32, tonemap_mode: i32, color_m: Option<Mat3>) {
+        let pixel_count = input.len() / 4;
+        for i in 0..pixel_count {
+            let pixel_start = i * 4;
+            let r0 = input[pixel_start];
+            let g0 = input[pixel_start + 1];
+            let b0 = input[pixel_start + 2];
+            let a0 = input[pixel_start + 3];
+            let mut r = r0; let mut g = g0; let mut b = b0;
+            if let Some(mat) = color_m {
+                let v = mat * Vec3::new(r, g, b);
+                r = v.x; g = v.y; b = v.z;
+            }
+            output[i] = process_pixel(r, g, b, a0, exposure, gamma, tonemap_mode);
+        }
     }
     
     pub fn process_to_composite(&self, exposure: f32, gamma: f32, tonemap_mode: i32, lighting_rgb: bool) -> Image {
@@ -364,10 +381,19 @@ impl ImageCache {
 
         let color_m = self.color_matrix_rgb_to_srgb;
 
-        // SIMD: przetwarzaj paczki po 4 piksele
-        let in_chunks = self.raw_pixels.par_chunks_exact(16); // 4 piksele * 4 kanały RGBA
-        let out_chunks = out_slice.par_chunks_mut(4);
-        in_chunks.zip(out_chunks).for_each(|(in16, out4)| {
+        // Optymalizowana SIMD: separuj SIMD od skalarnej reszty  
+        self.process_rgba_chunks_composite_optimized(&self.raw_pixels, out_slice, exposure, gamma, tonemap_mode, color_m, lighting_rgb);
+        
+        Image::from_rgba8(buffer)
+    }
+    
+    fn process_rgba_chunks_composite_optimized(&self, input: &[f32], output: &mut [Rgba8Pixel], exposure: f32, gamma: f32, tonemap_mode: i32, color_m: Option<Mat3>, lighting_rgb: bool) {
+        const CHUNK_SIZE: usize = 16; // 4 piksele * 4 kanały
+        
+        // SIMD processing for complete chunks
+        input.par_chunks_exact(CHUNK_SIZE)
+            .zip(output.par_chunks_exact_mut(4))
+            .for_each(|(in16, out4)| {
             // Zbierz do rejestrów SIMD - 4 piksele RGBA
             let (mut r, mut g, mut b, a) = {
                 let r = f32x4::from_array([in16[0], in16[4], in16[8], in16[12]]);
@@ -426,38 +452,43 @@ impl ImageCache {
                 }
             }
         });
-
-        // Remainder (0..3 piksele)
-        let rem = (self.raw_pixels.len() / 4) % 4;
-        if rem > 0 {
-            let start = (self.raw_pixels.len() / 4 - rem) * 4;
-            for i in 0..rem {
-                let pixel_start = start + i * 4;
-                let r0 = self.raw_pixels[pixel_start];
-                let g0 = self.raw_pixels[pixel_start + 1];
-                let b0 = self.raw_pixels[pixel_start + 2];
-                let a0 = self.raw_pixels[pixel_start + 3];
-                let (mut r, mut g, mut b) = (r0, g0, b0);
-                if let Some(mat) = color_m {
-                    let v = mat * Vec3::new(r, g, b);
-                    r = v.x; g = v.y; b = v.z;
-                }
-                if lighting_rgb {
-                    out_slice[start / 4 + i] = process_pixel(r, g, b, a0, exposure, gamma, tonemap_mode);
-                } else {
-                    let px = process_pixel(r, g, b, a0, exposure, gamma, tonemap_mode);
-                    let rr = (px.r as f32) / 255.0;
-                    let gg = (px.g as f32) / 255.0;
-                    let bb = (px.b as f32) / 255.0;
-                    let gray = (rr.max(gg).max(bb)).clamp(0.0, 1.0);
-                    let g8 = (gray * 255.0).round().clamp(0.0, 255.0) as u8;
-                    out_slice[start / 4 + i] = Rgba8Pixel { r: g8, g: g8, b: g8, a: px.a };
-                }
+        
+        // Handle remainder without mixing with main loop  
+        let remainder_start = (input.len() / CHUNK_SIZE) * CHUNK_SIZE;
+        if remainder_start < input.len() {
+            self.process_scalar_remainder_composite(&input[remainder_start..], 
+                                                  &mut output[remainder_start / 4..], 
+                                                  exposure, gamma, tonemap_mode, color_m, lighting_rgb);
+        }
+    }
+    
+    fn process_scalar_remainder_composite(&self, input: &[f32], output: &mut [Rgba8Pixel], exposure: f32, gamma: f32, tonemap_mode: i32, color_m: Option<Mat3>, lighting_rgb: bool) {
+        let pixel_count = input.len() / 4;
+        for i in 0..pixel_count {
+            let pixel_start = i * 4;
+            let r0 = input[pixel_start];
+            let g0 = input[pixel_start + 1];
+            let b0 = input[pixel_start + 2];
+            let a0 = input[pixel_start + 3];
+            let (mut r, mut g, mut b) = (r0, g0, b0);
+            if let Some(mat) = color_m {
+                let v = mat * Vec3::new(r, g, b);
+                r = v.x; g = v.y; b = v.z;
+            }
+            if lighting_rgb {
+                output[i] = process_pixel(r, g, b, a0, exposure, gamma, tonemap_mode);
+            } else {
+                let px = process_pixel(r, g, b, a0, exposure, gamma, tonemap_mode);
+                let rr = (px.r as f32) / 255.0;
+                let gg = (px.g as f32) / 255.0;
+                let bb = (px.b as f32) / 255.0;
+                let gray = (rr.max(gg).max(bb)).clamp(0.0, 1.0);
+                let g8 = (gray * 255.0).round().clamp(0.0, 255.0) as u8;
+                output[i] = Rgba8Pixel { r: g8, g: g8, b: g8, a: px.a };
             }
         }
-
-        Image::from_rgba8(buffer)
     }
+    
     // Nowa metoda dla preview (szybsze przetwarzanie małego obrazka)
     pub fn process_to_thumbnail(&self, exposure: f32, gamma: f32, tonemap_mode: i32, max_size: u32) -> Image {
         let scale = (max_size as f32 / self.width.max(self.height) as f32).min(1.0);

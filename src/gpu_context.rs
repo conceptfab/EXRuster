@@ -6,28 +6,47 @@ use wgpu::{
 use anyhow::Result;
 use std::sync::{Arc, Mutex};
 use std::cell::OnceCell;
+use std::collections::HashMap;
 
 
 use crate::gpu_metrics::GpuMetrics;
 use crate::gpu_scheduler::{AdaptiveGpuScheduler, GpuOperation};
 
-/// Simplified GPU buffer creation without pooling
+/// Proper GPU buffer pooling implementation
 #[derive(Debug)]
-pub struct GpuBufferPool;
+pub struct GpuBufferPool {
+    buffers: HashMap<(u64, BufferUsages), Vec<Buffer>>,
+    device: Arc<Device>,
+    max_pool_size: usize,
+}
 
 impl GpuBufferPool {
-    pub fn new() -> Self {
-        Self
+    pub fn new(device: Arc<Device>) -> Self {
+        Self {
+            buffers: HashMap::new(),
+            device,
+            max_pool_size: 10, // Limit pool size per buffer type
+        }
     }
 
     pub fn get_or_create_buffer(
         &mut self,
-        device: &Device,
+        _device: &Device,
         size: u64,
         usage: BufferUsages,
         label: Option<&str>,
     ) -> Buffer {
-        device.create_buffer(&wgpu::BufferDescriptor {
+        let key = (size, usage);
+        
+        // Try to get buffer from pool first
+        if let Some(pool) = self.buffers.get_mut(&key) {
+            if let Some(buffer) = pool.pop() {
+                return buffer;
+            }
+        }
+        
+        // Create new buffer if pool empty
+        self.device.create_buffer(&wgpu::BufferDescriptor {
             label,
             size,
             usage,
@@ -35,8 +54,14 @@ impl GpuBufferPool {
         })
     }
 
-    pub fn return_buffer(&mut self, _buffer: Buffer, _size: u64, _usage: BufferUsages) {
-        // Simplified: no pooling, buffer will be dropped automatically
+    pub fn return_buffer(&mut self, buffer: Buffer, size: u64, usage: BufferUsages) {
+        let key = (size, usage);
+        let pool = self.buffers.entry(key).or_insert_with(Vec::new);
+        
+        if pool.len() < self.max_pool_size {
+            pool.push(buffer);
+        }
+        // If pool full, buffer will be dropped automatically
     }
 }
 
@@ -393,9 +418,9 @@ impl GpuContext {
         Ok(Self {
             instance,
             adapter,
-            device,
+            device: device.clone(),
             queue,
-            buffer_pool: Arc::new(Mutex::new(GpuBufferPool::new())),
+            buffer_pool: Arc::new(Mutex::new(GpuBufferPool::new(Arc::new(device)))),
             pipeline_cache: Arc::new(Mutex::new(GpuPipelineCache::new())),
             gpu_metrics,
             gpu_scheduler,
