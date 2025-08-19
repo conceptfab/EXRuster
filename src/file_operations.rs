@@ -37,27 +37,19 @@ pub fn open_folder_dialog() -> Option<PathBuf> {
 
 /// Load EXR dimensions and channel information (for CUDA thumbnails)
 pub fn load_exr_dimensions(file_path: &std::path::Path) -> anyhow::Result<(u32, u32, Vec<String>)> {
-    use exr::prelude::*;
+    // Read only metadata (headers) without pixels - more efficient for dimensions
+    let meta = ::exr::meta::MetaData::read_from_file(file_path, false)?;
     
-    // Read only the header without pixel data
-    let image = read()
-        .no_deep_data()
-        .largest_resolution_level()
-        .rgba_channels(|resolution, _| {
-            // Just return empty vectors - we only want dimensions
-            vec![vec![0.0f32; (resolution.width() * resolution.height()) as usize]; 4]
-        })
-        .first_valid_layer()
-        .from_file(file_path)?;
+    // Get the first header to extract dimensions and channel info
+    let header = meta.headers.first()
+        .ok_or_else(|| anyhow::anyhow!("No headers found in EXR file"))?;
     
-    let layer = &image.layer_data;
-    let resolution = layer.size;
-    let width = resolution.width() as u32;
-    let height = resolution.height() as u32;
+    let width = header.layer_size.width() as u32;
+    let height = header.layer_size.height() as u32;
     
-    // Get channel names
-    let channel_names: Vec<String> = layer.channel_data.list.iter()
-        .map(|ch| ch.name.clone())
+    // Extract channel names
+    let channel_names: Vec<String> = header.channels.list.iter()
+        .map(|ch| ch.name.to_string())
         .collect();
     
     Ok((width, height, channel_names))
@@ -65,60 +57,32 @@ pub fn load_exr_dimensions(file_path: &std::path::Path) -> anyhow::Result<(u32, 
 
 /// Load EXR pixel data as RGBA f32 (for CUDA thumbnails)
 pub fn load_exr_data(file_path: &std::path::Path) -> anyhow::Result<Vec<f32>> {
-    use exr::prelude::*;
+    use exr::prelude::{read_first_rgba_layer_from_file, pixel_vec::PixelVec};
     
-    let image = read()
-        .no_deep_data()
-        .largest_resolution_level()
-        .rgba_channels(|resolution, _| {
-            // Allocate RGBA channels
-            vec![vec![0.0f32; (resolution.width() * resolution.height()) as usize]; 4]
-        })
-        .first_valid_layer()
-        .from_file(file_path)?;
+    let reader = read_first_rgba_layer_from_file(
+        file_path,
+        // Generate pixel buffer for RGBA f32 data
+        |resolution, _| PixelVec {
+            resolution,
+            pixels: vec![[0.0f32; 4]; resolution.width() * resolution.height()],
+        },
+        // Store pixels in RGBA format
+        |pixel_vec, position, (r, g, b, a): (f32, f32, f32, f32)| {
+            let index = position.y() * pixel_vec.resolution.width() + position.x();
+            if index < pixel_vec.pixels.len() {
+                pixel_vec.pixels[index] = [r, g, b, a];
+            }
+        },
+    )
+    .map_err(|e| anyhow::anyhow!("Failed to read EXR data: {}", e))?;
     
-    let layer = &image.layer_data;
-    let channels = &layer.channel_data.list;
-    let resolution = layer.size;
-    let pixel_count = (resolution.width() * resolution.height()) as usize;
-    
-    // Create interleaved RGBA data
-    let mut rgba_data = Vec::with_capacity(pixel_count * 4);
-    
-    // Find R, G, B, A channels by name
-    let r_channel = channels.iter().find(|ch| ch.name == "R");
-    let g_channel = channels.iter().find(|ch| ch.name == "G");
-    let b_channel = channels.iter().find(|ch| ch.name == "B");
-    let a_channel = channels.iter().find(|ch| ch.name == "A");
-    
-    for i in 0..pixel_count {
-        // Red channel
-        if let Some(ch) = r_channel {
-            rgba_data.push(ch.sample_data[i]);
-        } else {
-            rgba_data.push(0.0);
-        }
-        
-        // Green channel
-        if let Some(ch) = g_channel {
-            rgba_data.push(ch.sample_data[i]);
-        } else {
-            rgba_data.push(0.0);
-        }
-        
-        // Blue channel
-        if let Some(ch) = b_channel {
-            rgba_data.push(ch.sample_data[i]);
-        } else {
-            rgba_data.push(0.0);
-        }
-        
-        // Alpha channel
-        if let Some(ch) = a_channel {
-            rgba_data.push(ch.sample_data[i]);
-        } else {
-            rgba_data.push(1.0); // Default alpha = 1.0
-        }
+    // Convert [f32; 4] array to interleaved Vec<f32>
+    let mut rgba_data = Vec::with_capacity(reader.layer_data.channel_data.pixels.pixels.len() * 4);
+    for pixel in reader.layer_data.channel_data.pixels.pixels {
+        rgba_data.push(pixel[0]); // Red
+        rgba_data.push(pixel[1]); // Green  
+        rgba_data.push(pixel[2]); // Blue
+        rgba_data.push(pixel[3]); // Alpha
     }
     
     Ok(rgba_data)

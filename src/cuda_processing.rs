@@ -55,7 +55,7 @@ pub async fn cuda_process_rgba_f32_to_rgba8(
     let mut output_gpu: CudaSlice<u8> = ctx.alloc_or_reuse(pixel_count * 4)?;
     
     // Copy input data to GPU
-    ctx.device().htod_copy(pixels, &mut input_gpu).map_err(|e| {
+    ctx.device().htod_sync_copy_into(pixels.to_vec(), &mut input_gpu).map_err(|e| {
         anyhow::anyhow!("CUDA: Failed to copy input to GPU: {:?}", e)
     })?;
     
@@ -67,7 +67,7 @@ pub async fn cuda_process_rgba_f32_to_rgba8(
             matrix.z_axis.x, matrix.z_axis.y, matrix.z_axis.z,
         ];
         let mut matrix_gpu: CudaSlice<f32> = ctx.alloc_or_reuse(9)?;
-        ctx.device().htod_copy(&matrix_data, &mut matrix_gpu).map_err(|e| {
+        ctx.device().htod_sync_copy_into(matrix_data.to_vec(), &mut matrix_gpu).map_err(|e| {
             anyhow::anyhow!("CUDA: Failed to copy color matrix to GPU: {:?}", e)
         })?;
         Some(matrix_gpu)
@@ -92,8 +92,7 @@ pub async fn cuda_process_rgba_f32_to_rgba8(
     // Synchronize and copy result back
     ctx.synchronize()?;
     
-    let mut result = vec![0u8; pixel_count * 4];
-    ctx.device().dtoh_sync_copy(&output_gpu, &mut result).map_err(|e| {
+    let result = ctx.device().dtoh_sync_copy(&output_gpu).map_err(|e| {
         anyhow::anyhow!("CUDA: Failed to copy result from GPU: {:?}", e)
     })?;
     
@@ -132,7 +131,7 @@ pub async fn cuda_compute_histogram(
     let mut lum_bins_gpu: CudaSlice<i32> = ctx.alloc_or_reuse(bin_count)?;
     
     // Copy input data to GPU
-    ctx.device().htod_copy(pixels, &mut input_gpu).map_err(|e| {
+    ctx.device().htod_sync_copy_into(pixels.to_vec(), &mut input_gpu).map_err(|e| {
         anyhow::anyhow!("CUDA: Failed to copy input to GPU: {:?}", e)
     })?;
     
@@ -167,21 +166,16 @@ pub async fn cuda_compute_histogram(
     // Synchronize and copy results back
     ctx.synchronize()?;
     
-    let mut red_bins = vec![0i32; bin_count];
-    let mut green_bins = vec![0i32; bin_count];
-    let mut blue_bins = vec![0i32; bin_count];
-    let mut lum_bins = vec![0i32; bin_count];
-    
-    ctx.device().dtoh_sync_copy(&red_bins_gpu, &mut red_bins).map_err(|e| {
+    let red_bins = ctx.device().dtoh_sync_copy(&red_bins_gpu).map_err(|e| {
         anyhow::anyhow!("CUDA: Failed to copy red bins from GPU: {:?}", e)
     })?;
-    ctx.device().dtoh_sync_copy(&green_bins_gpu, &mut green_bins).map_err(|e| {
+    let green_bins = ctx.device().dtoh_sync_copy(&green_bins_gpu).map_err(|e| {
         anyhow::anyhow!("CUDA: Failed to copy green bins from GPU: {:?}", e)
     })?;
-    ctx.device().dtoh_sync_copy(&blue_bins_gpu, &mut blue_bins).map_err(|e| {
+    let blue_bins = ctx.device().dtoh_sync_copy(&blue_bins_gpu).map_err(|e| {
         anyhow::anyhow!("CUDA: Failed to copy blue bins from GPU: {:?}", e)
     })?;
-    ctx.device().dtoh_sync_copy(&lum_bins_gpu, &mut lum_bins).map_err(|e| {
+    let lum_bins = ctx.device().dtoh_sync_copy(&lum_bins_gpu).map_err(|e| {
         anyhow::anyhow!("CUDA: Failed to copy lum bins from GPU: {:?}", e)
     })?;
     
@@ -235,7 +229,7 @@ pub async fn cuda_generate_thumbnail_from_pixels(
     let mut output_gpu: CudaSlice<u8> = ctx.alloc_or_reuse(thumb_pixel_count * 4)?;
     
     // Copy input data to GPU
-    ctx.device().htod_copy(pixels, &mut input_gpu).map_err(|e| {
+    ctx.device().htod_sync_copy_into(pixels.to_vec(), &mut input_gpu).map_err(|e| {
         anyhow::anyhow!("CUDA: Failed to copy input to GPU: {:?}", e)
     })?;
     
@@ -247,7 +241,7 @@ pub async fn cuda_generate_thumbnail_from_pixels(
             matrix.z_axis.x, matrix.z_axis.y, matrix.z_axis.z,
         ];
         let mut matrix_gpu: CudaSlice<f32> = ctx.alloc_or_reuse(9)?;
-        ctx.device().htod_copy(&matrix_data, &mut matrix_gpu).map_err(|e| {
+        ctx.device().htod_sync_copy_into(matrix_data.to_vec(), &mut matrix_gpu).map_err(|e| {
             anyhow::anyhow!("CUDA: Failed to copy color matrix to GPU: {:?}", e)
         })?;
         Some(matrix_gpu)
@@ -272,8 +266,7 @@ pub async fn cuda_generate_thumbnail_from_pixels(
     // Synchronize and copy result back
     ctx.synchronize()?;
     
-    let mut result = vec![0u8; thumb_pixel_count * 4];
-    ctx.device().dtoh_sync_copy(&output_gpu, &mut result).map_err(|e| {
+    let result = ctx.device().dtoh_sync_copy(&output_gpu).map_err(|e| {
         anyhow::anyhow!("CUDA: Failed to copy result from GPU: {:?}", e)
     })?;
     

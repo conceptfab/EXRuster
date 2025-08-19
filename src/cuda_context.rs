@@ -56,9 +56,15 @@ impl CudaContext {
     
     /// Get the number of CUDA devices
     fn get_device_count() -> Result<i32> {
-        result::device_count().map_err(|e| {
+        // Initialize CUDA driver if not already done
+        let _driver = cudarc::driver::CudaApi::get();
+        
+        // Get device count using the correct API
+        let device_count = cudarc::driver::result::device_count().map_err(|e| {
             anyhow::anyhow!("CUDA: Failed to get device count: {:?}", e)
-        })
+        })?;
+        
+        Ok(device_count as i32)
     }
     
     /// Get device information implementation
