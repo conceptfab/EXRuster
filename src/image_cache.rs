@@ -731,9 +731,10 @@ fn gpu_process_rgba_f32_to_rgba8(
         let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("exruster.compute"), timestamp_writes: None });
         cpass.set_pipeline(&pipeline);
         cpass.set_bind_group(0, &bind_group, &[]);
-        let gx = (width + 7) / 8;
-        let gy = (height + 7) / 8;
-        println!("Dispatching {}x{} workgroups", gx, gy);
+        // Optymalizacja dla RTX 4070: workgroup 16x16 = 256 threads  
+        let gx = (width + 15) / 16;
+        let gy = (height + 15) / 16;
+        println!("Dispatching {}x{} workgroups (16x16 threads each)", gx, gy);
         cpass.dispatch_workgroups(gx, gy, 1);
     }
     // Kopiuj wynik do staging
@@ -750,9 +751,12 @@ fn gpu_process_rgba_f32_to_rgba8(
         println!("GPU map_async callback executed with result: {:?}", res.is_ok());
         let _ = tx.send(res);
     });
-    println!("Waiting for buffer mapping (timeout: 5s)...");
-    // Zablokuj do czasu zakończenia mapowania z timeout
-    let recv_result = rx.recv_timeout(std::time::Duration::from_secs(5));
+    // Optymalizacja: usuń problematyczne polling - wgpu automatycznie zarządza synchronizacją
+    // ctx.device.poll() nie jest potrzebne w najnowszej wersji wgpu
+    println!("Waiting for buffer mapping...");
+    
+    // Timeout zwiększony do 30s jako zabezpieczenie
+    let recv_result = rx.recv_timeout(std::time::Duration::from_secs(30));
     match recv_result {
         Ok(Ok(_)) => {
             println!("GPU map_async completed successfully");
@@ -761,7 +765,7 @@ fn gpu_process_rgba_f32_to_rgba8(
             anyhow::bail!("GPU map_async failed: {:?}", e);
         }
         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-            anyhow::bail!("GPU map_async timeout after 5 seconds - GPU may be unresponsive");
+            anyhow::bail!("GPU map_async timeout after 30 seconds - GPU may be unresponsive");
         }
         Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
             anyhow::bail!("GPU map_async callback channel disconnected");

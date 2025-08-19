@@ -94,9 +94,12 @@ impl GpuProcessor {
             compute_pass.set_pipeline(&pipeline);
             compute_pass.set_bind_group(0, &bind_group, &[]);
             
-            let workgroup_size = 64;
-            let num_workgroups = (pixel_count + workgroup_size - 1) / workgroup_size;
-            compute_pass.dispatch_workgroups(num_workgroups as u32, 1, 1);
+            // Optymalizacja dla RTX 4070: workgroup 16x16 = 256 threads
+            let workgroup_x = 16;
+            let workgroup_y = 16;
+            let num_workgroups_x = (width + workgroup_x - 1) / workgroup_x;
+            let num_workgroups_y = (height + workgroup_y - 1) / workgroup_y;
+            compute_pass.dispatch_workgroups(num_workgroups_x, num_workgroups_y, 1);
         }
 
         // Utwórz staging buffer dla odczytu wyników
@@ -118,8 +121,11 @@ impl GpuProcessor {
             sender.send(result).unwrap();
         });
         
-        // Użyj timeout zamiast polling - zgodnie z wzorcem z image_cache.rs
-        let recv_result = receiver.recv_timeout(std::time::Duration::from_secs(5));
+        // Optymalizacja: usuń problematyczne polling - wgpu automatycznie zarządza synchronizacją
+        // self.context.device.poll() nie jest potrzebne w wgpu v26
+        
+        // Krótki timeout tylko jako zabezpieczenie (30s zamiast 5s)
+        let recv_result = receiver.recv_timeout(std::time::Duration::from_secs(30));
         match recv_result {
             Ok(Ok(_)) => {
                 // Buffer mapping successful
@@ -128,7 +134,7 @@ impl GpuProcessor {
                 return Err(anyhow::anyhow!("GPU buffer mapping failed: {:?}", e));
             },
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                return Err(anyhow::anyhow!("GPU buffer mapping timeout after 5 seconds"));
+                return Err(anyhow::anyhow!("GPU buffer mapping timeout after 30 seconds - GPU may be unresponsive"));
             },
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
                 return Err(anyhow::anyhow!("GPU buffer mapping callback channel disconnected"));

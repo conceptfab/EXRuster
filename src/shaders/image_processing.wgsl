@@ -218,8 +218,8 @@ fn tone_map_and_gamma(
     }
 }
 
-// Główna funkcja compute shadera
-@compute @workgroup_size(8, 8, 1)
+// Główna funkcja compute shadera - optymalizacja dla RTX 4070
+@compute @workgroup_size(16, 16, 1)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     // Sprawdź czy piksel jest w granicach obrazu
     if (global_id.x >= params.width || global_id.y >= params.height) {
