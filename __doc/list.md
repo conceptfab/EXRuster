@@ -1,4 +1,4 @@
-@src przenalizuj ten kod pod kątem optymalizacji, zduplikowanego kodu, nieużywanego kodu, kodu który nie jest w pełni funkcjonalny, czasowo wyłączony - zweryfikuj to. Pomin przyciski exportu. Przygotuj zwarty raport z numerowanymu punktami co model AI ma zrobić by poprawić kod. Dokument ma zawierać precyzyjne przykłady kodu do implementacji. Chce uniknąć over-engineeringu. Pokaż tylko pliki które potrzebuja poprawek. Raport ma być w formacie markdown, podzielony na logiczne etapy. zapisz go w folderze projektu.
+@src przenalizuj ten kod pod kątem optymalizacji, zduplikowanego kodu, nieużywanego kodu, kodu który nie jest w pełni funkcjonalny, czasowo wyłączony - zweryfikuj to. Pomin przyciski exportu. Przygotuj zwarty, precyzyjny raport z numerowanymu punktami co model AI ma zrobić by poprawić kod. Dokument ma zawierać precyzyjne przykłady kodu do implementacji. Chce uniknąć over-engineeringu. Pokaż tylko pliki które potrzebuja poprawek. Raport ma być w formacie markdown, podzielony na logiczne etapy. zapisz go w folderze projektu.
 
 
 
