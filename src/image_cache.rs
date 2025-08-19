@@ -227,53 +227,7 @@ impl ImageCache {
         let gpu_enabled = crate::ui_handlers::is_gpu_acceleration_enabled();
         println!("GPU acceleration enabled: {}", gpu_enabled);
         
-        // Ścieżka GPU z bezpiecznym wrapper (jeśli aktywna i dostępna)
-        if gpu_enabled {
-            println!("Attempting GPU processing...");
-            if let Some(global_ctx_arc) = crate::ui_handlers::get_global_gpu_context() {
-                if let Ok(guard) = global_ctx_arc.lock() {
-                    if let Some(ref ctx) = *guard {
-                        // Użyj bezpiecznego wrapper
-                        let gpu_result = ctx.safe_gpu_operation(
-                            |ctx| gpu_process_rgba_f32_to_rgba8(
-                                ctx,
-                                &self.raw_pixels,
-                                self.width,
-                                self.height,
-                                exposure,
-                                gamma,
-                                tonemap_mode as u32,
-                                self.color_matrix_rgb_to_srgb,
-                            ),
-                            || {
-                                // CPU fallback - nie rób nic, spadnie do dolnego kodu CPU
-                                Err(anyhow::anyhow!("Using CPU fallback"))
-                            }
-                        );
-
-                        if let Ok(bytes) = gpu_result {
-                            // KRYTYCZNA OPTYMALIZACJA: unsafe bulk copy zamiast loop-per-pixel
-                            let mut buffer = SharedPixelBuffer::<Rgba8Pixel>::new(self.width, self.height);
-                            let out_slice = buffer.make_mut_slice();
-                            let pixel_count = (self.width * self.height) as usize;
-                            if bytes.len() >= pixel_count * 4 {
-                                unsafe {
-                                    std::ptr::copy_nonoverlapping(
-                                        bytes.as_ptr() as *const Rgba8Pixel,
-                                        out_slice.as_mut_ptr(),
-                                        pixel_count
-                                    );
-                                }
-                            }
-                            return Image::from_rgba8(buffer);
-                        }
-                        // Jeśli GPU fallback failed, kontynuuj do CPU processing
-                    }
-                }
-            }
-        } else {
-            println!("GPU acceleration disabled, using CPU");
-        }
+        // GPU processing removed - using CPU processing only
 
         // Fallback CPU (SIMD + Rayon)
         println!("Using CPU processing for {}x{}", self.width, self.height);
@@ -507,36 +461,8 @@ impl ImageCache {
             }
         };
 
-        // Opcjonalna ścieżka GPU: przetwórz źródło do RGBA8, a skalowanie wykonaj na CPU (NN)
-        let mut gpu_processed_src: Option<Vec<u8>> = None;
-        if crate::ui_handlers::is_gpu_acceleration_enabled() {
-            if let Some(global_ctx_arc) = crate::ui_handlers::get_global_gpu_context() {
-                if let Ok(guard) = global_ctx_arc.lock() {
-                    if let Some(ref ctx) = *guard {
-                        // Spróbuj GPU processing - safe error handling
-                        match gpu_process_rgba_f32_to_rgba8(
-                            ctx,
-                            src_pixels,
-                            src_w,
-                            src_h,
-                            exposure,
-                            gamma,
-                            tonemap_mode as u32,
-                            self.color_matrix_rgb_to_srgb,
-                        ) {
-                            Ok(bytes) => {
-                                println!("GPU composite processing successful");
-                                gpu_processed_src = Some(bytes);
-                            }
-                            Err(e) => {
-                                eprintln!("GPU composite processing failed: {}", e);
-                                println!("Using CPU composite processing");
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        // GPU processing removed - CPU only
+        let gpu_processed_src: Option<Vec<u8>> = None;
 
         // Proste nearest neighbor sampling dla szybkości, ale przetwarzanie blokami 4 pikseli
         let m = self.color_matrix_rgb_to_srgb;
@@ -618,159 +544,19 @@ impl ImageCache {
 
 // === GPU path implementation ===
 
-// Używamy konsolidowanej struktury z gpu_types.rs
-use crate::gpu_types::ParamsStd140;
+// GPU functions removed - using CPU-only processing
 
+// GPU processing removed - function disabled
 fn gpu_process_rgba_f32_to_rgba8(
-    ctx: &crate::gpu_context::GpuContext,
-    pixels: &[f32],
-    width: u32,
-    height: u32,
-    exposure: f32,
-    gamma: f32,
-    tonemap_mode: u32,
-    color_matrix: Option<Mat3>,
+    _pixels: &[f32],
+    _width: u32,
+    _height: u32,
+    _exposure: f32,
+    _gamma: f32,
+    _tonemap_mode: u32,
+    _color_matrix: Option<Mat3>,
 ) -> anyhow::Result<Vec<u8>> {
-    let pixel_count = (width as usize) * (height as usize);
-    if pixels.len() < pixel_count * 4 { anyhow::bail!("Input pixel buffer too small"); }
-    
-    // KRYTYCZNA OPTYMALIZACJA: usunięto diagnostics - major performance overhead
-    let _start_time = std::time::Instant::now();
-
-    // Bufor wejściowy (RGBA f32) - użyj buffer pool
-    let input_bytes: &[u8] = bytemuck::cast_slice(pixels);
-    let input_size = input_bytes.len() as u64;
-    let limits = ctx.device.limits();
-    if input_size > limits.max_storage_buffer_binding_size.into() {
-        anyhow::bail!(
-            "Input image too large for GPU processing (size: {} > max: {})",
-            input_size,
-            limits.max_storage_buffer_binding_size
-        );
-    }
-    let input_buffer = ctx.get_or_create_buffer(
-        input_size,
-        wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        Some("exruster.input_rgba_f32"),
-    );
-    
-    // OPTYMALIZACJA: bezpośrednie kopiowanie bez timing overhead
-    ctx.queue.write_buffer(&input_buffer, 0, input_bytes);
-
-    // Bufor wyjściowy (1 u32 na piksel) - użyj buffer pool
-    let output_size: u64 = (pixel_count as u64) * 4;
-    let output_buffer = ctx.get_or_create_buffer(
-        output_size,
-        wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-        Some("exruster.output_rgba8_u32"),
-    );
-
-    // Uniforms
-    let cm = color_matrix.unwrap_or_else(|| Mat3::from_diagonal(Vec3::new(1.0, 1.0, 1.0)));
-    let params = ParamsStd140 {
-        exposure,
-        gamma,
-        tonemap_mode,
-        width,
-        height,
-        // FAZA 3: Nowe parametry tone mapping
-        local_adaptation_radius: 16, // Domyślny promień dla local adaptation
-        _pad0: 0,
-        _pad1: [0; 2],
-        color_matrix: [
-            [cm.x_axis.x, cm.x_axis.y, cm.x_axis.z, 0.0],
-            [cm.y_axis.x, cm.y_axis.y, cm.y_axis.z, 0.0],
-            [cm.z_axis.x, cm.z_axis.y, cm.z_axis.z, 0.0],
-        ],
-        has_color_matrix: if color_matrix.is_some() { 1 } else { 0 },
-        _pad2: [0; 3],
-    };
-    // Params buffer - użyj buffer pool
-    let params_bytes = bytemuck::bytes_of(&params);
-    let params_size = params_bytes.len() as u64;
-    let params_buffer = ctx.get_or_create_buffer(
-        params_size,
-        wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        Some("exruster.params"),
-    );
-    ctx.queue.write_buffer(&params_buffer, 0, params_bytes);
-
-    // Staging buffer do odczytu - użyj buffer pool
-    let staging_buffer = ctx.get_or_create_buffer(
-        output_size,
-        wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-        Some("exruster.staging_readback"),
-    );
-
-    // Użyj cached pipeline i bind group layout
-    let pipeline = ctx.get_image_processing_pipeline()
-        .ok_or_else(|| anyhow::anyhow!("Failed to get cached image processing pipeline"))?;
-    let bgl = ctx.get_image_processing_bind_group_layout()
-        .ok_or_else(|| anyhow::anyhow!("Failed to get cached bind group layout"))?;
-
-    let bind_group = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("exruster.bind_group"),
-        layout: &bgl,
-        entries: &[
-            wgpu::BindGroupEntry { binding: 0, resource: params_buffer.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 1, resource: input_buffer.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 2, resource: output_buffer.as_entire_binding() },
-        ],
-    });
-
-    // KRYTYCZNA OPTYMALIZACJA: usunięto timing diagnostics ze ścieżki compute
-    let mut encoder = ctx.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("exruster.encoder") });
-    {
-        let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("exruster.compute"), timestamp_writes: None });
-        cpass.set_pipeline(&pipeline);
-        cpass.set_bind_group(0, &bind_group, &[]);
-        // RTX 4070 OPTYMALIZACJA: większe workgroup 32x8 = 256 threads - lepszy memory layout
-        let gx = (width + 31) / 32;  
-        let gy = (height + 7) / 8;
-        cpass.dispatch_workgroups(gx, gy, 1);
-    }
-    encoder.copy_buffer_to_buffer(&output_buffer, 0, &staging_buffer, 0, output_size);
-    ctx.queue.submit(Some(encoder.finish()));
-
-    // OPTYMALIZACJA: Usunięto zbędne print'y dla wydajności
-    let slice = staging_buffer.slice(..);
-    let (tx, rx) = std::sync::mpsc::channel();
-    slice.map_async(wgpu::MapMode::Read, move |res| {
-        let _ = tx.send(res);
-    });
-    
-    // KRYTYCZNA OPTYMALIZACJA: skrócony timeout 5s + usunięte diagnostics
-    let recv_result = rx.recv_timeout(std::time::Duration::from_secs(5));
-    match recv_result {
-        Ok(Ok(_)) => {
-            // Success - continue without timing overhead
-        }
-        Ok(Err(e)) => {
-            anyhow::bail!("GPU map_async failed: {:?}", e);
-        }
-        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-            anyhow::bail!("GPU timeout - using CPU fallback");
-        }
-        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-            anyhow::bail!("GPU callback channel disconnected");
-        }
-    }
-    let data = slice.get_mapped_range();
-
-    // KRYTYCZNA OPTYMALIZACJA: bezpośrednie kopiowanie zamiast loop-per-pixel
-    let out_bytes: Vec<u8> = data.to_vec();
-
-    drop(data);
-    staging_buffer.unmap();
-
-    // Zwróć buffery do pool'u dla przyszłego użycia
-    ctx.return_buffer(input_buffer, input_size, wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST);
-    ctx.return_buffer(output_buffer, output_size, wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC);
-    ctx.return_buffer(params_buffer, params_size, wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST);
-    ctx.return_buffer(staging_buffer, output_size, wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST);
-
-    // OPTYMALIZACJA: usunięto końcowy timing print
-    Ok(out_bytes)
+    anyhow::bail!("GPU processing disabled - use CPU fallback");
 }
 
 

@@ -23,7 +23,7 @@ use crate::ThumbItem;
 pub struct AppState {
     pub item_to_layer: HashMap<String, String>,
     pub display_to_real_layer: HashMap<String, String>,
-    pub gpu_context: Option<Arc<Mutex<Option<crate::gpu_context::GpuContext>>>>,
+    // GPU context removed - preparing for CUDA
     pub gpu_acceleration_enabled: bool,
     pub current_file_path: Option<PathBuf>,
     pub last_preview_log: Option<Instant>,
@@ -35,7 +35,7 @@ impl AppState {
         Self {
             item_to_layer: HashMap::new(),
             display_to_real_layer: HashMap::new(),
-            gpu_context: None,
+            // GPU context removed
             gpu_acceleration_enabled: false,
             current_file_path: None,
             last_preview_log: None,
@@ -53,7 +53,7 @@ impl AppState {
 pub type ImageCacheType = Arc<Mutex<Option<ImageCache>>>;
 pub type CurrentFilePathType = Arc<Mutex<Option<PathBuf>>>;
 pub type ConsoleModel = Rc<VecModel<SharedString>>;
-pub type GpuContextType = Arc<Mutex<Option<crate::gpu_context::GpuContext>>>;
+// GPU type removed - CUDA will be added here
 use crate::full_exr_cache::{FullExrCacheData, FullLayer, build_full_exr_cache};
 pub type FullExrCache = Arc<Mutex<Option<std::sync::Arc<FullExrCacheData>>>>;
 
@@ -100,9 +100,7 @@ static ITEM_TO_LAYER: std::sync::LazyLock<std::sync::Mutex<HashMap<String, Strin
 static DISPLAY_TO_REAL_LAYER: std::sync::LazyLock<std::sync::Mutex<HashMap<String, String>>> =
     std::sync::LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
 
-// Globalny dostęp do kontekstu GPU
-static GPU_CONTEXT: std::sync::LazyLock<std::sync::Mutex<Option<Arc<Mutex<Option<crate::gpu_context::GpuContext>>>>>> =
-    std::sync::LazyLock::new(|| std::sync::Mutex::new(None));
+// GPU context removed - CUDA will be added here
 
 // Globalny stan akceleracji GPU
 static GPU_ACCELERATION_ENABLED: std::sync::LazyLock<std::sync::Mutex<bool>> =
@@ -110,14 +108,7 @@ static GPU_ACCELERATION_ENABLED: std::sync::LazyLock<std::sync::Mutex<bool>> =
 
 
 
-/// Zwraca globalny kontekst GPU (jeśli został zainicjalizowany)
-pub fn get_global_gpu_context() -> Option<Arc<Mutex<Option<crate::gpu_context::GpuContext>>>> {
-    if let Ok(guard) = GPU_CONTEXT.lock() {
-        guard.as_ref().cloned()
-    } else {
-        None
-    }
-}
+// GPU context getter removed - CUDA will be added here
 
 /// Sprawdza, czy akceleracja GPU jest globalnie włączona z poziomu UI
 pub fn is_gpu_acceleration_enabled() -> bool {
@@ -1005,48 +996,17 @@ pub fn create_layers_model(
 // Funkcja handle_export_channels została usunięta
 
 /// Aktualizuje status GPU w interfejsie użytkownika
-pub fn update_gpu_status(ui: &AppWindow, gpu_context: &GpuContextType) {
-    if let Ok(guard) = gpu_context.lock() {
-        if let Some(ref context) = *guard {
-            let adapter_info = context.get_adapter_info();
-            let status_text = format!("GPU: {} - dostępny", adapter_info.name);
-            ui.set_gpu_status_text(status_text.into());
-        } else {
-            ui.set_gpu_status_text("GPU: niedostępny (tryb CPU)".into());
-        }
-    } else {
-        ui.set_gpu_status_text("GPU: błąd dostępu".into());
-    }
+pub fn update_gpu_status(ui: &AppWindow, _gpu_context: &std::sync::Arc<std::sync::Mutex<Option<()>>>) {
+    ui.set_gpu_status_text("GPU: wgpu removed, preparing for CUDA".into());
 }
 
 /// Sprawdza czy GPU jest dostępne i aktualizuje status
-pub fn check_gpu_availability(ui: &AppWindow, gpu_context: &GpuContextType) -> bool {
-    if let Ok(guard) = gpu_context.lock() {
-        if let Some(ref context) = *guard {
-            if context.is_available() {
-                let adapter_info = context.get_adapter_info();
-                ui.set_gpu_status_text(format!("GPU: {} - aktywny", adapter_info.name).into());
-                return true;
-            } else {
-                ui.set_gpu_status_text("GPU: błąd urządzenia".into());
-                return false;
-            }
-        } else {
-            ui.set_gpu_status_text("GPU: niedostępny (tryb CPU)".into());
-            return false;
-        }
-    } else {
-        ui.set_gpu_status_text("GPU: błąd dostępu".into());
-        return false;
-    }
+pub fn check_gpu_availability(ui: &AppWindow, _gpu_context: &std::sync::Arc<std::sync::Mutex<Option<()>>>) -> bool {
+    ui.set_gpu_status_text("GPU: wgpu removed, preparing for CUDA".into());
+    false
 }
 
-/// Ustawia globalny kontekst GPU
-pub fn set_global_gpu_context(gpu_context: Arc<Mutex<Option<crate::gpu_context::GpuContext>>>) {
-    if let Ok(mut guard) = GPU_CONTEXT.lock() {
-        *guard = Some(gpu_context);
-    }
-}
+// GPU context setter removed - CUDA will be added here
 
 /// Ustawia globalny stan akceleracji GPU
 pub fn set_global_gpu_acceleration(enabled: bool) {

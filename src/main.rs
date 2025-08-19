@@ -13,26 +13,23 @@ mod progress;
 mod utils;
 mod color_processing;
 mod full_exr_cache;
-mod gpu_context;
-mod gpu_metrics;
-mod gpu_processing;
-mod gpu_scheduler;
-mod gpu_thumbnails;
-mod gpu_mip;
+// GPU modules removed - preparing for CUDA implementation
 mod histogram;
 mod tone_mapping;
-mod gpu_types;
+// CUDA infrastructure will be added here
 
 #[cfg(target_os = "windows")]
 mod platform_win;
 
 use std::sync::{Arc, Mutex};
 use crate::ui_handlers::{push_console, lock_or_recover};
-use ui_handlers::{ImageCacheType, CurrentFilePathType, FullExrCache, GpuContextType};
+use ui_handlers::{ImageCacheType, CurrentFilePathType, FullExrCache};
 use slint::{VecModel, SharedString, Model};
 use std::rc::Rc;
-use crate::gpu_context::GpuContext;
-use pollster;
+// GPU imports removed - CUDA will be added here
+
+// Placeholder type for GPU context until CUDA is implemented
+type GpuContextType = Arc<Mutex<Option<()>>>;
 
 fn main() -> Result<(), slint::PlatformError> {
     // Ustaw obsługę panic aby aplikacja nie znikała
@@ -76,45 +73,26 @@ fn main() -> Result<(), slint::PlatformError> {
     
 
     {
-        let gpu_context_clone = gpu_context.clone();
+        let _gpu_context_clone = gpu_context.clone();
         let ui_weak = ui.as_weak();
         
 
         std::thread::spawn(move || {
-
-            let gpu_result = pollster::block_on(async {
-
-                GpuContext::new().await
-            });
+            // GPU initialization removed - CUDA will be added here
+            let gpu_result: Result<(), anyhow::Error> = Err(anyhow::anyhow!("GPU disabled"));
             
             match gpu_result {
-                Ok(context) => {
-                    let adapter_info = context.get_adapter_info();
-                    println!("GPU: {} - inicjalizacja pomyślna", adapter_info.name);
-                    
-                    // Zaktualizuj kontekst GPU
-                    if let Ok(mut guard) = gpu_context_clone.lock() {
-                        *guard = Some(context.clone());
-                    }
-                    
-                    // Ustaw globalny kontekst GPU w ui_handlers
-                    ui_handlers::set_global_gpu_context(gpu_context_clone.clone());
-                    
-                    // Inicjalizuj async GPU processor
-                    // gpu_processing::initialize_async_gpu_processor(std::sync::Arc::new(context));
-                    
-                    // Zaktualizuj UI z informacją o GPU
-                    if let Some(ui) = ui_weak.upgrade() {
-                        ui.set_gpu_status_text(format!("GPU: {} - dostępny", adapter_info.name).into());
-                    }
+                Ok(_) => {
+                    // This will never happen with our current setup
+                    println!("GPU: unexpected success");
                 }
                 Err(e) => {
-                    println!("GPU: inicjalizacja nieudana - {}", e);
-                    println!("Aplikacja będzie działać w trybie CPU");
+                    println!("GPU: initialization disabled - {}", e);
+                    println!("Application running in CPU mode, preparing for CUDA");
                     
-                    // Zaktualizuj UI z informacją o braku GPU
+                    // Update UI with GPU status
                     if let Some(ui) = ui_weak.upgrade() {
-                        ui.set_gpu_status_text("GPU: niedostępny (tryb CPU)".into());
+                        ui.set_gpu_status_text("GPU: wgpu removed, preparing for CUDA".into());
                     }
                 }
             }
