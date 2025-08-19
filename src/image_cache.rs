@@ -481,10 +481,9 @@ impl ImageCache {
             }
         };
 
-        // TYMCZASOWO WYŁĄCZONE GPU processing dla debugowania crashów
         // Opcjonalna ścieżka GPU: przetwórz źródło do RGBA8, a skalowanie wykonaj na CPU (NN)
         let mut gpu_processed_src: Option<Vec<u8>> = None;
-        if false && crate::ui_handlers::is_gpu_acceleration_enabled() {
+        if crate::ui_handlers::is_gpu_acceleration_enabled() {
             if let Some(global_ctx_arc) = crate::ui_handlers::get_global_gpu_context() {
                 if let Ok(guard) = global_ctx_arc.lock() {
                     if let Some(ref ctx) = *guard {
