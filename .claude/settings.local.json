@@ -9,7 +9,8 @@
       "Bash(timeout 15s cargo test test_gpu_thumbnail_generation -- --nocapture)",
       "Bash(timeout 15s cargo run --bin EXruster_nightly)",
       "WebFetch(domain:docs.rs)",
-      "Bash(timeout 15s cargo check)"
+      "Bash(timeout 15s cargo check)",
+      "Bash(git checkout:*)"
     ],
     "deny": [],
     "ask": []

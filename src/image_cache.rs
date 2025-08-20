@@ -1,7 +1,6 @@
 use slint::{Image, Rgba8Pixel, SharedPixelBuffer};
 use exr::prelude as exr;
 use std::path::PathBuf;
-use crate::image_processing::process_pixel;
 use rayon::prelude::*;
 use std::collections::HashMap; // potrzebne dla extract_layers_info
 use crate::utils::split_layer_and_short;
@@ -10,10 +9,22 @@ use crate::progress::ProgressSink;
 use glam::{Mat3, Vec3};
 use std::sync::Arc;
 use crate::full_exr_cache::FullExrCacheData;
+use crate::lazy_exr_loader::LazyExrLoader;
 use core::simd::{f32x4, Simd};
 use std::simd::prelude::SimdFloat;
+use crate::buffer_pool::BufferPool;
+use std::sync::OnceLock;
 
-// GPU/wgpu i narzędzia do tworzenia buforów
+// Global buffer pool for performance optimization
+static GLOBAL_BUFFER_POOL: OnceLock<Arc<BufferPool>> = OnceLock::new();
+
+pub fn set_global_buffer_pool(pool: Arc<BufferPool>) {
+    GLOBAL_BUFFER_POOL.set(pool).ok();
+}
+
+fn get_buffer_pool() -> Option<&'static Arc<BufferPool>> {
+    GLOBAL_BUFFER_POOL.get()
+}
 
 
 /// Zwraca kanoniczny skrót kanału na podstawie aliasów/nazw przyjaznych.
@@ -53,6 +64,14 @@ pub struct LayerChannels {
     pub channel_data: Arc<[f32]>, // Zmieniono z Vec<f32> na Arc<[f32]>
 }
 
+#[allow(dead_code)]
+pub enum ExrDataSource {
+    /// Full cache mode: all data in memory (high RAM usage, fast access)
+    Full(Arc<FullExrCacheData>),
+    /// Lazy mode: load data on demand (low RAM usage, slower access)
+    Lazy(Arc<LazyExrLoader>),
+}
+
 pub struct ImageCache {
     pub raw_pixels: Vec<f32>, // Zmiana z Vec<(f32,f32,f32,f32)> na Vec<f32>
     pub width: u32,
@@ -65,8 +84,8 @@ pub struct ImageCache {
     color_matrices: HashMap<String, Mat3>,
     // Cache wszystkich kanałów dla bieżącej warstwy aby uniknąć I/O przy przełączaniu
     pub current_layer_channels: Option<LayerChannels>,
-    // Pełne dane EXR (wszystkie warstwy i kanały) w pamięci
-    full_cache: Arc<FullExrCacheData>,
+    // EXR data source (full cache or lazy loader)
+    data_source: ExrDataSource,
     // MIP cache: przeskalowane podglądy (float RGBA) do szybkiego preview
     pub mip_levels: Vec<MipLevel>,
     // Histogram data dla analizy kolorów
@@ -105,7 +124,16 @@ fn build_mip_chain_cpu(
         if width <= 1 && height <= 1 { break; }
         let new_w = (width / 2).max(1);
         let new_h = (height / 2).max(1);
-        let mut next: Vec<f32> = vec![0.0; (new_w as usize) * (new_h as usize) * 4]; // 4 kanały RGBA
+        
+        // Use buffer pool for better performance
+        let pixel_count = (new_w as usize) * (new_h as usize) * 4;
+        let mut next = if let Some(pool) = get_buffer_pool() {
+            let mut buffer = pool.get_f32_buffer(pixel_count);
+            buffer.resize(pixel_count, 0.0);
+            buffer
+        } else {
+            vec![0.0; pixel_count] // Fallback for when pool isn't initialized
+        };
         // Jednowątkowe uśrednianie 2x2
         for y_out in 0..(new_h as usize) {
             let y0 = (y_out * 2).min(height as usize - 1);
@@ -164,16 +192,81 @@ impl ImageCache {
             color_matrix_rgb_to_srgb,
             color_matrices,
             current_layer_channels: Some(layer_channels),
-            full_cache: full_cache,
+            data_source: ExrDataSource::Full(full_cache),
             mip_levels,
             histogram: None, // Będzie obliczany na żądanie
         })
     }
     
+    /// Create ImageCache with lazy loading (low memory usage)
+    #[allow(dead_code)]
+    pub fn new_with_lazy_loader(path: &PathBuf, max_cached_layers: usize) -> anyhow::Result<Self> {
+        println!("=== ImageCache::new_with_lazy_loader START === {}", path.display());
+        
+        // Create lazy loader (loads only metadata)
+        let lazy_loader = Arc::new(LazyExrLoader::new(path.clone(), max_cached_layers)?);
+        
+        // Extract layer info from metadata  
+        let metadata = lazy_loader.get_metadata();
+        let mut layers_info = Vec::with_capacity(metadata.len());
+        
+        for layer_meta in metadata {
+            let channels = layer_meta.channel_names.iter()
+                .map(|name| ChannelInfo { name: name.clone() })
+                .collect();
+            layers_info.push(LayerInfo {
+                name: layer_meta.name.clone(),
+                channels,
+            });
+        }
+        
+        // Find best layer and load it initially
+        let best_layer = find_best_layer(&layers_info);
+        let layer_data = lazy_loader.get_layer_data(&best_layer, None)?;
+        let layer_channels = layer_data.to_layer_channels();
+        
+        let raw_pixels = compose_composite_from_channels(&layer_channels);
+        let width = layer_channels.width;
+        let height = layer_channels.height;
+        let current_layer_name = layer_channels.layer_name.clone();
+        
+        // Color matrix calculation
+        let mut color_matrices = HashMap::new();
+        let color_matrix_rgb_to_srgb = crate::color_processing::compute_rgb_to_srgb_matrix_from_file_for_layer_cached(path, &best_layer).ok();
+        if let Some(matrix) = color_matrix_rgb_to_srgb {
+            color_matrices.insert(best_layer.clone(), matrix);
+        }
+        
+        let mip_levels = build_mip_chain(&raw_pixels, width, height, 4, true);
+        
+        Ok(ImageCache {
+            raw_pixels,
+            width,
+            height,
+            layers_info,
+            current_layer_name,
+            color_matrix_rgb_to_srgb,
+            color_matrices,
+            current_layer_channels: Some(layer_channels),
+            data_source: ExrDataSource::Lazy(lazy_loader),
+            mip_levels,
+            histogram: None,
+        })
+    }
+    
     pub fn load_layer(&mut self, path: &PathBuf, layer_name: &str, progress: Option<&dyn ProgressSink>) -> anyhow::Result<()> {
         println!("=== ImageCache::load_layer START === layer: {}", layer_name);
-        // Jednorazowo wczytaj wszystkie kanały wybranej warstwy z pełnego cache i zbuduj kompozyt
-        let layer_channels = load_all_channels_for_layer_from_full(&self.full_cache, layer_name, progress)?;
+        
+        // Load layer data based on data source
+        let layer_channels = match &self.data_source {
+            ExrDataSource::Full(full_cache) => {
+                load_all_channels_for_layer_from_full(full_cache, layer_name, progress)?
+            },
+            ExrDataSource::Lazy(lazy_loader) => {
+                let layer_data = lazy_loader.get_layer_data(layer_name, progress)?;
+                layer_data.to_layer_channels()
+            },
+        };
 
         self.width = layer_channels.width;
         self.height = layer_channels.height;
@@ -229,85 +322,34 @@ impl ImageCache {
     }
     
     fn process_rgba_chunks_optimized(&self, input: &[f32], output: &mut [Rgba8Pixel], exposure: f32, gamma: f32, tonemap_mode: i32, color_m: Option<Mat3>) {
-        const CHUNK_SIZE: usize = 16; // 4 piksele * 4 kanały
+        // Use parallel processing with new optimized SIMD module
+        use rayon::prelude::*;
         
-        // SIMD processing for complete chunks
-        input.par_chunks_exact(CHUNK_SIZE)
-            .zip(output.par_chunks_exact_mut(4))
-            .for_each(|(in16, out4)| {
-                self.process_simd_chunk(in16, out4, exposure, gamma, tonemap_mode, color_m);
+        input.par_chunks_exact(crate::simd_processing::SIMD_CHUNK_SIZE)
+            .zip(output.par_chunks_exact_mut(crate::simd_processing::SIMD_PIXEL_COUNT))
+            .for_each(|(in_chunk, out_chunk)| {
+                // Safe: par_chunks_exact guarantees correct sizes
+                let in_array: &[f32; 16] = unsafe { in_chunk.try_into().unwrap_unchecked() };
+                let out_array: &mut [Rgba8Pixel; 4] = unsafe { out_chunk.try_into().unwrap_unchecked() };
+                
+                crate::simd_processing::process_simd_chunk_rgba(
+                    in_array, out_array, exposure, gamma, tonemap_mode, color_m
+                );
             });
         
-        // Handle remainder without mixing with main loop
-        let remainder_start = (input.len() / CHUNK_SIZE) * CHUNK_SIZE;
-        if remainder_start < input.len() {
-            self.process_scalar_remainder(&input[remainder_start..], 
-                                        &mut output[remainder_start / 4..], 
-                                        exposure, gamma, tonemap_mode, color_m);
+        // Handle remainder with optimized scalar processing
+        let simd_elements = (input.len() / crate::simd_processing::SIMD_CHUNK_SIZE) * crate::simd_processing::SIMD_CHUNK_SIZE;
+        let simd_pixels = simd_elements / 4;
+        
+        if simd_elements < input.len() {
+            crate::simd_processing::process_scalar_pixels(
+                &input[simd_elements..],
+                &mut output[simd_pixels..],
+                exposure, gamma, tonemap_mode, color_m, false
+            );
         }
     }
     
-    fn process_simd_chunk(&self, in16: &[f32], out4: &mut [Rgba8Pixel], exposure: f32, gamma: f32, tonemap_mode: i32, color_m: Option<Mat3>) {
-        // Zbierz do rejestrów SIMD - 4 piksele RGBA
-        let (mut r, mut g, mut b, a) = {
-            let r = f32x4::from_array([in16[0], in16[4], in16[8], in16[12]]);
-            let g = f32x4::from_array([in16[1], in16[5], in16[9], in16[13]]);
-            let b = f32x4::from_array([in16[2], in16[6], in16[10], in16[14]]);
-            let a = f32x4::from_array([in16[3], in16[7], in16[11], in16[15]]);
-            (r, g, b, a)
-        };
-
-        // Macierz kolorów (primaries → sRGB) jeśli dostępna
-        if let Some(mat) = color_m {
-            let m00 = Simd::splat(mat.x_axis.x);
-            let m01 = Simd::splat(mat.y_axis.x);
-            let m02 = Simd::splat(mat.z_axis.x);
-            let m10 = Simd::splat(mat.x_axis.y);
-            let m11 = Simd::splat(mat.y_axis.y);
-            let m12 = Simd::splat(mat.z_axis.y);
-            let m20 = Simd::splat(mat.x_axis.z);
-            let m21 = Simd::splat(mat.y_axis.z);
-            let m22 = Simd::splat(mat.z_axis.z);
-            let rr = m00 * r + m01 * g + m02 * b;
-            let gg = m10 * r + m11 * g + m12 * b;
-            let bb = m20 * r + m21 * g + m22 * b;
-            r = rr; g = gg; b = bb;
-        }
-
-        let (r8, g8, b8) = crate::tone_mapping::tone_map_and_gamma_simd(r, g, b, exposure, gamma, tonemap_mode);
-        let a8 = a.simd_clamp(Simd::splat(0.0), Simd::splat(1.0));
-
-        // Zapisz 4 piksele
-        let ra: [f32; 4] = r8.into();
-        let ga: [f32; 4] = g8.into();
-        let ba: [f32; 4] = b8.into();
-        let aa: [f32; 4] = a8.into();
-        for i in 0..4 {
-            out4[i] = Rgba8Pixel {
-                r: (ra[i] * 255.0).round().clamp(0.0, 255.0) as u8,
-                g: (ga[i] * 255.0).round().clamp(0.0, 255.0) as u8,
-                b: (ba[i] * 255.0).round().clamp(0.0, 255.0) as u8,
-                a: (aa[i] * 255.0).round().clamp(0.0, 255.0) as u8,
-            };
-        }
-    }
-    
-    fn process_scalar_remainder(&self, input: &[f32], output: &mut [Rgba8Pixel], exposure: f32, gamma: f32, tonemap_mode: i32, color_m: Option<Mat3>) {
-        let pixel_count = input.len() / 4;
-        for i in 0..pixel_count {
-            let pixel_start = i * 4;
-            let r0 = input[pixel_start];
-            let g0 = input[pixel_start + 1];
-            let b0 = input[pixel_start + 2];
-            let a0 = input[pixel_start + 3];
-            let mut r = r0; let mut g = g0; let mut b = b0;
-            if let Some(mat) = color_m {
-                let v = mat * Vec3::new(r, g, b);
-                r = v.x; g = v.y; b = v.z;
-            }
-            output[i] = process_pixel(r, g, b, a0, exposure, gamma, tonemap_mode);
-        }
-    }
     
     pub fn process_to_composite(&self, exposure: f32, gamma: f32, tonemap_mode: i32, lighting_rgb: bool) -> Image {
         let mut buffer = SharedPixelBuffer::<Rgba8Pixel>::new(self.width, self.height);
@@ -322,105 +364,10 @@ impl ImageCache {
     }
     
     fn process_rgba_chunks_composite_optimized(&self, input: &[f32], output: &mut [Rgba8Pixel], exposure: f32, gamma: f32, tonemap_mode: i32, color_m: Option<Mat3>, lighting_rgb: bool) {
-        const CHUNK_SIZE: usize = 16; // 4 piksele * 4 kanały
-        
-        // SIMD processing for complete chunks
-        input.par_chunks_exact(CHUNK_SIZE)
-            .zip(output.par_chunks_exact_mut(4))
-            .for_each(|(in16, out4)| {
-            // Zbierz do rejestrów SIMD - 4 piksele RGBA
-            let (mut r, mut g, mut b, a) = {
-                let r = f32x4::from_array([in16[0], in16[4], in16[8], in16[12]]);
-                let g = f32x4::from_array([in16[1], in16[5], in16[9], in16[13]]);
-                let b = f32x4::from_array([in16[2], in16[6], in16[10], in16[14]]);
-                let a = f32x4::from_array([in16[3], in16[7], in16[11], in16[15]]);
-                (r, g, b, a)
-            };
-
-            // Macierz kolorów (primaries → sRGB) jeśli dostępna
-            if let Some(mat) = color_m {
-                let m00 = Simd::splat(mat.x_axis.x);
-                let m01 = Simd::splat(mat.y_axis.x);
-                let m02 = Simd::splat(mat.z_axis.x);
-                let m10 = Simd::splat(mat.x_axis.y);
-                let m11 = Simd::splat(mat.y_axis.y);
-                let m12 = Simd::splat(mat.z_axis.y);
-                let m20 = Simd::splat(mat.x_axis.z);
-                let m21 = Simd::splat(mat.y_axis.z);
-                let m22 = Simd::splat(mat.z_axis.z);
-                let rr = m00 * r + m01 * g + m02 * b;
-                let gg = m10 * r + m11 * g + m12 * b;
-                let bb = m20 * r + m21 * g + m22 * b;
-                r = rr; g = gg; b = bb;
-            }
-
-            if lighting_rgb {
-                let (r8, g8, b8) = crate::tone_mapping::tone_map_and_gamma_simd(r, g, b, exposure, gamma, tonemap_mode);
-                let a8 = a.simd_clamp(Simd::splat(0.0), Simd::splat(1.0));
-
-                let ra: [f32; 4] = r8.into();
-                let ga: [f32; 4] = g8.into();
-                let ba: [f32; 4] = b8.into();
-                let aa: [f32; 4] = a8.into();
-                for i in 0..4 {
-                    out4[i] = Rgba8Pixel {
-                        r: (ra[i] * 255.0).round().clamp(0.0, 255.0) as u8,
-                        g: (ga[i] * 255.0).round().clamp(0.0, 255.0) as u8,
-                        b: (ba[i] * 255.0).round().clamp(0.0, 255.0) as u8,
-                        a: (aa[i] * 255.0).round().clamp(0.0, 255.0) as u8,
-                    };
-                }
-            } else {
-                // Grayscale processing
-                let (r_linear, g_linear, b_linear) = (r, g, b); // Keep linear for grayscale conversion
-                let (r_tm, g_tm, b_tm) = crate::tone_mapping::tone_map_and_gamma_simd(r_linear, g_linear, b_linear, exposure, gamma, tonemap_mode);
-
-                let gray = r_tm.simd_max(g_tm).simd_max(b_tm).simd_clamp(Simd::splat(0.0), Simd::splat(1.0));
-                let a8 = a.simd_clamp(Simd::splat(0.0), Simd::splat(1.0));
-
-                let ga: [f32; 4] = gray.into();
-                let aa: [f32; 4] = a8.into();
-                for i in 0..4 {
-                    let g8 = (ga[i] * 255.0).round().clamp(0.0, 255.0) as u8;
-                    out4[i] = Rgba8Pixel { r: g8, g: g8, b: g8, a: aa[i] as u8 }; // Alpha should be 255 if not explicitly set
-                }
-            }
-        });
-        
-        // Handle remainder without mixing with main loop  
-        let remainder_start = (input.len() / CHUNK_SIZE) * CHUNK_SIZE;
-        if remainder_start < input.len() {
-            self.process_scalar_remainder_composite(&input[remainder_start..], 
-                                                  &mut output[remainder_start / 4..], 
-                                                  exposure, gamma, tonemap_mode, color_m, lighting_rgb);
-        }
-    }
-    
-    fn process_scalar_remainder_composite(&self, input: &[f32], output: &mut [Rgba8Pixel], exposure: f32, gamma: f32, tonemap_mode: i32, color_m: Option<Mat3>, lighting_rgb: bool) {
-        let pixel_count = input.len() / 4;
-        for i in 0..pixel_count {
-            let pixel_start = i * 4;
-            let r0 = input[pixel_start];
-            let g0 = input[pixel_start + 1];
-            let b0 = input[pixel_start + 2];
-            let a0 = input[pixel_start + 3];
-            let (mut r, mut g, mut b) = (r0, g0, b0);
-            if let Some(mat) = color_m {
-                let v = mat * Vec3::new(r, g, b);
-                r = v.x; g = v.y; b = v.z;
-            }
-            if lighting_rgb {
-                output[i] = process_pixel(r, g, b, a0, exposure, gamma, tonemap_mode);
-            } else {
-                let px = process_pixel(r, g, b, a0, exposure, gamma, tonemap_mode);
-                let rr = (px.r as f32) / 255.0;
-                let gg = (px.g as f32) / 255.0;
-                let bb = (px.b as f32) / 255.0;
-                let gray = (rr.max(gg).max(bb)).clamp(0.0, 1.0);
-                let g8 = (gray * 255.0).round().clamp(0.0, 255.0) as u8;
-                output[i] = Rgba8Pixel { r: g8, g: g8, b: g8, a: px.a };
-            }
-        }
+        // Use the optimized SIMD processing module
+        crate::simd_processing::process_image_optimized(
+            input, output, exposure, gamma, tonemap_mode, color_m, !lighting_rgb
+        );
     }
     
     // Nowa metoda dla preview (szybsze przetwarzanie małego obrazka)
@@ -677,7 +624,14 @@ pub(crate) fn load_all_channels_for_layer(
         if matches {
             let num_channels = layer.channel_data.list.len();
             let mut channel_names: Vec<String> = Vec::with_capacity(num_channels);
-            let mut channel_data_vec: Vec<f32> = Vec::with_capacity(pixel_count * num_channels); // Temporary Vec
+            
+            // Use buffer pool for channel data
+            let channel_data_size = pixel_count * num_channels;
+            let mut channel_data_vec = if let Some(pool) = get_buffer_pool() {
+                pool.get_f32_buffer(channel_data_size)
+            } else {
+                Vec::with_capacity(channel_data_size)
+            };
             for (ci, ch) in layer.channel_data.list.iter().enumerate() {
                 let full = ch.name.to_string();
                 let (_lname, short) = split_layer_and_short(&full, base_attr.as_deref());
@@ -695,8 +649,13 @@ pub(crate) fn load_all_channels_for_layer(
 fn compose_composite_from_channels(layer_channels: &LayerChannels) -> Vec<f32> {
     let pixel_count = (layer_channels.width as usize) * (layer_channels.height as usize);
     
-    // Pre-allocate with exact capacity to avoid reallocations
-    let mut out: Vec<f32> = Vec::with_capacity(pixel_count * 4);
+    // Use buffer pool for better performance
+    let buffer_size = pixel_count * 4;
+    let mut out = if let Some(pool) = get_buffer_pool() {
+        pool.get_f32_buffer(buffer_size)
+    } else {
+        Vec::with_capacity(buffer_size)
+    };
     
     let pick_exact_index = |name: &str| -> Option<usize> { layer_channels.channel_names.iter().position(|n| n == name) };
     let pick_prefix_index = |prefix: char| -> Option<usize> {
@@ -786,7 +745,14 @@ impl ImageCache {
         let base = channel_index * pixel_count;
         let channel_slice = &layer_cache.channel_data[base..base + pixel_count];
 
-        let mut out: Vec<f32> = Vec::with_capacity(pixel_count * 4);
+        // Use buffer pool for better performance
+        let buffer_size = pixel_count * 4;
+        let mut out = if let Some(pool) = get_buffer_pool() {
+            pool.get_f32_buffer(buffer_size)
+        } else {
+            Vec::with_capacity(buffer_size)
+        };
+        
         for &v in channel_slice.iter() {
             out.push(v); // R
             out.push(v); // G
@@ -855,6 +821,37 @@ impl ImageCache {
 
         if let Some(p) = progress { p.finish(Some("Depth processed")); }
         Image::from_rgba8(buffer)
+    }
+    
+    /// Get memory usage statistics for monitoring
+    #[allow(dead_code)]
+    pub fn get_memory_stats(&self) -> String {
+        match &self.data_source {
+            ExrDataSource::Full(_) => {
+                let current_mb = (self.raw_pixels.len() * 4) / (1024 * 1024);
+                let mip_mb: usize = self.mip_levels.iter()
+                    .map(|mip| (mip.pixels.len() * 4) / (1024 * 1024))
+                    .sum();
+                format!("Full cache mode: {}MB current + {}MB MIPs", current_mb, mip_mb)
+            },
+            ExrDataSource::Lazy(loader) => {
+                let (cached_layers, total_layers, cached_mb) = loader.get_cache_stats();
+                let current_mb = (self.raw_pixels.len() * 4) / (1024 * 1024);
+                let mip_mb: usize = self.mip_levels.iter()
+                    .map(|mip| (mip.pixels.len() * 4) / (1024 * 1024))
+                    .sum();
+                format!("Lazy mode: {}/{} layers cached ({}MB) + current {}MB + MIPs {}MB", 
+                       cached_layers, total_layers, cached_mb, current_mb, mip_mb)
+            }
+        }
+    }
+    
+    /// Clear cached data to free memory (only works in lazy mode)
+    #[allow(dead_code)]
+    pub fn clear_data_cache(&self) {
+        if let ExrDataSource::Lazy(loader) = &self.data_source {
+            loader.clear_cache();
+        }
     }
 }
 

@@ -15,6 +15,9 @@ mod color_processing;
 mod full_exr_cache;
 mod histogram;
 mod tone_mapping;
+mod buffer_pool;
+mod simd_processing;
+mod lazy_exr_loader;
 
 #[cfg(target_os = "windows")]
 mod platform_win;
@@ -24,6 +27,7 @@ use crate::ui_handlers::{push_console, lock_or_recover};
 use ui_handlers::{ImageCacheType, CurrentFilePathType, FullExrCache};
 use slint::{VecModel, SharedString, Model};
 use std::rc::Rc;
+use crate::buffer_pool::BufferPool;
 
 fn main() -> Result<(), slint::PlatformError> {
     // Ustaw obsługę panic aby aplikacja nie znikała
@@ -68,6 +72,10 @@ fn main() -> Result<(), slint::PlatformError> {
     let image_cache: ImageCacheType = Arc::new(Mutex::new(None));
     let current_file_path: CurrentFilePathType = Arc::new(Mutex::new(None));
     let full_exr_cache: FullExrCache = Arc::new(Mutex::new(None));
+    
+    // Initialize global buffer pool for performance optimization
+    let buffer_pool = Arc::new(BufferPool::new(32)); // Pool of 32 buffers per type
+    crate::image_cache::set_global_buffer_pool(buffer_pool.clone());
 
     // Setup UI callbacks...
     let console_model = setup_ui_callbacks(&ui, image_cache.clone(), current_file_path.clone(), full_exr_cache.clone());
