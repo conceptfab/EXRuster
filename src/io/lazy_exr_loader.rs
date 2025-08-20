@@ -247,17 +247,3 @@ impl LazyLayerData {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::path::PathBuf;
-    
-    #[test]
-    fn test_lazy_loader_creation() {
-        // This test would require an actual EXR file
-        // In a real scenario, you'd test with a known test file
-        let fake_path = PathBuf::from("test.exr");
-        // let loader = LazyExrLoader::new(fake_path, 2);
-        // assert!(loader.is_ok());
-    }
-}
