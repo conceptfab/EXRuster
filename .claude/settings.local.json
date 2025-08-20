@@ -13,7 +13,9 @@
       "Bash(git checkout:*)",
       "Bash(find:*)",
       "Bash(mkdir:*)",
-      "Bash(mv:*)"
+      "Bash(mv:*)",
+      "Bash(rg:*)",
+      "Bash(sed:*)"
     ],
     "deny": [],
     "ask": []

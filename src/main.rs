@@ -12,8 +12,8 @@ mod utils;
 mod platform;
 
 use std::sync::{Arc, Mutex};
-use crate::ui::{push_console, lock_or_recover};
-use ui::{ImageCacheType, CurrentFilePathType, FullExrCache};
+use crate::ui::{push_console, lock_or_recover, create_shared_state};
+use ui::{ImageCacheType, CurrentFilePathType, FullExrCache, SharedUiState};
 use slint::{VecModel, SharedString, Model};
 use std::rc::Rc;
 // BufferPool is now available via crate::utils::BufferPool re-export
@@ -61,13 +61,14 @@ fn main() -> Result<(), slint::PlatformError> {
     let image_cache: ImageCacheType = Arc::new(Mutex::new(None));
     let current_file_path: CurrentFilePathType = Arc::new(Mutex::new(None));
     let full_exr_cache: FullExrCache = Arc::new(Mutex::new(None));
+    let ui_state: SharedUiState = create_shared_state();
     
     // Initialize global buffer pool for performance optimization
     let buffer_pool = Arc::new(crate::utils::BufferPool::new(32)); // Pool of 32 buffers per type
     crate::io::image_cache::set_global_buffer_pool(buffer_pool.clone());
 
     // Setup UI callbacks...
-    let console_model = setup_ui_callbacks(&ui, image_cache.clone(), current_file_path.clone(), full_exr_cache.clone());
+    let console_model = setup_ui_callbacks(&ui, image_cache.clone(), current_file_path.clone(), full_exr_cache.clone(), ui_state.clone());
 
 
     {
@@ -122,6 +123,7 @@ fn setup_menu_callbacks(
     image_cache: ImageCacheType,
     console_model: Rc<VecModel<SharedString>>,
     full_exr_cache: FullExrCache,
+    ui_state: SharedUiState,
 ) {
     ui.on_clear_console({
         let ui_handle = ui.as_weak();
@@ -204,12 +206,32 @@ fn setup_menu_callbacks(
             }
         }
     });
+
+    {
+        let ui_state_for_layer_click = ui_state.clone();
+        ui.on_layer_tree_clicked({
+            let ui_handle = ui.as_weak();
+            let image_cache = image_cache.clone();
+            let current_file_path = current_file_path.clone();
+            let console = console_model.clone(); // Use console_model directly
+            move |clicked_item: slint::SharedString| {
+                crate::ui::handle_layer_tree_click(
+                    ui_handle.clone(),
+                    image_cache.clone(), 
+                    clicked_item.to_string(),
+                    current_file_path.clone(),
+                    console.clone(),
+                    ui_state_for_layer_click.clone()
+                );
+            }
+        });
+    }
 }
 
 fn setup_image_control_callbacks(
     ui: &AppWindow,
     image_cache: ImageCacheType,
-    current_file_path: CurrentFilePathType,
+    _current_file_path: CurrentFilePathType,
     console_model: Rc<VecModel<SharedString>>,
 ) {
     let ui_weak_for_throttle = ui.as_weak();
@@ -306,22 +328,6 @@ fn setup_image_control_callbacks(
                     ));
                 }
             }
-        }
-    });
-
-    ui.on_layer_tree_clicked({
-        let ui_handle = ui.as_weak();
-        let image_cache = image_cache.clone();
-        let current_file_path = current_file_path.clone();
-        let console = console_model.clone(); // Use console_model directly
-        move |clicked_item: slint::SharedString| {
-            crate::ui::handle_layer_tree_click(
-                ui_handle.clone(),
-                image_cache.clone(), 
-                clicked_item.to_string(),
-                current_file_path.clone(),
-                console.clone()
-            );
         }
     });
 }
@@ -463,11 +469,12 @@ fn setup_ui_callbacks(
     image_cache: ImageCacheType,
     current_file_path: CurrentFilePathType,
     full_exr_cache: FullExrCache,
+    ui_state: SharedUiState,
 ) -> Rc<VecModel<SharedString>> {
     let console_model: Rc<VecModel<SharedString>> = Rc::new(VecModel::from(vec![]));
     ui.set_console_text(SharedString::from(""));
 
-    setup_menu_callbacks(ui, current_file_path.clone(), image_cache.clone(), console_model.clone(), full_exr_cache.clone());
+    setup_menu_callbacks(ui, current_file_path.clone(), image_cache.clone(), console_model.clone(), full_exr_cache.clone(), ui_state.clone());
     setup_image_control_callbacks(ui, image_cache.clone(), current_file_path.clone(), console_model.clone());
     setup_panel_callbacks(ui, current_file_path.clone(), image_cache.clone(), console_model.clone(), full_exr_cache.clone());
 
