@@ -1,10 +1,11 @@
 # Faza 2: Dekompozycja dużych modułów - Szczegółowy Plan
 
-## 🎯 STATUS: 2/7 kroków ukończone (29%) + Cleanup
+## 🎯 STATUS: 3/7 kroków ukończone (43%) + Cleanup
 
 ### ✅ UKOŃCZONE:
 - **Krok 1:** State Management - pełny sukces ✅
 - **Krok 2:** Layer Operations - pełny sukces ✅  
+- **Krok 3:** Image Controls - pełny sukces ✅
 - **Cleanup:** Wszystkie błędy kompilacji i warningi naprawione ✅
 
 ### 🔧 GOTOWE DO DALSZEGO REFAKTORINGU:
@@ -14,10 +15,10 @@
 
 ## Analiza obecnej struktury
 
-### ui_handlers.rs (799 linii, było 981) - Główne problemy:
-1. **Zbyt dużo odpowiedzialności** - obsługa UI, state management, async operations
-2. **Globalne static zmienne** - ~~ITEM_TO_LAYER, DISPLAY_TO_REAL_LAYER~~ ✅ MOVED TO STATE, ~~LAST_PREVIEW_LOG~~ ✅ MOVED TO STATE
-3. **Mieszane concerns** - UI callbacks, business logic, async spawning
+### ui_handlers.rs (679 linii, było 981) - Główne problemy:
+1. **Zbyt dużo odpowiedzialności** - ~~obsługa UI, state management~~ ✅ EXTRACTED, async operations
+2. **Globalne static zmienne** - ~~ITEM_TO_LAYER, DISPLAY_TO_REAL_LAYER~~ ✅ MOVED TO STATE, ~~LAST_PREVIEW_LOG~~ ✅ MOVED TO IMAGE_CONTROLS
+3. **Mieszane concerns** - ~~UI callbacks~~ ✅ PARTIALLY EXTRACTED, business logic, async spawning
 4. **Duże funkcje** - load_thumbnails_for_directory (150+ linii), handle_open_exr_from_path (270+ linii)
 
 ### main.rs (483 linii, było 477) - Problemy:
@@ -62,15 +63,16 @@ pub type SharedUiState = Arc<Mutex<UiState>>;
 - ✅ Dodano `#[allow(dead_code)]` dla elementów state.rs (przygotowane na dalszy refaktoring)
 - ✅ Kompilacja: 0 błędów, 0 warningów
 
-### Krok 3: Wyodrębnienie Image Controls
+### ✅ Krok 3: Wyodrębnienie Image Controls - UKOŃCZONY
 **Cel:** Separacja kontroli parametrów obrazu
-**Pliki:** `src/ui/image_controls.rs`
+**Pliki:** `src/ui/image_controls.rs` ✅
 
-**Funkcje do przeniesienia:**
-- `ThrottledUpdate` struct i implementacja
-- `handle_parameter_changed_throttled()`
-- `update_preview_image()`
-- Logika exposure/gamma/tonemap
+**Funkcje przeniesione:** ✅
+- ✅ `ThrottledUpdate` struct i implementacja (39 linii)
+- ✅ `handle_parameter_changed_throttled()` (31 linii)
+- ✅ `update_preview_image()` (49 linii)
+- ✅ Logika exposure/gamma/tonemap wraz z LAST_PREVIEW_LOG
+- ✅ Re-eksporty dla zachowania kompatybilności
 
 ### Krok 4: Wyodrębnienie Thumbnail Operations
 **Cel:** Izolacja operacji na miniaturkach  
@@ -117,7 +119,7 @@ src/ui/
 ├── state.rs            # Zarządzanie stanem (0 deps UI) ✅
 ├── layers.rs           # Obsługa warstw (dep: state) ✅
 ├── progress.rs         # Progress handling ✅
-├── image_controls.rs   # Kontrole obrazu (dep: state) ❌
+├── image_controls.rs   # Kontrole obrazu (dep: state) ✅
 ├── thumbnails.rs       # Miniaturki (dep: state) ❌
 ├── file_handlers.rs    # Pliki (dep: state, layers) ❌
 ├── setup.rs            # Callbacks setup (dep: wszystkie) ❌
@@ -129,11 +131,12 @@ src/ui/
 ### ✅ **Już osiągnięte:**
 1. **Clean compilation** - 0 błędów, 0 warningów
 2. **Centralized state** - usunięto globalne static zmienne
-3. **Better organization** - layer operations wydzielone
+3. **Better organization** - layer operations i image controls wydzielone
 4. **Reduced code duplication** - usunięto duplikaty funkcji
-5. **Smaller files** - ui_handlers.rs: 981→799 linii (-182 linii)
+5. **Smaller files** - ui_handlers.rs: 981→679 linii (-302 linii)
+6. **Image controls separation** - throttling i preview logic w osobnym module
 
-### 🎯 **Do osiągnięcia (kroki 3-7):**
+### 🎯 **Do osiągnięcia (kroki 4-7):**
 1. **Łatwiejsze utrzymanie** - każdy moduł ma jedną odpowiedzialność
 2. **Lepsze testowanie** - można testować moduły w izolacji  
 3. **Redukcja coupling** - czyste interfejsy między modułami
@@ -149,12 +152,13 @@ src/ui/
 
 ## Effort
 
-### ✅ **Wykonane (2.5h):**
+### ✅ **Wykonane (3.5h):**
 - Krok 1: State Management (1h)
 - Krok 2: Layer Operations (1h)  
+- Krok 3: Image Controls (1h)
 - Cleanup: Błędy i warningi (0.5h)
 
-### 🎯 **Pozostało (2-3h):**
-- Kroki 3-7: Image Controls, Thumbnails, File Handlers, Setup, Final Refactor
+### 🎯 **Pozostało (1.5-2h):**
+- Kroki 4-7: Thumbnails, File Handlers, Setup, Final Refactor
 
 **Każdy krok można wykonać i przetestować niezależnie.**

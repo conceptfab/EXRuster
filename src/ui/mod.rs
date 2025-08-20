@@ -2,6 +2,7 @@ pub mod ui_handlers;
 pub mod progress;
 pub mod state;
 pub mod layers;
+pub mod image_controls;
 
 pub use ui_handlers::{
     push_console, lock_or_recover, handle_exit, handle_open_exr, handle_open_exr_from_path,
