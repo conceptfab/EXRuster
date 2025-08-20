@@ -2,6 +2,7 @@ use slint::{VecModel, SharedString, Model, ComponentHandle};
 use std::sync::{Arc, Mutex};
 use std::rc::Rc;
 use crate::ui::{push_console, lock_or_recover, ImageCacheType, CurrentFilePathType, FullExrCache, SharedUiState};
+use crate::utils::error_handling::UiErrorReporter;
 use crate::AppWindow;
 
 /// Setup menu-related callbacks (file operations, console management, histogram, layers)
@@ -84,8 +85,7 @@ pub fn setup_menu_callbacks(
                             }
                         }
                         Err(e) => {
-                            push_console(&ui, &console, format!("[error][histogram] {}", e));
-                            ui.set_status_text(format!("Histogram error: {}", e).into());
+                            ui.report_error(&console, "histogram", e);
                         }
                     }
                 }
@@ -340,8 +340,7 @@ pub fn setup_panel_callbacks(
                             }
                         }
                         Err(e) => {
-                            ui.set_status_text(format!("Delete error: {}", e).into());
-                            push_console(&ui, &console_model, format!("[error][delete] {} → {}", display, e));
+                            ui.report_error_with_status(&console_model, "delete", "Delete error", format!("{} → {}", display, e));
                         }
                     }
                 }

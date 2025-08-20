@@ -5,7 +5,7 @@ use crate::io::image_cache::ImageCache;
 use crate::ui::progress::{UiProgress, ProgressSink};
 use crate::ui::state::SharedUiState;
 use crate::ui::{push_console, lock_or_recover};
-use crate::utils::{get_channel_info, normalize_channel_name};
+use crate::utils::{get_channel_info, normalize_channel_name, UiErrorReporter};
 use crate::AppWindow;
 
 pub type ImageCacheType = Arc<Mutex<Option<ImageCache>>>;
@@ -64,15 +64,13 @@ pub fn handle_layer_tree_click(
                             ui.set_selected_layer_item(format!("📁 {}", display_layer_name).into());
                         }
                         Err(e) => {
-                            ui.set_status_text(format!("Error loading layer {}: {}", layer_name, e).into());
-                            push_console(&ui, &console, format!("[error] loading layer {}: {}", layer_name, e));
+                            ui.report_error_with_status(&console, "layer", &format!("Error loading layer {}", layer_name), e);
                             prog.reset();
                         }
                     }
                 }
             } else {
-                ui.set_status_text("Error: No file loaded".into());
-                push_console(&ui, &console, "[error] no file loaded".to_string());
+                ui.report_error(&console, "file", "No file loaded");
             }
         }
     }
@@ -129,8 +127,7 @@ pub fn handle_layer_tree_click(
                 let path = match file_path {
                     Some(p) => p,
                     None => {
-                        ui.set_status_text("Błąd: brak ścieżki do pliku".into());
-                        push_console(&ui, &console, "[error] brak ścieżki do pliku".to_string());
+                        ui.report_error(&console, "file", "brak ścieżki do pliku");
                         return;
                     }
                 };
@@ -172,8 +169,7 @@ pub fn handle_layer_tree_click(
                         ui.set_selected_layer_item(selected.into());
                     }
                     Err(e) => {
-                        ui.set_status_text(format!("Error loading channel {}: {}", channel_short, e).into());
-                        push_console(&ui, &console, format!("[error] loading channel {}@{}: {}", channel_short, active_layer, e));
+                        ui.report_error_with_status(&console, "channel", &format!("Error loading channel {}", channel_short), format!("{}@{}: {}", channel_short, active_layer, e));
                         prog.reset();
                     }
                 }
