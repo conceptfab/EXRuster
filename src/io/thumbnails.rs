@@ -7,8 +7,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Instant, Duration};
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
-use crate::image_cache::extract_layers_info;
-use crate::progress::ProgressSink;
+use crate::io::image_cache::extract_layers_info;
+use crate::ui::progress::ProgressSink;
 use std::sync::{Mutex, OnceLock};
 use lru::LruCache;
 
@@ -231,8 +231,8 @@ pub fn generate_single_exr_thumbnail_work_new(
             let (r, g, b) = (r * exposure_mult, g * exposure_mult, b * exposure_mult);
             
             // Tone mapping używając skonsolidowanej funkcji
-            let mode = crate::tone_mapping::ToneMapMode::from(tonemap_mode);
-            let (r, g, b) = crate::tone_mapping::apply_tonemap_scalar(r, g, b, mode);
+            let mode = crate::processing::tone_mapping::ToneMapMode::from(tonemap_mode);
+            let (r, g, b) = crate::processing::tone_mapping::apply_tonemap_scalar(r, g, b, mode);
 
             // Gamma correction
             let gamma_correct = |x: f32| x.powf(1.0 / gamma);

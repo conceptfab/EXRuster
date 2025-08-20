@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use anyhow::Context;
 use exr::prelude as exr;
 
-use crate::progress::ProgressSink;
+use crate::ui::progress::ProgressSink;
 use crate::utils::split_layer_and_short;
 
 #[derive(Clone, Debug)]

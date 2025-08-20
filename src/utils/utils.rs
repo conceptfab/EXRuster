@@ -3,7 +3,7 @@ use slint::Color;
 use crate::AppWindow;
 
 #[inline]
-pub(crate) fn split_layer_and_short(full: &str, base_attr: Option<&str>) -> (String, String) {
+pub fn split_layer_and_short(full: &str, base_attr: Option<&str>) -> (String, String) {
     let result = if let Some(base) = base_attr {
         let short = full.rsplit('.').next().unwrap_or(full).to_string();
         (base.to_string(), short)
@@ -17,7 +17,7 @@ pub(crate) fn split_layer_and_short(full: &str, base_attr: Option<&str>) -> (Str
 }
 
 #[inline]
-pub(crate) fn human_size(bytes: u64) -> String {
+pub fn human_size(bytes: u64) -> String {
     const UNITS: [&str; 6] = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"];
     let mut size = bytes as f64;
     let mut unit = 0usize;

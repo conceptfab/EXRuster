@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock, Mutex};
 use anyhow::Context;
 use exr::prelude as exr;
-use crate::progress::ProgressSink;
+use crate::ui::progress::ProgressSink;
 use crate::utils::split_layer_and_short;
 
 /// Lazy EXR loader that loads only metadata initially and pixel data on demand
@@ -236,8 +236,8 @@ impl LazyExrLoader {
 // Compatibility layer for existing FullExrCacheData API
 impl LazyLayerData {
     /// Convert to old LayerChannels format for backward compatibility
-    pub fn to_layer_channels(&self) -> crate::image_cache::LayerChannels {
-        crate::image_cache::LayerChannels {
+    pub fn to_layer_channels(&self) -> crate::io::image_cache::LayerChannels {
+        crate::io::image_cache::LayerChannels {
             layer_name: self.metadata.name.clone(),
             width: self.metadata.width,
             height: self.metadata.height,

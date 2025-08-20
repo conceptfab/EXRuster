@@ -1,7 +1,7 @@
 use slint::Rgba8Pixel;
 
 // Import funkcji tone mapping z tone_mapping.rs
-use crate::tone_mapping::{
+use crate::processing::tone_mapping::{
     apply_gamma_lut,
     srgb_oetf,
 };
@@ -67,8 +67,8 @@ pub fn tone_map_and_gamma(
     let exposed_b = safe_b * exposure_multiplier;
 
     // Tone mapping używając skonsolidowanej funkcji
-    let mode = crate::tone_mapping::ToneMapMode::from(tonemap_mode);
-    let (tm_r, tm_g, tm_b) = crate::tone_mapping::apply_tonemap_scalar(exposed_r, exposed_g, exposed_b, mode);
+    let mode = crate::processing::tone_mapping::ToneMapMode::from(tonemap_mode);
+    let (tm_r, tm_g, tm_b) = crate::processing::tone_mapping::apply_tonemap_scalar(exposed_r, exposed_g, exposed_b, mode);
 
     // Korekcja wyjściowa: preferuj prawdziwą krzywą sRGB (OETF) dla gamma ~2.2/2.4; w innym wypadku użyj niestandardowej gammy
     let use_srgb = (gamma - 2.2).abs() < 0.2 || (gamma - 2.4).abs() < 0.2;

@@ -4,15 +4,15 @@ use std::path::PathBuf;
 use rayon::prelude::*;
 use std::collections::HashMap; // potrzebne dla extract_layers_info
 use crate::utils::split_layer_and_short;
-use crate::progress::ProgressSink;
+use crate::ui::progress::ProgressSink;
 // use crate::color_processing::compute_rgb_to_srgb_matrix_from_file_for_layer;
 use glam::{Mat3, Vec3};
 use std::sync::Arc;
-use crate::full_exr_cache::FullExrCacheData;
-use crate::lazy_exr_loader::LazyExrLoader;
+use crate::io::full_exr_cache::FullExrCacheData;
+use crate::io::lazy_exr_loader::LazyExrLoader;
 use core::simd::{f32x4, Simd};
 use std::simd::prelude::SimdFloat;
-use crate::buffer_pool::BufferPool;
+use crate::utils::buffer_pool::BufferPool;
 use std::sync::OnceLock;
 
 // Global buffer pool for performance optimization
@@ -89,7 +89,7 @@ pub struct ImageCache {
     // MIP cache: przeskalowane podglądy (float RGBA) do szybkiego preview
     pub mip_levels: Vec<MipLevel>,
     // Histogram data dla analizy kolorów
-    pub histogram: Option<Arc<crate::histogram::HistogramData>>,
+    pub histogram: Option<Arc<crate::processing::histogram::HistogramData>>,
 }
 
 #[derive(Clone, Debug)]
@@ -177,7 +177,7 @@ impl ImageCache {
 
         // Spróbuj wyliczyć macierz konwersji primaries → sRGB na podstawie atrybutu chromaticities (dla wybranej warstwy/partu)
         let mut color_matrices = HashMap::new();
-        let color_matrix_rgb_to_srgb = crate::color_processing::compute_rgb_to_srgb_matrix_from_file_for_layer_cached(path, &best_layer).ok();
+        let color_matrix_rgb_to_srgb = crate::processing::color_processing::compute_rgb_to_srgb_matrix_from_file_for_layer_cached(path, &best_layer).ok();
         if let Some(matrix) = color_matrix_rgb_to_srgb {
             color_matrices.insert(best_layer.clone(), matrix);
         }
@@ -232,7 +232,7 @@ impl ImageCache {
         
         // Color matrix calculation
         let mut color_matrices = HashMap::new();
-        let color_matrix_rgb_to_srgb = crate::color_processing::compute_rgb_to_srgb_matrix_from_file_for_layer_cached(path, &best_layer).ok();
+        let color_matrix_rgb_to_srgb = crate::processing::color_processing::compute_rgb_to_srgb_matrix_from_file_for_layer_cached(path, &best_layer).ok();
         if let Some(matrix) = color_matrix_rgb_to_srgb {
             color_matrices.insert(best_layer.clone(), matrix);
         }
@@ -277,7 +277,7 @@ impl ImageCache {
         if self.color_matrices.contains_key(layer_name) {
             self.color_matrix_rgb_to_srgb = self.color_matrices.get(layer_name).cloned();
         } else {
-            self.color_matrix_rgb_to_srgb = crate::color_processing::compute_rgb_to_srgb_matrix_from_file_for_layer_cached(path, layer_name).ok();
+            self.color_matrix_rgb_to_srgb = crate::processing::color_processing::compute_rgb_to_srgb_matrix_from_file_for_layer_cached(path, layer_name).ok();
             if let Some(matrix) = self.color_matrix_rgb_to_srgb {
                 self.color_matrices.insert(layer_name.to_string(), matrix);
             }
@@ -289,14 +289,14 @@ impl ImageCache {
     }
 
     pub fn update_histogram(&mut self) -> anyhow::Result<()> {
-        let mut histogram = crate::histogram::HistogramData::new(256);
+        let mut histogram = crate::processing::histogram::HistogramData::new(256);
         histogram.compute_from_rgba_pixels(&self.raw_pixels)?;
         self.histogram = Some(Arc::new(histogram));
         println!("Histogram updated: {} pixels processed", self.histogram.as_ref().unwrap().total_pixels);
         Ok(())
     }
 
-    pub fn get_histogram_data(&self) -> Option<Arc<crate::histogram::HistogramData>> {
+    pub fn get_histogram_data(&self) -> Option<Arc<crate::processing::histogram::HistogramData>> {
         self.histogram.clone()
     }
 
@@ -325,24 +325,24 @@ impl ImageCache {
         // Use parallel processing with new optimized SIMD module
         use rayon::prelude::*;
         
-        input.par_chunks_exact(crate::simd_processing::SIMD_CHUNK_SIZE)
-            .zip(output.par_chunks_exact_mut(crate::simd_processing::SIMD_PIXEL_COUNT))
+        input.par_chunks_exact(crate::processing::simd_processing::SIMD_CHUNK_SIZE)
+            .zip(output.par_chunks_exact_mut(crate::processing::simd_processing::SIMD_PIXEL_COUNT))
             .for_each(|(in_chunk, out_chunk)| {
                 // Safe: par_chunks_exact guarantees correct sizes
                 let in_array: &[f32; 16] = unsafe { in_chunk.try_into().unwrap_unchecked() };
                 let out_array: &mut [Rgba8Pixel; 4] = unsafe { out_chunk.try_into().unwrap_unchecked() };
                 
-                crate::simd_processing::process_simd_chunk_rgba(
+                crate::processing::simd_processing::process_simd_chunk_rgba(
                     in_array, out_array, exposure, gamma, tonemap_mode, color_m
                 );
             });
         
         // Handle remainder with optimized scalar processing
-        let simd_elements = (input.len() / crate::simd_processing::SIMD_CHUNK_SIZE) * crate::simd_processing::SIMD_CHUNK_SIZE;
+        let simd_elements = (input.len() / crate::processing::simd_processing::SIMD_CHUNK_SIZE) * crate::processing::simd_processing::SIMD_CHUNK_SIZE;
         let simd_pixels = simd_elements / 4;
         
         if simd_elements < input.len() {
-            crate::simd_processing::process_scalar_pixels(
+            crate::processing::simd_processing::process_scalar_pixels(
                 &input[simd_elements..],
                 &mut output[simd_pixels..],
                 exposure, gamma, tonemap_mode, color_m, false
@@ -365,7 +365,7 @@ impl ImageCache {
     
     fn process_rgba_chunks_composite_optimized(&self, input: &[f32], output: &mut [Rgba8Pixel], exposure: f32, gamma: f32, tonemap_mode: i32, color_m: Option<Mat3>, lighting_rgb: bool) {
         // Use the optimized SIMD processing module
-        crate::simd_processing::process_image_optimized(
+        crate::processing::simd_processing::process_image_optimized(
             input, output, exposure, gamma, tonemap_mode, color_m, !lighting_rgb
         );
     }
@@ -450,7 +450,7 @@ impl ImageCache {
                         }
                         rr[lane] = r; gg[lane] = g; bb[lane] = b; aa[lane] = a; valid += 1;
                     }
-                    let (r8, g8, b8) = crate::tone_mapping::tone_map_and_gamma_simd(
+                    let (r8, g8, b8) = crate::processing::tone_mapping::tone_map_and_gamma_simd(
                         f32x4::from_array(rr), f32x4::from_array(gg), f32x4::from_array(bb), exposure, gamma, tonemap_mode);
                     let a8 = f32x4::from_array(aa).simd_clamp(Simd::splat(0.0), Simd::splat(1.0));
                     let ra: [f32; 4] = r8.into();

@@ -1,13 +1,24 @@
-WYSOKIE (Performance Critical):
 
-  1. Buffer pooling - eliminuje alokacje w gorących ścieżkach
-  2. SIMD separacja - 2-4x szybsze przetwarzanie obrazów
-  3. Lazy EXR loading - znacznie mniej RAM dla dużych plików
-  4. Global state cleanup - lepsze zarządzanie stanem, mniej błędów
 
   ŚREDNIE (Code Quality):
 
   5. Modułowa reorganizacja - łatwiejsze utrzymanie
+                          Faza 1: Hierarchiczna struktura katalogów
+      - Utworzenie podkatalogów: processing/, io/, ui/, platform/, utils/
+      - Przeniesienie modułów do odpowiednich katalogów
+      - Dodanie plików mod.rs z publicznymi interfejsami
+     
+     Faza 2: Dekompozycja dużych modułów
+     - Podział ui_handlers.rs na mniejsze, specjalizowane handlery
+     - Wyodrębnienie logiki biznesowej z main.rs
+     - Stworzenie czytelnych API między modułami
+     
+     Faza 3: Definicja interfejsów
+     - Jasne publiczne API dla każdej grupy modułów
+     - Redukcja bezpośrednich zależności między modułami
+     - Implementacja dependency injection gdzie to możliwe
+     
+     To ukończy reorganizację modułową zgodnie z założeniami.
   6. Error handling - lepsze debugging i recovery
   7. Code deduplication - mniej duplikacji logiki
 

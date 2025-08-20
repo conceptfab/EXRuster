@@ -3,31 +3,20 @@
 
 slint::include_modules!();
 
-mod image_cache;
-mod image_processing;
-mod file_operations;
-mod ui_handlers;
-mod thumbnails;
-mod exr_metadata;
-mod progress;
+mod processing;
+mod io;
+mod ui;
 mod utils;
-mod color_processing;
-mod full_exr_cache;
-mod histogram;
-mod tone_mapping;
-mod buffer_pool;
-mod simd_processing;
-mod lazy_exr_loader;
 
 #[cfg(target_os = "windows")]
-mod platform_win;
+mod platform;
 
 use std::sync::{Arc, Mutex};
-use crate::ui_handlers::{push_console, lock_or_recover};
-use ui_handlers::{ImageCacheType, CurrentFilePathType, FullExrCache};
+use crate::ui::{push_console, lock_or_recover};
+use ui::{ImageCacheType, CurrentFilePathType, FullExrCache};
 use slint::{VecModel, SharedString, Model};
 use std::rc::Rc;
-use crate::buffer_pool::BufferPool;
+// BufferPool is now available via crate::utils::BufferPool re-export
 
 fn main() -> Result<(), slint::PlatformError> {
     // Ustaw obsługę panic aby aplikacja nie znikała
@@ -56,7 +45,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let retries = Rc::new(Cell::new(0));
         let retries_c = retries.clone();
         timer.start(TimerMode::Repeated, std::time::Duration::from_millis(150), move || {
-            let done = platform_win::try_set_runtime_window_icon();
+            let done = crate::platform::try_set_runtime_window_icon();
             let n = retries_c.get();
             if done || n >= 40 {
                 if let Some(t) = timer_weak.upgrade() { t.stop(); }
@@ -74,8 +63,8 @@ fn main() -> Result<(), slint::PlatformError> {
     let full_exr_cache: FullExrCache = Arc::new(Mutex::new(None));
     
     // Initialize global buffer pool for performance optimization
-    let buffer_pool = Arc::new(BufferPool::new(32)); // Pool of 32 buffers per type
-    crate::image_cache::set_global_buffer_pool(buffer_pool.clone());
+    let buffer_pool = Arc::new(crate::utils::BufferPool::new(32)); // Pool of 32 buffers per type
+    crate::io::image_cache::set_global_buffer_pool(buffer_pool.clone());
 
     // Setup UI callbacks...
     let console_model = setup_ui_callbacks(&ui, image_cache.clone(), current_file_path.clone(), full_exr_cache.clone());
@@ -94,7 +83,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 }
                 None
             }) {
-                ui_handlers::handle_open_exr_from_path(
+                crate::ui::handle_open_exr_from_path(
                     ui.as_weak(),
                     current_file_path.clone(),
                     image_cache.clone(),
@@ -114,7 +103,7 @@ fn main() -> Result<(), slint::PlatformError> {
 
                         if exr_count > 1 {
     
-                            ui_handlers::load_thumbnails_for_directory(ui.as_weak(), dir, console_model.clone());
+                            crate::ui::load_thumbnails_for_directory(ui.as_weak(), dir, console_model.clone());
                         }
                     }
                 }
@@ -149,7 +138,7 @@ fn setup_menu_callbacks(
     ui.on_exit({
         let ui_handle = ui.as_weak();
         move || {
-            ui_handlers::handle_exit(ui_handle.clone());
+            crate::ui::handle_exit(ui_handle.clone());
         }
     });
 
@@ -160,7 +149,7 @@ fn setup_menu_callbacks(
         let console = console_model.clone(); // Use console_model directly
         let full_exr_cache = full_exr_cache.clone();
         move || {
-            ui_handlers::handle_open_exr(ui_handle.clone(), current_file_path.clone(), image_cache.clone(), console.clone(), full_exr_cache.clone());
+            crate::ui::handle_open_exr(ui_handle.clone(), current_file_path.clone(), image_cache.clone(), console.clone(), full_exr_cache.clone());
         }
     });
 
@@ -195,9 +184,9 @@ fn setup_menu_callbacks(
                                 ui.set_histogram_total_pixels(hist_data.total_pixels as i32);
                                 
                                 // Percentyle
-                                let p1 = hist_data.get_percentile(crate::histogram::HistogramChannel::Luminance, 0.01);
-                                let p50 = hist_data.get_percentile(crate::histogram::HistogramChannel::Luminance, 0.50);
-                                let p99 = hist_data.get_percentile(crate::histogram::HistogramChannel::Luminance, 0.99);
+                                let p1 = hist_data.get_percentile(crate::processing::histogram::HistogramChannel::Luminance, 0.01);
+                                let p50 = hist_data.get_percentile(crate::processing::histogram::HistogramChannel::Luminance, 0.50);
+                                let p99 = hist_data.get_percentile(crate::processing::histogram::HistogramChannel::Luminance, 0.99);
                                 ui.set_histogram_p1(p1);
                                 ui.set_histogram_p50(p50);
                                 ui.set_histogram_p99(p99);
@@ -227,9 +216,9 @@ fn setup_image_control_callbacks(
     let cache_weak_for_throttle = image_cache.clone();
     let console_for_throttle = console_model.clone(); // Use console_model directly
 
-    let throttled_updater = ui_handlers::ThrottledUpdate::new(move |exp, gamma| {
+    let throttled_updater = crate::ui::ThrottledUpdate::new(move |exp, gamma| {
         if let Some(_ui) = ui_weak_for_throttle.upgrade() {
-            ui_handlers::handle_parameter_changed_throttled(
+            crate::ui::handle_parameter_changed_throttled(
                 ui_weak_for_throttle.clone(), 
                 cache_weak_for_throttle.clone(), 
                 console_for_throttle.clone(),
@@ -265,11 +254,11 @@ fn setup_image_control_callbacks(
         let console = console_model.clone();
         move |mode: i32| {
             if let Some(ui) = ui_handle.upgrade() {
-                let cache_guard = ui_handlers::lock_or_recover(&image_cache);
+                let cache_guard = crate::ui::lock_or_recover(&image_cache);
                 if let Some(ref cache) = *cache_guard {
                     let exposure = ui.get_exposure_value();
                     let gamma = ui.get_gamma_value();
-                    let image = ui_handlers::update_preview_image(&ui, cache, exposure, gamma, mode, &console);
+                    let image = crate::ui::update_preview_image(&ui, cache, exposure, gamma, mode, &console);
                     ui.set_exr_image(image);
                     push_console(&ui, &console, format!("[preview] updated → tonemap mode: {}", mode));
                     ui.set_status_text(format!("Tonemap: {}", match mode {0=>"ACES",1=>"Reinhard",2=>"Linear",3=>"Filmic",4=>"Hable",5=>"Local", _=>"?"}).into());
@@ -285,12 +274,12 @@ fn setup_image_control_callbacks(
         let console = console_model.clone();
         move |_w, _h| {
             if let Some(ui) = ui_handle.upgrade() {
-                let cache_guard = ui_handlers::lock_or_recover(&image_cache);
+                let cache_guard = crate::ui::lock_or_recover(&image_cache);
                 if let Some(ref cache) = *cache_guard {
                     let exposure = ui.get_exposure_value();
                     let gamma = ui.get_gamma_value();
                     let mode = ui.get_tonemap_mode() as i32;
-                    let image = ui_handlers::update_preview_image(&ui, cache, exposure, gamma, mode, &console);
+                    let image = crate::ui::update_preview_image(&ui, cache, exposure, gamma, mode, &console);
                     ui.set_exr_image(image);
                     
                     // Dodatkowe logowanie dla zmiany geometrii
@@ -307,7 +296,7 @@ fn setup_image_control_callbacks(
                     let win_h = ui.get_window_height() as u32;
                     let win_w_px = (win_w as f32 * dpr).round() as u32;
                     let win_h_px = (win_h as f32 * dpr).round() as u32;
-                    ui_handlers::push_console(&ui, &console, format!(
+                    crate::ui::push_console(&ui, &console, format!(
                         "[preview] resized → window={}x{} (≈{}x{} px @{}x) | view={}x{} @{}x | img={}x{} | display≈{}x{} px",
                         win_w, win_h, win_w_px, win_h_px, dpr,
                         preview_w as u32, preview_h as u32, dpr,
@@ -326,7 +315,7 @@ fn setup_image_control_callbacks(
         let current_file_path = current_file_path.clone();
         let console = console_model.clone(); // Use console_model directly
         move |clicked_item: slint::SharedString| {
-            ui_handlers::handle_layer_tree_click(
+            crate::ui::handle_layer_tree_click(
                 ui_handle.clone(),
                 image_cache.clone(), 
                 clicked_item.to_string(),
@@ -363,8 +352,8 @@ fn setup_panel_callbacks(
             if let Some(ui) = ui_handle.upgrade() {
                 push_console(&ui, &console_model, "[folder] choosing working folder...".to_string());
 
-                if let Some(dir) = crate::file_operations::open_folder_dialog() {
-                    ui_handlers::load_thumbnails_for_directory(ui.as_weak(), &dir, console_model.clone());
+                if let Some(dir) = crate::io::file_operations::open_folder_dialog() {
+                    crate::ui::load_thumbnails_for_directory(ui.as_weak(), &dir, console_model.clone());
                 } else {
                     push_console(&ui, &console_model, "[folder] selection canceled".to_string());
                 }
@@ -385,7 +374,7 @@ fn setup_panel_callbacks(
                     let line = SharedString::from(format!("[thumbnails] opening file {}", path.display()));
                     console_model.push(line.clone());
                 }
-                ui_handlers::handle_open_exr_from_path(ui_handle.clone(), current_file_path.clone(), image_cache.clone(), console_model.clone(), full_exr_cache.clone(), path);
+                crate::ui::handle_open_exr_from_path(ui_handle.clone(), current_file_path.clone(), image_cache.clone(), console_model.clone(), full_exr_cache.clone(), path);
             }
         }
     });
@@ -425,7 +414,7 @@ fn setup_panel_callbacks(
                 if let Some(item) = model.row_data(next_idx as usize) {
                     ui.set_opened_thumbnail_path(item.path.clone());
                     let path = std::path::PathBuf::from(item.path.as_str());
-                    ui_handlers::handle_open_exr_from_path(
+                    crate::ui::handle_open_exr_from_path(
                         ui.as_weak(),
                         current_file_path.clone(),
                         image_cache.clone(),
@@ -453,7 +442,7 @@ fn setup_panel_callbacks(
                             ui.set_status_text(format!("Deleted: {}", display).into());
                             // Po usunięciu odśwież miniatury dla katalogu pliku
                             if let Some(dir) = path.parent() {
-                                crate::ui_handlers::load_thumbnails_for_directory(ui.as_weak(), dir, console_model.clone());
+                                crate::ui::load_thumbnails_for_directory(ui.as_weak(), dir, console_model.clone());
                             }
                         }
                         Err(e) => {

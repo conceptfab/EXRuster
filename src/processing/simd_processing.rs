@@ -2,7 +2,7 @@ use core::simd::{f32x4, Simd};
 use std::simd::prelude::SimdFloat;
 use slint::Rgba8Pixel;
 use glam::{Mat3, Vec3};
-use crate::image_processing::process_pixel;
+use crate::processing::image_processing::process_pixel;
 
 /// Optimized SIMD processing functions for image processing
 /// Separates SIMD and scalar code paths for better performance
@@ -32,7 +32,7 @@ pub fn process_simd_chunk_rgba(
     }
 
     // Apply tone mapping and gamma correction
-    let (r8, g8, b8) = crate::tone_mapping::tone_map_and_gamma_simd(r, g, b, exposure, gamma, tonemap_mode);
+    let (r8, g8, b8) = crate::processing::tone_mapping::tone_map_and_gamma_simd(r, g, b, exposure, gamma, tonemap_mode);
     let a8 = a.simd_clamp(Simd::splat(0.0), Simd::splat(1.0));
 
     // Convert to u8 and store
@@ -55,7 +55,7 @@ pub fn process_simd_chunk_grayscale(
         (r, g, b) = apply_color_matrix_simd(r, g, b, mat);
     }
 
-    let (r_tm, g_tm, b_tm) = crate::tone_mapping::tone_map_and_gamma_simd(r, g, b, exposure, gamma, tonemap_mode);
+    let (r_tm, g_tm, b_tm) = crate::processing::tone_mapping::tone_map_and_gamma_simd(r, g, b, exposure, gamma, tonemap_mode);
     
     // Convert to grayscale using max(R, G, B)
     let gray = r_tm.simd_max(g_tm).simd_max(b_tm).simd_clamp(Simd::splat(0.0), Simd::splat(1.0));

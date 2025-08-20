@@ -4,12 +4,12 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use std::collections::HashMap;
-use crate::image_cache::ImageCache;
-use crate::file_operations::{open_file_dialog, get_file_name};
+use crate::io::image_cache::ImageCache;
+use crate::io::file_operations::{open_file_dialog, get_file_name};
 use std::rc::Rc;
-use crate::exr_metadata;
+use crate::io::exr_metadata;
 // Removed unused import: bytemuck
-use crate::progress::{ProgressSink, UiProgress};
+use crate::ui::progress::{ProgressSink, UiProgress};
 use crate::utils::{get_channel_info, normalize_channel_name, human_size};
 use anyhow::{Result, Context};
 // Usunięte nieużywane importy związane z exportem
@@ -48,7 +48,7 @@ impl AppState {
 pub type ImageCacheType = Arc<Mutex<Option<ImageCache>>>;
 pub type CurrentFilePathType = Arc<Mutex<Option<PathBuf>>>;
 pub type ConsoleModel = Rc<VecModel<SharedString>>;
-use crate::full_exr_cache::{FullExrCacheData, FullLayer, build_full_exr_cache};
+use crate::io::full_exr_cache::{FullExrCacheData, FullLayer, build_full_exr_cache};
 pub type FullExrCache = Arc<Mutex<Option<std::sync::Arc<FullExrCacheData>>>>;
 
 // Stała wysokości miniaturek - zmień tutaj aby dostosować rozdzielczość
@@ -78,7 +78,7 @@ pub(crate) fn safe_lock<'a, T>(mutex: &'a Arc<Mutex<T>>, context: &'static str) 
 
 /// Kompatybilność wsteczna - używa panic recovery
 #[inline]
-pub(crate) fn lock_or_recover<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+pub fn lock_or_recover<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     match m.lock() {
         Ok(g) => g,
         Err(p) => p.into_inner(),
@@ -343,7 +343,7 @@ pub fn load_thumbnails_for_directory(
         prog.start_indeterminate(Some("🔍 Scanning folder for EXR files..."));
         
         // Wyczyść cache aby wymusić regenerację miniaturek z nowymi parametrami
-        crate::thumbnails::clear_thumb_cache();
+        crate::io::thumbnails::clear_thumb_cache();
         
         // Użyj stałych, zoptymalizowanych wartości dla miniaturek (nie z UI!)
         let exposure = 0.0;     // Neutralna ekspozycja dla miniaturek
@@ -361,7 +361,7 @@ pub fn load_thumbnails_for_directory(
             let t0 = Instant::now();
             
             // Generuj miniaturki w osobnym wątku używając istniejącej funkcji z cache
-            let files = match crate::thumbnails::list_exr_files(&directory_path) {
+            let files = match crate::io::thumbnails::list_exr_files(&directory_path) {
                 Ok(files) => files,
                 Err(e) => {
                     let ui_weak_clone = ui_weak.clone();
@@ -392,7 +392,7 @@ pub fn load_thumbnails_for_directory(
             prog.set(0.1, Some(&format!("📁 Found {} EXR files, starting processing...", total_files)));
             
             // Generuj miniaturki w osobnym wątku - użyj GPU jeśli dostępny
-            let thumbnail_works = match crate::thumbnails::generate_thumbnails_gpu_raw(
+            let thumbnail_works = match crate::io::thumbnails::generate_thumbnails_gpu_raw(
                 files,
                 THUMBNAIL_HEIGHT, 
                 exposure, 
@@ -543,9 +543,9 @@ pub fn handle_open_exr_from_path(
                         let t_start = Instant::now();
                         // Odczytaj tylko najlepszą warstwę i zbuduj minimalny cache
                         let light_res = (|| -> anyhow::Result<std::sync::Arc<FullExrCacheData>> {
-                            let layers = crate::image_cache::extract_layers_info(&path_c)?;
-                            let best = crate::image_cache::find_best_layer(&layers);
-                            let lc = crate::image_cache::load_all_channels_for_layer(&path_c, &best, None)?;
+                            let layers = crate::io::image_cache::extract_layers_info(&path_c)?;
+                            let best = crate::io::image_cache::find_best_layer(&layers);
+                            let lc = crate::io::image_cache::load_all_channels_for_layer(&path_c, &best, None)?;
                             let fl = FullLayer {
                                 name: lc.layer_name.clone(),
                                 width: lc.width,
@@ -558,7 +558,7 @@ pub fn handle_open_exr_from_path(
 
                         match light_res {
                             Ok(full) => {
-                                let cache_res = crate::image_cache::ImageCache::new_with_full_cache(&path_c, full.clone());
+                                let cache_res = crate::io::image_cache::ImageCache::new_with_full_cache(&path_c, full.clone());
                                 match cache_res {
                                     Ok(cache) => {
                                         let _ = invoke_from_event_loop(move || {
@@ -599,9 +599,9 @@ pub fn handle_open_exr_from_path(
                                                                 ui2.set_histogram_total_pixels(hist_data.total_pixels as i32);
                                                                 
                                                                 // Percentyle
-                                                                let p1 = hist_data.get_percentile(crate::histogram::HistogramChannel::Luminance, 0.01);
-                                                                let p50 = hist_data.get_percentile(crate::histogram::HistogramChannel::Luminance, 0.50);
-                                                                let p99 = hist_data.get_percentile(crate::histogram::HistogramChannel::Luminance, 0.99);
+                                                                let p1 = hist_data.get_percentile(crate::processing::histogram::HistogramChannel::Luminance, 0.01);
+                                                                let p50 = hist_data.get_percentile(crate::processing::histogram::HistogramChannel::Luminance, 0.50);
+                                                                let p99 = hist_data.get_percentile(crate::processing::histogram::HistogramChannel::Luminance, 0.99);
                                                                 ui2.set_histogram_p1(p1);
                                                                 ui2.set_histogram_p50(p50);
                                                                 ui2.set_histogram_p99(p99);
@@ -667,7 +667,7 @@ pub fn handle_open_exr_from_path(
                         match full_res {
                             Ok(full) => {
                                 let t_new = Instant::now();
-                                let cache_res = crate::image_cache::ImageCache::new_with_full_cache(&path_c, full.clone());
+                                let cache_res = crate::io::image_cache::ImageCache::new_with_full_cache(&path_c, full.clone());
                                 match cache_res {
                                     Ok(cache) => {
                                         let _ = invoke_from_event_loop(move || {
@@ -709,9 +709,9 @@ pub fn handle_open_exr_from_path(
                                                                 ui2.set_histogram_total_pixels(hist_data.total_pixels as i32);
                                                                 
                                                                 // Percentyle
-                                                                let p1 = hist_data.get_percentile(crate::histogram::HistogramChannel::Luminance, 0.01);
-                                                                let p50 = hist_data.get_percentile(crate::histogram::HistogramChannel::Luminance, 0.50);
-                                                                let p99 = hist_data.get_percentile(crate::histogram::HistogramChannel::Luminance, 0.99);
+                                                                let p1 = hist_data.get_percentile(crate::processing::histogram::HistogramChannel::Luminance, 0.01);
+                                                                let p50 = hist_data.get_percentile(crate::processing::histogram::HistogramChannel::Luminance, 0.50);
+                                                                let p99 = hist_data.get_percentile(crate::processing::histogram::HistogramChannel::Luminance, 0.99);
                                                                 ui2.set_histogram_p1(p1);
                                                                 ui2.set_histogram_p50(p50);
                                                                 ui2.set_histogram_p99(p99);
@@ -887,7 +887,7 @@ pub fn update_preview_image(
 }
 
 pub fn create_layers_model(
-    layers_info: &[crate::image_cache::LayerInfo],
+    layers_info: &[crate::io::image_cache::LayerInfo],
     ui: &AppWindow,
 ) -> (ModelRc<slint::SharedString>, ModelRc<slint::Color>, ModelRc<i32>) {
     // UPROSZCZONE DRZEWO: Warstwa → faktyczne kanały (bez grup). RGBA tylko jeśli istnieją w pliku.

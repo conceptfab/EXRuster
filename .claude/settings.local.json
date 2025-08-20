@@ -10,7 +10,10 @@
       "Bash(timeout 15s cargo run --bin EXruster_nightly)",
       "WebFetch(domain:docs.rs)",
       "Bash(timeout 15s cargo check)",
-      "Bash(git checkout:*)"
+      "Bash(git checkout:*)",
+      "Bash(find:*)",
+      "Bash(mkdir:*)",
+      "Bash(mv:*)"
     ],
     "deny": [],
     "ask": []
