@@ -10,18 +10,22 @@ use std::rc::Rc;
 use crate::io::exr_metadata;
 // Removed unused import: bytemuck
 use crate::ui::progress::{ProgressSink, UiProgress};
-use crate::utils::{get_channel_info, human_size};
+use crate::utils::get_channel_info;
 use anyhow::{Result, Context};
 // Usunięte nieużywane importy związane z exportem
 // Import komponentów Slint
 use crate::AppWindow;
-use crate::ThumbItem;
 
 // Re-exports from image_controls module
 pub use crate::ui::image_controls::{
     ThrottledUpdate, 
     handle_parameter_changed_throttled, 
     update_preview_image
+};
+
+// Re-exports from thumbnails module  
+pub use crate::ui::thumbnails::{
+    load_thumbnails_for_directory
 };
 
 /// Centralny stan aplikacji - zastępuje globalne static variables
@@ -58,8 +62,6 @@ pub type ConsoleModel = Rc<VecModel<SharedString>>;
 use crate::io::full_exr_cache::{FullExrCacheData, FullLayer, build_full_exr_cache};
 pub type FullExrCache = Arc<Mutex<Option<std::sync::Arc<FullExrCacheData>>>>;
 
-// Stała wysokości miniaturek - zmień tutaj aby dostosować rozdzielczość
-const THUMBNAIL_HEIGHT: u32 = 130;
 
 /// Dodaje linię do modelu konsoli i aktualizuje tekst w `TextEdit` (console-text)
 pub fn push_console(ui: &crate::AppWindow, console: &ConsoleModel, line: String) {
@@ -111,156 +113,6 @@ pub fn handle_exit(ui_handle: Weak<AppWindow>) {
     }
 }
 
-/// Wspólna funkcja do wczytywania miniatur dla wskazanego katalogu i aktualizacji UI.
-/// Używana zarówno przy starcie aplikacji (po argumencie pliku), jak i po wyborze folderu z UI.
-/// Teraz działa asynchronicznie w osobnym wątku, aby nie blokować UI.
-pub fn load_thumbnails_for_directory(
-    ui_handle: Weak<AppWindow>,
-    directory: &Path,
-    console: ConsoleModel,
-) {
-    if let Some(ui) = ui_handle.upgrade() {
-        push_console(&ui, &console, format!("[folder] loading thumbnails: {}", directory.display()));
-        ui.set_status_text(format!("Loading thumbnails: {}", directory.display()).into());
-        
-
-        let prog = UiProgress::new(ui.as_weak());
-        prog.start_indeterminate(Some("🔍 Scanning folder for EXR files..."));
-        
-        // Wyczyść cache aby wymusić regenerację miniaturek z nowymi parametrami
-        crate::io::thumbnails::clear_thumb_cache();
-        
-        // Użyj stałych, zoptymalizowanych wartości dla miniaturek (nie z UI!)
-        let exposure = 0.0;     // Neutralna ekspozycja dla miniaturek
-        let gamma = 2.2;        // Standardowa gamma dla miniaturek  
-        let tonemap_mode = 0;   // ACES tone mapping dla miniaturek
-        
-    
-        
-        // Generuj miniaturki w głównym wątku (bezpieczniejsze i z cache)
-        let ui_weak = ui.as_weak();
-        let directory_path = directory.to_path_buf();
-        
-        // Generuj miniaturki w tle z cache - używamy prostszego podejścia
-        std::thread::spawn(move || {
-            let t0 = Instant::now();
-            
-            // Generuj miniaturki w osobnym wątku używając istniejącej funkcji z cache
-            let files = match crate::io::thumbnails::list_exr_files(&directory_path) {
-                Ok(files) => files,
-                Err(e) => {
-                    let ui_weak_clone = ui_weak.clone();
-                    slint::invoke_from_event_loop(move || {
-                        if let Some(ui) = ui_weak_clone.upgrade() {
-                            ui.set_status_text(format!("❌ Error scanning folder: {}", e).into());
-                            prog.reset();
-                        }
-                    }).unwrap();
-                    return;
-                }
-            };
-            
-            // Sprawdź czy folder nie jest pusty
-            let total_files = files.len();
-            if total_files == 0 {
-                let ui_weak_clone = ui_weak.clone();
-                slint::invoke_from_event_loop(move || {
-                    if let Some(ui) = ui_weak_clone.upgrade() {
-                        ui.set_status_text("⚠️ No EXR files found in selected folder".into());
-                        prog.finish(Some("⚠️ No EXR files found"));
-                    }
-                }).unwrap();
-                return;
-            }
-            
-            // Użyj nowej, wydajnej funkcji do generowania miniaturek
-            prog.set(0.1, Some(&format!("📁 Found {} EXR files, starting processing...", total_files)));
-            
-            // Generuj miniaturki w osobnym wątku - użyj GPU jeśli dostępny
-            let thumbnail_works = match crate::io::thumbnails::generate_thumbnails_gpu_raw(
-                files,
-                THUMBNAIL_HEIGHT, 
-                exposure, 
-                gamma, 
-                tonemap_mode,
-                Some(&prog)
-            ) {
-                Ok(works) => works,
-                Err(e) => {
-                    eprintln!("Failed to generate thumbnails: {}", e);
-                    let ui_weak_clone = ui_weak.clone();
-                    slint::invoke_from_event_loop(move || {
-                        if let Some(ui) = ui_weak_clone.upgrade() {
-                            ui.set_status_text(format!("❌ Failed to generate thumbnails: {}", e).into());
-                            prog.finish(Some("❌ Thumbnail generation failed"));
-                        }
-                    }).unwrap();
-                    return;
-                }
-            };
-            
-            prog.set(0.9, Some("📊 Sorting thumbnails alphabetically..."));
-            let mut sorted_works = thumbnail_works;
-            sorted_works.sort_by(|a, b| a.file_name.to_lowercase().cmp(&b.file_name.to_lowercase()));
-            
-            let count = sorted_works.len();
-            let ms = t0.elapsed().as_millis();
-            
-            // Aktualizuj UI w głównym wątku przez invoke_from_event_loop
-            let ui_weak_clone = ui_weak.clone();
-            let count_clone = count;
-            let ms_clone = ms;
-            
-            slint::invoke_from_event_loop(move || {
-                if let Some(ui) = ui_weak_clone.upgrade() {
-                    prog.set(0.95, Some("🎨 Converting thumbnails to UI format..."));
-                    
-                    // Konwertuj miniaturki do formatu UI w głównym wątku
-                    let items: Vec<ThumbItem> = sorted_works
-                        .into_iter()
-                        .map(|w| {
-                            // Konwertuj surowe piksele RGBA8 do slint::Image
-                            let mut buffer = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(w.width, w.height);
-                            let slice = buffer.make_mut_slice();
-                            
-                            // Skopiuj piksele RGBA8
-                            for (dst, chunk) in slice.iter_mut().zip(w.pixels.chunks_exact(4)) {
-                                *dst = slint::Rgba8Pixel { 
-                                    r: chunk[0], 
-                                    g: chunk[1], 
-                                    b: chunk[2], 
-                                    a: chunk[3] 
-                                };
-                            }
-                            
-                            let image = slint::Image::from_rgba8(buffer);
-                            
-                            ThumbItem {
-                                img: image,
-                                name: w.file_name.into(),
-                                size: human_size(w.file_size_bytes).into(),
-                                layers: format!("{} layers", w.num_layers).into(),
-                                path: w.path.display().to_string().into(),
-                                width: w.width as i32,
-                                height: w.height as i32,
-                            }
-                        })
-                        .collect();
-                    
-                    // Aktualizuj UI
-                    ui.set_thumbnails(ModelRc::new(VecModel::from(items)));
-                    ui.set_bottom_panel_visible(true);
-                    
-                    ui.set_status_text("Thumbnails loaded".into());
-                    prog.finish(Some(&format!("✅ Successfully loaded {} thumbnails in {} ms", count_clone, ms_clone)));
-                    
-                    // Log do konsoli w osobnym wywołaniu - używamy prostego status text
-                    ui.set_status_text(format!("[folder] {} EXR files | thumbnails in {} ms", count_clone, ms_clone).into());
-                }
-            }).unwrap();
-        });
-    }
-}
 
 /// Obsługuje callback otwierania pliku EXR
 pub fn handle_open_exr(

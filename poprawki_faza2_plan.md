@@ -1,11 +1,12 @@
 # Faza 2: Dekompozycja dużych modułów - Szczegółowy Plan
 
-## 🎯 STATUS: 3/7 kroków ukończone (43%) + Cleanup
+## 🎯 STATUS: 4/7 kroków ukończone (57%) + Cleanup
 
 ### ✅ UKOŃCZONE:
 - **Krok 1:** State Management - pełny sukces ✅
 - **Krok 2:** Layer Operations - pełny sukces ✅  
 - **Krok 3:** Image Controls - pełny sukces ✅
+- **Krok 4:** Thumbnail Operations - pełny sukces ✅
 - **Cleanup:** Wszystkie błędy kompilacji i warningi naprawione ✅
 
 ### 🔧 GOTOWE DO DALSZEGO REFAKTORINGU:
@@ -15,11 +16,11 @@
 
 ## Analiza obecnej struktury
 
-### ui_handlers.rs (679 linii, było 981) - Główne problemy:
-1. **Zbyt dużo odpowiedzialności** - ~~obsługa UI, state management~~ ✅ EXTRACTED, async operations
+### ui_handlers.rs (530 linii, było 981) - Główne problemy:
+1. **Zbyt dużo odpowiedzialności** - ~~obsługa UI, state management~~ ✅ EXTRACTED, ~~async operations~~ ✅ PARTIALLY EXTRACTED
 2. **Globalne static zmienne** - ~~ITEM_TO_LAYER, DISPLAY_TO_REAL_LAYER~~ ✅ MOVED TO STATE, ~~LAST_PREVIEW_LOG~~ ✅ MOVED TO IMAGE_CONTROLS
-3. **Mieszane concerns** - ~~UI callbacks~~ ✅ PARTIALLY EXTRACTED, business logic, async spawning
-4. **Duże funkcje** - load_thumbnails_for_directory (150+ linii), handle_open_exr_from_path (270+ linii)
+3. **Mieszane concerns** - ~~UI callbacks~~ ✅ PARTIALLY EXTRACTED, business logic, ~~async spawning~~ ✅ PARTIALLY EXTRACTED
+4. **Duże funkcje** - ~~load_thumbnails_for_directory (150+ linii)~~ ✅ MOVED TO THUMBNAILS, handle_open_exr_from_path (270+ linii)
 
 ### main.rs (483 linii, było 477) - Problemy:
 1. **Zbyt dużo setup logiki** - wszystkie callbacks w main
@@ -74,14 +75,16 @@ pub type SharedUiState = Arc<Mutex<UiState>>;
 - ✅ Logika exposure/gamma/tonemap wraz z LAST_PREVIEW_LOG
 - ✅ Re-eksporty dla zachowania kompatybilności
 
-### Krok 4: Wyodrębnienie Thumbnail Operations
+### ✅ Krok 4: Wyodrębnienie Thumbnail Operations - UKOŃCZONY
 **Cel:** Izolacja operacji na miniaturkach  
-**Pliki:** `src/ui/thumbnails.rs`
+**Pliki:** `src/ui/thumbnails.rs` ✅
 
-**Funkcje do przeniesienia:**
-- `load_thumbnails_for_directory()` - ładowanie miniaturek
-- Async processing logic dla folderów
-- Thumbnail navigation logic
+**Funkcje przeniesione:** ✅
+- ✅ `load_thumbnails_for_directory()` (~150 linii) - ładowanie miniaturek
+- ✅ `THUMBNAIL_HEIGHT` konstanta - wysokość miniaturek
+- ✅ Async processing logic dla folderów z progress tracking
+- ✅ UI konwersja i thumbnail sorting logic
+- ✅ Re-eksporty dla zachowania kompatybilności
 
 ### Krok 5: Wyodrębnienie File Operations
 **Cel:** Centralizacja operacji na plikach
@@ -107,7 +110,7 @@ pub type SharedUiState = Arc<Mutex<UiState>>;
 **Cel:** Pozostawienie tylko kodu koordynującego
 **Zawartość finalna:**
 - Utility functions (safe_lock, lock_or_recover)
-- Constants (THUMBNAIL_HEIGHT)
+- ~~Constants (THUMBNAIL_HEIGHT)~~ ✅ MOVED TO THUMBNAILS
 - Re-exports z innych modułów
 - Główne typy (ImageCacheType, etc.)
 
@@ -120,7 +123,7 @@ src/ui/
 ├── layers.rs           # Obsługa warstw (dep: state) ✅
 ├── progress.rs         # Progress handling ✅
 ├── image_controls.rs   # Kontrole obrazu (dep: state) ✅
-├── thumbnails.rs       # Miniaturki (dep: state) ❌
+├── thumbnails.rs       # Miniaturki (dep: progress) ✅
 ├── file_handlers.rs    # Pliki (dep: state, layers) ❌
 ├── setup.rs            # Callbacks setup (dep: wszystkie) ❌
 └── ui_handlers.rs      # Utils + koordinacja (dep: wszystkie) ⚠️
@@ -131,12 +134,13 @@ src/ui/
 ### ✅ **Już osiągnięte:**
 1. **Clean compilation** - 0 błędów, 0 warningów
 2. **Centralized state** - usunięto globalne static zmienne
-3. **Better organization** - layer operations i image controls wydzielone
+3. **Better organization** - layer operations, image controls i thumbnails wydzielone
 4. **Reduced code duplication** - usunięto duplikaty funkcji
-5. **Smaller files** - ui_handlers.rs: 981→679 linii (-302 linii)
+5. **Smaller files** - ui_handlers.rs: 981→530 linii (-451 linii, 54% redukcja)
 6. **Image controls separation** - throttling i preview logic w osobnym module
+7. **Thumbnail operations separation** - async processing i UI konwersja w osobnym module
 
-### 🎯 **Do osiągnięcia (kroki 4-7):**
+### 🎯 **Do osiągnięcia (kroki 5-7):**
 1. **Łatwiejsze utrzymanie** - każdy moduł ma jedną odpowiedzialność
 2. **Lepsze testowanie** - można testować moduły w izolacji  
 3. **Redukcja coupling** - czyste interfejsy między modułami
@@ -152,13 +156,14 @@ src/ui/
 
 ## Effort
 
-### ✅ **Wykonane (3.5h):**
+### ✅ **Wykonane (4h):**
 - Krok 1: State Management (1h)
 - Krok 2: Layer Operations (1h)  
 - Krok 3: Image Controls (1h)
+- Krok 4: Thumbnail Operations (0.5h)
 - Cleanup: Błędy i warningi (0.5h)
 
-### 🎯 **Pozostało (1.5-2h):**
-- Kroki 4-7: Thumbnails, File Handlers, Setup, Final Refactor
+### 🎯 **Pozostało (1-1.5h):**
+- Kroki 5-7: File Handlers, Setup, Final Refactor
 
 **Każdy krok można wykonać i przetestować niezależnie.**
