@@ -23,8 +23,6 @@ use crate::ThumbItem;
 pub struct AppState {
     pub item_to_layer: HashMap<String, String>,
     pub display_to_real_layer: HashMap<String, String>,
-    // GPU context removed - preparing for CUDA
-    pub gpu_acceleration_enabled: bool,
     pub current_file_path: Option<PathBuf>,
     pub last_preview_log: Option<Instant>,
 }
@@ -35,8 +33,6 @@ impl AppState {
         Self {
             item_to_layer: HashMap::new(),
             display_to_real_layer: HashMap::new(),
-            // GPU context removed
-            gpu_acceleration_enabled: false,
             current_file_path: None,
             last_preview_log: None,
         }
@@ -45,7 +41,6 @@ impl AppState {
     /// Synchronizuje stan z globalnymi zmiennymi (przejściowe rozwiązanie)
     pub fn sync_with_globals(&mut self) {
         // W przyszłości: migracja krok po kroku z globalnych na dependency injection
-        self.gpu_acceleration_enabled = is_gpu_acceleration_enabled();
         // TODO: Implement proper sync with current_file_path global
     }
 }
@@ -53,7 +48,6 @@ impl AppState {
 pub type ImageCacheType = Arc<Mutex<Option<ImageCache>>>;
 pub type CurrentFilePathType = Arc<Mutex<Option<PathBuf>>>;
 pub type ConsoleModel = Rc<VecModel<SharedString>>;
-// GPU type removed - CUDA will be added here
 use crate::full_exr_cache::{FullExrCacheData, FullLayer, build_full_exr_cache};
 pub type FullExrCache = Arc<Mutex<Option<std::sync::Arc<FullExrCacheData>>>>;
 
@@ -100,24 +94,6 @@ static ITEM_TO_LAYER: std::sync::LazyLock<std::sync::Mutex<HashMap<String, Strin
 static DISPLAY_TO_REAL_LAYER: std::sync::LazyLock<std::sync::Mutex<HashMap<String, String>>> =
     std::sync::LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
 
-// GPU context removed - CUDA will be added here
-
-// Globalny stan akceleracji GPU
-static GPU_ACCELERATION_ENABLED: std::sync::LazyLock<std::sync::Mutex<bool>> =
-    std::sync::LazyLock::new(|| std::sync::Mutex::new(false));
-
-
-
-// GPU context getter removed - CUDA will be added here
-
-/// Sprawdza, czy akceleracja GPU jest globalnie włączona z poziomu UI
-pub fn is_gpu_acceleration_enabled() -> bool {
-    if let Ok(guard) = GPU_ACCELERATION_ENABLED.lock() {
-        *guard
-    } else {
-        false
-    }
-}
 
 pub fn handle_layer_tree_click(
     ui_handle: Weak<AppWindow>,
@@ -995,103 +971,6 @@ pub fn create_layers_model(
 
 // Funkcja handle_export_channels została usunięta
 
-/// Aktualizuje status CUDA w interfejsie użytkownika
-#[cfg(feature = "cuda")]
-pub fn update_cuda_status(ui: &AppWindow, cuda_context: &crate::cuda_context::CudaContextType) {
-    if let Ok(guard) = cuda_context.lock() {
-        if let Some(ref context) = *guard {
-            let device_info = context.get_device_info();
-            let status_text = format!("CUDA: {} - dostępny", device_info.name);
-            ui.set_gpu_status_text(status_text.into());
-        } else {
-            ui.set_gpu_status_text("CUDA: niedostępny (tryb CPU)".into());
-        }
-    } else {
-        ui.set_gpu_status_text("CUDA: błąd dostępu".into());
-    }
-}
-
-/// Aktualizuje status CUDA w interfejsie użytkownika (disabled version)
-#[cfg(not(feature = "cuda"))]
-pub fn update_cuda_status(ui: &AppWindow, _cuda_context: &std::sync::Arc<std::sync::Mutex<Option<()>>>) {
-    ui.set_gpu_status_text("CUDA: feature disabled (CPU mode)".into());
-}
-
-/// Sprawdza czy CUDA jest dostępne i aktualizuje status
-#[cfg(feature = "cuda")]
-pub fn check_cuda_availability(ui: &AppWindow, cuda_context: &crate::cuda_context::CudaContextType) -> bool {
-    if let Ok(guard) = cuda_context.lock() {
-        if let Some(ref context) = *guard {
-            if context.is_available() {
-                let device_info = context.get_device_info();
-                ui.set_gpu_status_text(format!("CUDA: {} - aktywny", device_info.name).into());
-                return true;
-            } else {
-                ui.set_gpu_status_text("CUDA: błąd urządzenia".into());
-                return false;
-            }
-        } else {
-            ui.set_gpu_status_text("CUDA: niedostępny (tryb CPU)".into());
-            return false;
-        }
-    } else {
-        ui.set_gpu_status_text("CUDA: błąd dostępu".into());
-        return false;
-    }
-}
-
-/// Sprawdza czy CUDA jest dostępne i aktualizuje status (disabled version)
-#[cfg(not(feature = "cuda"))]
-pub fn check_cuda_availability(ui: &AppWindow, _cuda_context: &std::sync::Arc<std::sync::Mutex<Option<()>>>) -> bool {
-    ui.set_gpu_status_text("CUDA: feature disabled (CPU mode)".into());
-    false
-}
-
-// CUDA context management (conditional)
-#[cfg(feature = "cuda")]
-static CUDA_CONTEXT: std::sync::LazyLock<std::sync::Mutex<Option<crate::cuda_context::CudaContextType>>> =
-    std::sync::LazyLock::new(|| std::sync::Mutex::new(None));
-
-/// Get global CUDA context (if initialized)
-#[cfg(feature = "cuda")]
-pub fn get_global_cuda_context() -> Option<crate::cuda_context::CudaContextType> {
-    if let Ok(guard) = CUDA_CONTEXT.lock() {
-        guard.as_ref().cloned()
-    } else {
-        None
-    }
-}
-
-/// Get global CUDA context (disabled version)
-#[cfg(not(feature = "cuda"))]
-pub fn get_global_cuda_context() -> Option<std::sync::Arc<std::sync::Mutex<Option<()>>>> {
-    None
-}
-
-/// Set global CUDA context
-#[cfg(feature = "cuda")]
-pub fn set_global_cuda_context(cuda_context: crate::cuda_context::CudaContextType) {
-    if let Ok(mut guard) = CUDA_CONTEXT.lock() {
-        *guard = Some(cuda_context);
-    }
-}
-
-/// Set global CUDA context (disabled version)
-#[cfg(not(feature = "cuda"))]
-pub fn set_global_cuda_context(_cuda_context: std::sync::Arc<std::sync::Mutex<Option<()>>>) {
-    // No-op when CUDA is disabled
-}
-
-/// Ustawia globalny stan akceleracji GPU
-pub fn set_global_gpu_acceleration(enabled: bool) {
-    if let Ok(mut guard) = GPU_ACCELERATION_ENABLED.lock() {
-        *guard = enabled;
-    }
-}
-
-// === FAZA 3: GPU-accelerated Export ===
-
-// Export functionality removed as per optimization analysis
 
 
 

@@ -21,13 +21,6 @@ anyhow = "1.0"
 rayon = "1.11"
 num_cpus = "1.17"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "hdr", "tiff", "webp", "bmp", "ico", "pnm", "tga", "dds", "exr"] }
-# wgpu removed - preparing for CUDA
-pollster = "0.4.0"  # For async CUDA operations
-itertools = "0.12"  # For CUDA batch processing
-
-# Optional CUDA dependencies  
-cudarc = { version = "0.13", features = ["driver", "runtime", "cublas", "curand", "nvrtc", "cuda-12000"], optional = true }
-half = { version = "2.6", optional = true }
 instant = "0.1"
 tiff = "0.10.0"
 cfg-if = "1.0"
@@ -64,10 +57,10 @@ codegen-units = 16
 [profile.release]
 lto = "thin"
 codegen-units = 1
-panic = "unwind"  # ZMIENIONE: unwind zamiast abort dla lepszej obsługi błędów GPU
-opt-level = 3     # ZMIENIONE: mniej agresywne optymalizacje 
+panic = "unwind"
+opt-level = 3
 strip = true
-overflow-checks = true  # WŁĄCZONE: dla bezpieczeństwa GPU
+overflow-checks = true
 debug = false
 
 [profile.release-with-debug]
@@ -97,7 +90,3 @@ sign-tag = false
 pre-release-commit-message = "chore: Release {{version}}"
 tag-message = "chore: Release {{version}}"
 
-# Feature flags for optional CUDA support
-[features]
-default = []
-cuda = ["cudarc", "half"]

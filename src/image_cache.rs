@@ -86,26 +86,12 @@ fn build_mip_chain(
     width: u32,
     height: u32,
     max_levels: usize,
-    use_gpu: bool,
+    _use_gpu: bool,
 ) -> Vec<MipLevel> {
-    if use_gpu && crate::ui_handlers::is_gpu_acceleration_enabled() {
-        build_mip_chain_gpu_internal(base_pixels, width, height, max_levels)
-            .unwrap_or_else(|_| build_mip_chain_cpu(base_pixels, width, height, max_levels))
-    } else {
-        build_mip_chain_cpu(base_pixels, width, height, max_levels)
-    }
+    // CPU-only processing
+    build_mip_chain_cpu(base_pixels, width, height, max_levels)
 }
 
-/// OPTYMALIZACJA: wyłącz fake GPU MIP generation - używa CPU z overhead
-fn build_mip_chain_gpu_internal(
-    _base_pixels: &[f32],
-    _width: u32,
-    _height: u32,
-    _max_levels: usize,
-) -> anyhow::Result<Vec<MipLevel>> {
-    // Fake GPU implementation gorsza od CPU - wyłącz
-    anyhow::bail!("GPU MIP generation disabled - using CPU fallback")
-}
 
 fn build_mip_chain_cpu(
     base_pixels: &[f32],
@@ -224,8 +210,7 @@ impl ImageCache {
     pub fn process_to_image(&self, exposure: f32, gamma: f32, tonemap_mode: i32) -> Image {
         println!("=== PROCESS_TO_IMAGE START === {}x{}", self.width, self.height);
         
-        let gpu_enabled = crate::ui_handlers::is_gpu_acceleration_enabled();
-        println!("GPU acceleration enabled: {}", gpu_enabled);
+        println!("Using CPU-only processing");
         
         // GPU processing removed - using CPU processing only
 

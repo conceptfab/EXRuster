@@ -15,15 +15,6 @@ mod color_processing;
 mod full_exr_cache;
 mod histogram;
 mod tone_mapping;
-// CUDA modules (optional - only when cuda feature is enabled)
-#[cfg(feature = "cuda")]
-mod cuda_context;
-#[cfg(feature = "cuda")]
-mod cuda_processing;
-#[cfg(feature = "cuda")]
-mod cuda_kernels;
-#[cfg(feature = "cuda")]
-mod cuda_thumbnails;
 
 #[cfg(target_os = "windows")]
 mod platform_win;
@@ -33,13 +24,6 @@ use crate::ui_handlers::{push_console, lock_or_recover};
 use ui_handlers::{ImageCacheType, CurrentFilePathType, FullExrCache};
 use slint::{VecModel, SharedString, Model};
 use std::rc::Rc;
-// CUDA imports (conditional)
-#[cfg(feature = "cuda")]
-use cuda_context::{CudaContext, CudaContextType};
-
-// Placeholder type when CUDA is disabled
-#[cfg(not(feature = "cuda"))]
-type CudaContextType = Arc<Mutex<Option<()>>>;
 
 fn main() -> Result<(), slint::PlatformError> {
     // Ustaw obsługę panic aby aplikacja nie znikała
@@ -79,71 +63,14 @@ fn main() -> Result<(), slint::PlatformError> {
     }
     
 
-    let cuda_context: CudaContextType = Arc::new(Mutex::new(None));
-    
-
-    {
-        let cuda_context_clone = cuda_context.clone();
-        let ui_weak = ui.as_weak();
-        
-
-        std::thread::spawn(move || {
-            #[cfg(feature = "cuda")]
-            {
-                // CUDA initialization
-                let cuda_result = pollster::block_on(async {
-                    CudaContext::new().await
-                });
-                
-                match cuda_result {
-                    Ok(context) => {
-                        let device_info = context.get_device_info();
-                        println!("CUDA: {} - initialization successful", device_info.name);
-                        
-                        // Update CUDA context
-                        if let Ok(mut guard) = cuda_context_clone.lock() {
-                            *guard = Some(context.clone());
-                        }
-                        
-                        // Set global CUDA context in ui_handlers
-                        ui_handlers::set_global_cuda_context(cuda_context_clone.clone());
-                        
-                        // Update UI with CUDA status
-                        if let Some(ui) = ui_weak.upgrade() {
-                            ui.set_gpu_status_text(format!("CUDA: {} - available", device_info.name).into());
-                        }
-                    }
-                    Err(e) => {
-                        println!("CUDA: initialization failed - {}", e);
-                        println!("Application running in CPU mode");
-                        
-                        // Update UI with CUDA status
-                        if let Some(ui) = ui_weak.upgrade() {
-                            ui.set_gpu_status_text("CUDA: not available (CPU mode)".into());
-                        }
-                    }
-                }
-            }
-            
-            #[cfg(not(feature = "cuda"))]
-            {
-                println!("CUDA: feature disabled - compile with --features cuda to enable");
-                println!("Application running in CPU mode");
-                
-                // Update UI with status
-                if let Some(ui) = ui_weak.upgrade() {
-                    ui.set_gpu_status_text("CUDA: feature disabled (CPU mode)".into());
-                }
-            }
-        });
-    }
+    println!("Application running in CPU-only mode");
     
     let image_cache: ImageCacheType = Arc::new(Mutex::new(None));
     let current_file_path: CurrentFilePathType = Arc::new(Mutex::new(None));
     let full_exr_cache: FullExrCache = Arc::new(Mutex::new(None));
 
     // Setup UI callbacks...
-    let console_model = setup_ui_callbacks(&ui, image_cache.clone(), current_file_path.clone(), full_exr_cache.clone(), cuda_context.clone());
+    let console_model = setup_ui_callbacks(&ui, image_cache.clone(), current_file_path.clone(), full_exr_cache.clone());
 
 
     {
@@ -198,7 +125,6 @@ fn setup_menu_callbacks(
     image_cache: ImageCacheType,
     console_model: Rc<VecModel<SharedString>>,
     full_exr_cache: FullExrCache,
-    _cuda_context: CudaContextType,
 ) {
     ui.on_clear_console({
         let ui_handle = ui.as_weak();
@@ -288,7 +214,6 @@ fn setup_image_control_callbacks(
     image_cache: ImageCacheType,
     current_file_path: CurrentFilePathType,
     console_model: Rc<VecModel<SharedString>>,
-    _cuda_context: CudaContextType,
 ) {
     let ui_weak_for_throttle = ui.as_weak();
     let cache_weak_for_throttle = image_cache.clone();
@@ -410,7 +335,6 @@ fn setup_panel_callbacks(
     image_cache: ImageCacheType,
     console_model: Rc<VecModel<SharedString>>,
     full_exr_cache: FullExrCache,
-    _cuda_context: CudaContextType,
 ) {
 
     ui.on_key_pressed_debug({
@@ -542,63 +466,14 @@ fn setup_ui_callbacks(
     image_cache: ImageCacheType,
     current_file_path: CurrentFilePathType,
     full_exr_cache: FullExrCache,
-    cuda_context: CudaContextType,
 ) -> Rc<VecModel<SharedString>> {
     let console_model: Rc<VecModel<SharedString>> = Rc::new(VecModel::from(vec![]));
     ui.set_console_text(SharedString::from(""));
 
-    setup_menu_callbacks(ui, current_file_path.clone(), image_cache.clone(), console_model.clone(), full_exr_cache.clone(), cuda_context.clone());
-    setup_image_control_callbacks(ui, image_cache.clone(), current_file_path.clone(), console_model.clone(), cuda_context.clone());
-    setup_panel_callbacks(ui, current_file_path.clone(), image_cache.clone(), console_model.clone(), full_exr_cache.clone(), cuda_context.clone());
-    
-    // Setup CUDA status callback
-    setup_cuda_status_callback(ui, cuda_context.clone());
+    setup_menu_callbacks(ui, current_file_path.clone(), image_cache.clone(), console_model.clone(), full_exr_cache.clone());
+    setup_image_control_callbacks(ui, image_cache.clone(), current_file_path.clone(), console_model.clone());
+    setup_panel_callbacks(ui, current_file_path.clone(), image_cache.clone(), console_model.clone(), full_exr_cache.clone());
 
     console_model
 }
 
-fn setup_cuda_status_callback(
-    ui: &AppWindow,
-    cuda_context: CudaContextType,
-) {
-    ui.on_gpu_status_changed({
-        let ui_handle = ui.as_weak();
-        let cuda_context = cuda_context.clone();
-        move || {
-            if let Some(ui) = ui_handle.upgrade() {
-                ui_handlers::update_cuda_status(&ui, &cuda_context);
-            }
-        }
-    });
-    
-    ui.on_check_gpu_availability({
-        let ui_handle = ui.as_weak();
-        let cuda_context = cuda_context.clone();
-        move || {
-            if let Some(ui) = ui_handle.upgrade() {
-                ui_handlers::check_cuda_availability(&ui, &cuda_context);
-            }
-        }
-    });
-    
-    ui.on_toggle_gpu_acceleration({
-        let ui_handle = ui.as_weak();
-        move || {
-            if let Some(ui) = ui_handle.upgrade() {
-                let current_state = ui.get_gpu_acceleration_enabled();
-                ui.set_gpu_acceleration_enabled(!current_state);
-                
-                // Zaktualizuj globalny stan w ui_handlers
-                ui_handlers::set_global_gpu_acceleration(!current_state);
-                
-                // Zaktualizuj status
-                let new_status = if !current_state {
-                    "GPU: akceleracja włączona"
-                } else {
-                    "GPU: akceleracja wyłączona"
-                };
-                ui.set_gpu_status_text(new_status.into());
-            }
-        }
-    });
-}
