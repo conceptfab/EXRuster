@@ -9,8 +9,8 @@ use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
 use crate::io::image_cache::extract_layers_info;
 use crate::ui::progress::ProgressSink;
-use std::sync::{Mutex, OnceLock};
-use lru::LruCache;
+use std::sync::OnceLock;
+use crate::utils::cache::{LruThreadSafeCache, new_thread_safe_lru_cache};
 
 // Dodaj importy dla nowego systemu
 use exr::prelude as exr;
@@ -117,13 +117,7 @@ pub fn generate_thumbnails_cpu_raw(
         .into_par_iter()
         .filter_map(|path| {
             // Spróbuj z cache LRU
-            let cached_opt = {
-                if let Ok(mut guard) = get_thumb_cache().lock() {
-                    c_get(&mut *guard, &path, thumb_height, exposure, gamma, tonemap_mode)
-                } else {
-                    None
-                }
-            };
+            let cached_opt = c_get(&path, thumb_height, exposure, gamma, tonemap_mode);
             if let Some(cached) = cached_opt {
                 let n = completed.fetch_add(1, Ordering::Relaxed) + 1;
                 if let Some(p) = progress {
@@ -342,22 +336,19 @@ fn file_mtime_u64(path: &Path) -> u64 {
         .unwrap_or(0)
 }
 
-static THUMB_CACHE: OnceLock<Mutex<LruCache<ThumbKey, ThumbValue>>> = OnceLock::new();
+static THUMB_CACHE: OnceLock<LruThreadSafeCache<ThumbKey, ThumbValue>> = OnceLock::new();
 
-pub fn get_thumb_cache() -> &'static Mutex<LruCache<ThumbKey, ThumbValue>> {
-    THUMB_CACHE.get_or_init(|| Mutex::new(LruCache::new(std::num::NonZeroUsize::new(256).unwrap())))
+pub fn get_thumb_cache() -> &'static LruThreadSafeCache<ThumbKey, ThumbValue> {
+    THUMB_CACHE.get_or_init(|| new_thread_safe_lru_cache(256))
 }
 
 /// Czyści cache miniaturek (force regeneration)
 pub fn clear_thumb_cache() {
-    if let Ok(mut cache) = get_thumb_cache().lock() {
-        cache.clear();
-        println!("Thumbnail cache cleared - forcing regeneration");
-    }
+    get_thumb_cache().clear();
+    println!("Thumbnail cache cleared - forcing regeneration");
 }
 
 pub fn c_get(
-    cache: &mut LruCache<ThumbKey, ThumbValue>,
     path: &Path,
     thumb_h: u32,
     exposure: f32,
@@ -366,7 +357,7 @@ pub fn c_get(
 ) -> Option<ExrThumbWork> {
     let preset = make_preset(thumb_h, exposure, gamma, tonemap_mode);
     let key = ThumbKey { path: path.to_path_buf(), modified: file_mtime_u64(path), preset };
-    cache.get(&key).map(|v| ExrThumbWork {
+    get_thumb_cache().get(&key, |v| ExrThumbWork {
         path: key.path.clone(),
         file_name: v.file_name.clone(),
         file_size_bytes: v.file_size_bytes,
@@ -379,21 +370,19 @@ pub fn c_get(
 
 pub fn put_thumb_cache(work: &ExrThumbWork, thumb_h: u32, exposure: f32,
                        gamma: f32, tonemap_mode: i32) {
-    if let Ok(mut cache) = get_thumb_cache().lock() {
-        let preset = make_preset(thumb_h, exposure, gamma, tonemap_mode);
-        let key = ThumbKey { 
-            path: work.path.clone(), 
-            modified: file_mtime_u64(&work.path), 
-            preset 
-        };
-        let value = ThumbValue {
-            width: work.width,
-            height: work.height,
-            num_layers: work.num_layers,
-            file_size_bytes: work.file_size_bytes,
-            file_name: work.file_name.clone(),
-            pixels: work.pixels.clone(),
-        };
-        cache.put(key, value);
-    }
+    let preset = make_preset(thumb_h, exposure, gamma, tonemap_mode);
+    let key = ThumbKey { 
+        path: work.path.clone(), 
+        modified: file_mtime_u64(&work.path), 
+        preset 
+    };
+    let value = ThumbValue {
+        width: work.width,
+        height: work.height,
+        num_layers: work.num_layers,
+        file_size_bytes: work.file_size_bytes,
+        file_name: work.file_name.clone(),
+        pixels: work.pixels.clone(),
+    };
+    get_thumb_cache().put(key, value);
 }

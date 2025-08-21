@@ -1,16 +1,12 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use ::exr::meta::attribute::AttributeValue;
 use glam::{DMat3, DVec3, Mat3};
-use std::sync::{LazyLock, Mutex};
-use std::collections::HashMap;
+use std::sync::LazyLock;
+use crate::utils::cache::{new_thread_safe_stats_fifo_cache, ThreadSafeStatsFifoCache};
 
 // Global cache dla color matrices - persistent między sesjami
-static COLOR_MATRIX_CACHE: LazyLock<Mutex<HashMap<(std::path::PathBuf, String), Mat3>>> = 
-    LazyLock::new(|| Mutex::new(HashMap::new()));
-
-// Statistics
-static CACHE_HITS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-static CACHE_MISSES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static COLOR_MATRIX_CACHE: LazyLock<ThreadSafeStatsFifoCache<(PathBuf, String), Mat3>> = 
+    LazyLock::new(|| new_thread_safe_stats_fifo_cache(100));
 
 // Make the main function public
 pub fn compute_rgb_to_srgb_matrix_from_file_for_layer(path: &Path, layer_name: &str) -> anyhow::Result<Mat3> {
@@ -147,39 +143,24 @@ pub fn compute_rgb_to_srgb_matrix_from_file_for_layer_cached(path: &Path, layer_
     let key = (path.to_path_buf(), layer_name.to_string());
     
     // Sprawdź cache
-    if let Ok(cache) = COLOR_MATRIX_CACHE.lock() {
-        if let Some(&matrix) = cache.get(&key) {
-            CACHE_HITS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            println!("Color matrix cache HIT for {}:{}", path.display(), layer_name);
-            return Ok(matrix);
-        }
+    if let Some(matrix) = COLOR_MATRIX_CACHE.get(&key, |&matrix| matrix) {
+        println!("Color matrix cache HIT for {}:{}", path.display(), layer_name);
+        return Ok(matrix);
     }
     
     // Cache miss - oblicz nową macierz
-    CACHE_MISSES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     println!("Color matrix cache MISS for {}:{}, computing...", path.display(), layer_name);
     
     let matrix = compute_rgb_to_srgb_matrix_from_file_for_layer(path, layer_name)?;
     
-    // Zapisz w cache z limit size
-    if let Ok(mut cache) = COLOR_MATRIX_CACHE.lock() {
-        // Limit cache size to 100 entries
-        if cache.len() >= 100 {
-            // Remove oldest entries (simple FIFO - w rzeczywistej implementacji można użyć LRU)
-            if let Some(oldest_key) = cache.keys().next().cloned() {
-                cache.remove(&oldest_key);
-            }
-        }
-        cache.insert(key, matrix);
-    }
+    // Zapisz w cache (automatic size limit handled by FIFO cache)
+    COLOR_MATRIX_CACHE.put(key, matrix);
     
     Ok(matrix)
 }
 
 #[allow(dead_code)]
 pub fn get_color_matrix_cache_stats() -> (u64, u64, f32) {
-    let hits = CACHE_HITS.load(std::sync::atomic::Ordering::Relaxed);
-    let misses = CACHE_MISSES.load(std::sync::atomic::Ordering::Relaxed);
-    let hit_rate = if hits + misses > 0 { hits as f32 / (hits + misses) as f32 } else { 0.0 };
-    (hits, misses, hit_rate)
+    let stats = COLOR_MATRIX_CACHE.stats();
+    (stats.hits, stats.misses, stats.hit_rate() as f32)
 }

@@ -4,6 +4,7 @@ pub mod error_handling;
 pub mod logging;
 pub mod conversions;
 pub mod progress;
+pub mod cache;
 
 // Re-export specific functions that are needed by other modules
 pub use utils::{get_channel_info, normalize_channel_name};
