@@ -123,20 +123,8 @@ pub fn handle_open_exr_from_path(
                                                     if let Some(ref mut cache) = *guard {
                                                         if let Ok(()) = cache.update_histogram() {
                                                             if let Some(hist_data) = cache.get_histogram_data() {
-                                                                // Pass histogram data to UI
-                                                                let red_bins: Vec<i32> = hist_data.red_bins.iter().map(|&x| x as i32).collect();
-                                                                let green_bins: Vec<i32> = hist_data.green_bins.iter().map(|&x| x as i32).collect();
-                                                                let blue_bins: Vec<i32> = hist_data.blue_bins.iter().map(|&x| x as i32).collect();
-                                                                let lum_bins: Vec<i32> = hist_data.luminance_bins.iter().map(|&x| x as i32).collect();
-                                                                
-                                                                ui2.set_histogram_red_data(ModelRc::new(VecModel::from(red_bins)));
-                                                                ui2.set_histogram_green_data(ModelRc::new(VecModel::from(green_bins)));
-                                                                ui2.set_histogram_blue_data(ModelRc::new(VecModel::from(blue_bins)));
-                                                                ui2.set_histogram_luminance_data(ModelRc::new(VecModel::from(lum_bins)));
-                                                                
-                                                                // Statistics
-                                                                ui2.set_histogram_min_value(hist_data.min_value);
-                                                                ui2.set_histogram_max_value(hist_data.max_value);
+                                                                // Apply histogram data to UI using the new unified method
+                                                                hist_data.apply_to_ui(&ui2);
                                                                 ui2.set_histogram_total_pixels(hist_data.total_pixels as i32);
                                                                 
                                                                 // Percentiles
@@ -233,20 +221,8 @@ pub fn handle_open_exr_from_path(
                                                     if let Some(ref mut cache) = *guard {
                                                         if let Ok(()) = cache.update_histogram() {
                                                             if let Some(hist_data) = cache.get_histogram_data() {
-                                                                // Pass histogram data to UI
-                                                                let red_bins: Vec<i32> = hist_data.red_bins.iter().map(|&x| x as i32).collect();
-                                                                let green_bins: Vec<i32> = hist_data.green_bins.iter().map(|&x| x as i32).collect();
-                                                                let blue_bins: Vec<i32> = hist_data.blue_bins.iter().map(|&x| x as i32).collect();
-                                                                let lum_bins: Vec<i32> = hist_data.luminance_bins.iter().map(|&x| x as i32).collect();
-                                                                
-                                                                ui2.set_histogram_red_data(ModelRc::new(VecModel::from(red_bins)));
-                                                                ui2.set_histogram_blue_data(ModelRc::new(VecModel::from(blue_bins)));
-                                                                ui2.set_histogram_green_data(ModelRc::new(VecModel::from(green_bins)));
-                                                                ui2.set_histogram_luminance_data(ModelRc::new(VecModel::from(lum_bins)));
-                                                                
-                                                                // Statistics
-                                                                ui2.set_histogram_min_value(hist_data.min_value);
-                                                                ui2.set_histogram_max_value(hist_data.max_value);
+                                                                // Apply histogram data to UI using the new unified method
+                                                                hist_data.apply_to_ui(&ui2);
                                                                 ui2.set_histogram_total_pixels(hist_data.total_pixels as i32);
                                                                 
                                                                 // Percentiles

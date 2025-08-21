@@ -1,4 +1,5 @@
 use rayon::prelude::*;
+use crate::AppWindow;
 // use std::sync::Arc;
 
 #[derive(Debug, Clone)]
@@ -145,6 +146,27 @@ impl HistogramData {
             .max_by_key(|(_, &count)| count)
             .map(|(i, _)| i)
             .unwrap_or(0)
+    }
+
+    /// Apply histogram data directly to UI - eliminates all the repetitive boilerplate
+    pub fn apply_to_ui(&self, ui: &AppWindow) {
+        use slint::{ModelRc, VecModel};
+        
+        // Convert bins to i32 vectors exactly as the original code did
+        let red_bins: Vec<i32> = self.red_bins.iter().map(|&x| x as i32).collect();
+        let green_bins: Vec<i32> = self.green_bins.iter().map(|&x| x as i32).collect();
+        let blue_bins: Vec<i32> = self.blue_bins.iter().map(|&x| x as i32).collect();
+        let lum_bins: Vec<i32> = self.luminance_bins.iter().map(|&x| x as i32).collect();
+        
+        // Set the data exactly as the original code did
+        ui.set_histogram_red_data(ModelRc::new(VecModel::from(red_bins)));
+        ui.set_histogram_green_data(ModelRc::new(VecModel::from(green_bins)));
+        ui.set_histogram_blue_data(ModelRc::new(VecModel::from(blue_bins)));
+        ui.set_histogram_luminance_data(ModelRc::new(VecModel::from(lum_bins)));
+        
+        // Also set the statistics
+        ui.set_histogram_min_value(self.min_value);
+        ui.set_histogram_max_value(self.max_value);
     }
 
     fn reset(&mut self) {

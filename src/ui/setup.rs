@@ -56,20 +56,10 @@ pub fn setup_menu_callbacks(
                     match cache.update_histogram() {
                         Ok(()) => {
                             if let Some(hist_data) = cache.get_histogram_data() {
-                                // Przekaż dane histogramu do UI
-                                let red_bins: Vec<i32> = hist_data.red_bins.iter().map(|&x| x as i32).collect();
-                                let green_bins: Vec<i32> = hist_data.green_bins.iter().map(|&x| x as i32).collect();
-                                let blue_bins: Vec<i32> = hist_data.blue_bins.iter().map(|&x| x as i32).collect();
-                                let lum_bins: Vec<i32> = hist_data.luminance_bins.iter().map(|&x| x as i32).collect();
+                                // Apply histogram data to UI using the new unified method
+                                hist_data.apply_to_ui(&ui);
                                 
-                                ui.set_histogram_red_data(slint::ModelRc::new(slint::VecModel::from(red_bins)));
-                                ui.set_histogram_green_data(slint::ModelRc::new(slint::VecModel::from(green_bins)));
-                                ui.set_histogram_blue_data(slint::ModelRc::new(slint::VecModel::from(blue_bins)));
-                                ui.set_histogram_luminance_data(slint::ModelRc::new(slint::VecModel::from(lum_bins)));
-                                
-                                // Statystyki
-                                ui.set_histogram_min_value(hist_data.min_value);
-                                ui.set_histogram_max_value(hist_data.max_value);
+                                // Additional statistics not covered by apply_to_ui
                                 ui.set_histogram_total_pixels(hist_data.total_pixels as i32);
                                 
                                 // Percentyle
