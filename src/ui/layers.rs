@@ -2,10 +2,9 @@ use slint::{Weak, ComponentHandle, VecModel, SharedString};
 use std::sync::{Arc, Mutex};
 use std::path::PathBuf;
 use crate::io::image_cache::ImageCache;
-use crate::ui::progress::{UiProgress, ProgressSink};
 use crate::ui::state::SharedUiState;
 use crate::ui::{push_console, lock_or_recover};
-use crate::utils::{get_channel_info, normalize_channel_name, UiErrorReporter};
+use crate::utils::{get_channel_info, normalize_channel_name, UiErrorReporter, patterns};
 use crate::AppWindow;
 
 pub type ImageCacheType = Arc<Mutex<Option<ImageCache>>>;
@@ -42,9 +41,8 @@ pub fn handle_layer_tree_click(
             if let Some(path) = file_path {
                 let mut cache_guard = lock_or_recover(&image_cache);
                 if let Some(ref mut cache) = *cache_guard {
-                    let prog = UiProgress::new(ui.as_weak());
-                    prog.start_indeterminate(Some("Loading layer..."));
-                    match cache.load_layer(&path, &layer_name, Some(&prog)) {
+                    let _prog = patterns::processing(ui.as_weak(), "Loading layer");
+                    match cache.load_layer(&path, &layer_name, Some(_prog.inner())) {
                         Ok(()) => {
                             let exposure = ui.get_exposure_value();
                             let gamma = ui.get_gamma_value();
@@ -60,12 +58,11 @@ pub fn handle_layer_tree_click(
                                 .unwrap_or_else(|| "?".into());
                             status_msg = format!("Layer: {} | mode: RGB | channels: {}", layer_name, channels);
                             ui.set_status_text(status_msg.into());
-                            prog.finish(Some("Layer loaded"));
                             ui.set_selected_layer_item(format!("📁 {}", display_layer_name).into());
                         }
                         Err(e) => {
                             ui.report_error_with_status(&console, "layer", &format!("Error loading layer {}", layer_name), e);
-                            prog.reset();
+                            // Progress automatically resets on scope exit
                         }
                     }
                 }
@@ -132,28 +129,26 @@ pub fn handle_layer_tree_click(
                     }
                 };
 
-                let prog = UiProgress::new(ui.as_weak());
-                prog.start_indeterminate(Some("Loading channel..."));
-                match cache.load_channel(&path, &active_layer, &channel_short, Some(&prog)) {
+                let _prog = patterns::processing(ui.as_weak(), "Loading channel");
+                match cache.load_channel(&path, &active_layer, &channel_short, Some(_prog.inner())) {
                     Ok(()) => {
                         let _exposure = ui.get_exposure_value();
                         let _gamma = ui.get_gamma_value();
 
                         let upper = channel_short.to_ascii_uppercase();
                         if upper == "Z" || upper.contains("DEPTH") {
-                            let image = cache.process_depth_image_with_progress(true, Some(&prog));
+                            let image = cache.process_depth_image_with_progress(true, Some(_prog.inner()));
                             ui.set_exr_image(image);
                             ui.set_status_text(format!("Layer: {} | Channel: {} | mode: Depth (auto-normalized, inverted)", active_layer, channel_short).into());
                             push_console(&ui, &console, format!("[channel] {}@{} → mode: Depth (auto-normalized, inverted)", channel_short, active_layer));
                             push_console(&ui, &console, format!("[preview] updated → mode: Depth (auto-normalized, inverted), {}::{}", active_layer, channel_short));
                         } else {
-                            let image = cache.process_depth_image_with_progress(false, Some(&prog));
+                            let image = cache.process_depth_image_with_progress(false, Some(_prog.inner()));
                             ui.set_exr_image(image);
                             ui.set_status_text(format!("Layer: {} | Channel: {} | mode: Grayscale (auto-normalized)", active_layer, channel_short).into());
                             push_console(&ui, &console, format!("[channel] {}@{} → mode: Grayscale (auto-normalized)", channel_short, active_layer));
                             push_console(&ui, &console, format!("[preview] updated → mode: Grayscale (auto-normalized), {}::{}", active_layer, channel_short));
                         }
-                        prog.finish(Some("Channel loaded"));
                         let display_layer = {
                             let state_guard = lock_or_recover(&ui_state);
                             state_guard.get_display_for_real_layer(&active_layer)
@@ -170,7 +165,7 @@ pub fn handle_layer_tree_click(
                     }
                     Err(e) => {
                         ui.report_error_with_status(&console, "channel", &format!("Error loading channel {}", channel_short), format!("{}@{}: {}", channel_short, active_layer, e));
-                        prog.reset();
+                        // Progress automatically resets on scope exit
                     }
                 }
             }

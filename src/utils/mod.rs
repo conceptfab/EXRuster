@@ -3,11 +3,13 @@ pub mod buffer_pool;
 pub mod error_handling;
 pub mod logging;
 pub mod conversions;
+pub mod progress;
 
 // Re-export specific functions that are needed by other modules
 pub use utils::{get_channel_info, normalize_channel_name};
 pub use buffer_pool::BufferPool;
 pub use error_handling::UiErrorReporter;
+pub use progress::{WeakProgressExt, patterns};
 
 // Re-export with module path for specific needs
 pub use utils::split_layer_and_short;

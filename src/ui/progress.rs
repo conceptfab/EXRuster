@@ -104,3 +104,22 @@ impl ProgressSink for UiProgress {
         *self.last_progress.lock().unwrap() = 0.0;
     }
 }
+
+// Implementation for Arc<UiProgress> to support thread-safe progress sharing
+impl ProgressSink for Arc<UiProgress> {
+    fn start_indeterminate(&self, message: Option<&str>) {
+        self.as_ref().start_indeterminate(message);
+    }
+
+    fn set(&self, progress_0_1: f32, message: Option<&str>) {
+        self.as_ref().set(progress_0_1, message);
+    }
+
+    fn finish(&self, message: Option<&str>) {
+        self.as_ref().finish(message);
+    }
+
+    fn reset(&self) {
+        self.as_ref().reset();
+    }
+}

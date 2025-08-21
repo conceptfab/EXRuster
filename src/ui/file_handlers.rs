@@ -6,9 +6,8 @@ use crate::io::file_operations::{open_file_dialog, get_file_name};
 use crate::io::exr_metadata;
 use crate::io::image_cache::{ImageCache, LayerInfo};
 use crate::io::full_exr_cache::{build_full_exr_cache, FullExrCacheData, FullLayer};
-use crate::ui::progress::{UiProgress, ProgressSink};
 use crate::ui::ui_handlers::{push_console, lock_or_recover, ConsoleModel, ImageCacheType, CurrentFilePathType, FullExrCache};
-use crate::{AppWindow, utils::{get_channel_info, UiErrorReporter}};
+use crate::{AppWindow, utils::{get_channel_info, UiErrorReporter, WeakProgressExt, patterns}};
 use anyhow::{Result, Context};
 
 // Global static variables for layer mapping (to be moved to state in future refactoring)
@@ -27,14 +26,13 @@ pub fn handle_open_exr(
     full_exr_cache: FullExrCache,
 ) {
     if let Some(ui) = ui_handle.upgrade() {
-        let prog = UiProgress::new(ui.as_weak());
-        prog.start_indeterminate(Some("Opening EXR file..."));
+        let _prog = ui.as_weak().scoped_progress()
+            .start_indeterminate(Some("Opening EXR file..."));
         push_console(&ui, &console, "[file] opening EXR file".to_string());
 
         if let Some(path) = open_file_dialog() {
             handle_open_exr_from_path(ui_handle, current_file_path, image_cache, console, full_exr_cache, path);
         } else {
-            prog.reset();
             ui.set_status_text("File selection canceled".into());
             push_console(&ui, &console, "[file] selection canceled".to_string());
         }
@@ -51,8 +49,8 @@ pub fn handle_open_exr_from_path(
     path: PathBuf,
 ) {
     if let Some(ui) = ui_handle.upgrade() {
-        let prog = UiProgress::new(ui.as_weak());
-        prog.set(0.05, Some(&format!("Loading: {}", path.display())));
+        let prog = patterns::file_operation(ui.as_weak(), "Loading", &path.display().to_string())
+            .set(0.05, None);
         push_console(&ui, &console, format!("{{\"event\":\"file.open\",\"path\":\"{}\"}}", path.display()));
 
         // Load EXR file metadata and update UI
@@ -286,7 +284,7 @@ pub fn handle_open_exr_from_path(
             }
             Err(e) => {
                 ui.report_error_with_status(&console, "meta", "Błąd odczytu metadanych", e);
-                prog.reset();
+                // Progress automatically resets on scope exit
             }
         }
     }

@@ -22,7 +22,8 @@ pub fn load_thumbnails_for_directory(
         ui.set_status_text(format!("Loading thumbnails: {}", directory.display()).into());
         
 
-        let prog = UiProgress::new(ui.as_weak());
+        // Note: Using Arc<UiProgress> for thread-safe sharing across threads
+        let prog = std::sync::Arc::new(UiProgress::new(ui.as_weak()));
         prog.start_indeterminate(Some("🔍 Scanning folder for EXR files..."));
         
         // Clear cache to force regeneration of thumbnails with new parameters
