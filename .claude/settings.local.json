@@ -15,7 +15,8 @@
       "Bash(mkdir:*)",
       "Bash(mv:*)",
       "Bash(rg:*)",
-      "Bash(sed:*)"
+      "Bash(sed:*)",
+      "Bash(grep:*)"
     ],
     "deny": [],
     "ask": []
