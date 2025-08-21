@@ -124,8 +124,6 @@ macro_rules! handle_ui_error_with_progress {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    
     #[test]
     fn test_error_formatting() {
         // Tests would go here, but we can't easily test UI components
