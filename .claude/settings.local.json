@@ -16,7 +16,8 @@
       "Bash(mv:*)",
       "Bash(rg:*)",
       "Bash(sed:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(timeout 15s cargo check --features unified_simd)"
     ],
     "deny": [],
     "ask": []
