@@ -4,6 +4,7 @@ pub mod full_exr_cache;
 pub mod lazy_exr_loader;
 pub mod thumbnails;
 pub mod exr_metadata;
+pub mod metadata_traits;
 
 // Re-export commonly used functions without requiring full visibility
 // These will be accessed via crate::io::function_name instead of re-exporting

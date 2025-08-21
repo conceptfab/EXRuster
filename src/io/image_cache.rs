@@ -523,6 +523,18 @@ pub(crate) fn extract_layers_info(path: &PathBuf) -> anyhow::Result<Vec<LayerInf
 }
 
 pub(crate) fn find_best_layer(layers_info: &[LayerInfo]) -> String {
+    // Use unified metadata approach for better layer selection
+    use crate::io::metadata_traits::{LayerDescriptor, utils::find_best_layer as unified_find_best};
+    
+    // Convert to unified format for consistent layer selection logic
+    let unified_layers: Vec<crate::io::metadata_traits::UnifiedLayerInfo> = 
+        layers_info.iter().cloned().map(|l| l.into()).collect();
+    
+    if let Some(best_layer) = unified_find_best(&unified_layers) {
+        return best_layer.name().to_string();
+    }
+    
+    // Fallback to original logic if needed
     if let Some(layer) = layers_info.iter().find(|l| l.name.is_empty()) {
         let mut has_r = false;
         let mut has_g = false;
