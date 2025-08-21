@@ -136,6 +136,50 @@ pub fn process_scalar_pixels(
     color_matrix: Option<Mat3>,
     grayscale: bool,
 ) {
+    // Option to use unified processing approach
+    #[cfg(feature = "unified_simd")]
+    {
+        use crate::processing::simd_traits::{ScalarProcessor, ProcessParams, process_pixel_unified};
+        let processor = ScalarProcessor;
+        let params = ProcessParams::new(exposure, gamma, tonemap_mode);
+        
+        let pixel_count = input.len() / 4;
+        for i in 0..pixel_count {
+            let pixel_start = i * 4;
+            let mut r = input[pixel_start];
+            let mut g = input[pixel_start + 1];
+            let mut b = input[pixel_start + 2];
+            let a = input[pixel_start + 3];
+            
+            // Apply color matrix if provided
+            if let Some(mat) = color_matrix {
+                let v = mat * Vec3::new(r, g, b);
+                r = v.x; g = v.y; b = v.z;
+            }
+            
+            let (final_r, final_g, final_b, final_a) = process_pixel_unified(&processor, r, g, b, a, &params);
+            
+            if grayscale {
+                let gray = 0.299 * final_r + 0.587 * final_g + 0.114 * final_b;
+                output[i] = Rgba8Pixel {
+                    r: (gray * 255.0) as u8,
+                    g: (gray * 255.0) as u8,
+                    b: (gray * 255.0) as u8,
+                    a: (final_a * 255.0) as u8,
+                };
+            } else {
+                output[i] = Rgba8Pixel {
+                    r: (final_r * 255.0) as u8,
+                    g: (final_g * 255.0) as u8,
+                    b: (final_b * 255.0) as u8,
+                    a: (final_a * 255.0) as u8,
+                };
+            }
+        }
+        return;
+    }
+    
+    // Original implementation (fallback)
     let pixel_count = input.len() / 4;
     
     for i in 0..pixel_count {
