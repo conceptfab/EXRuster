@@ -69,6 +69,8 @@
       "prefixes": [],
       "patterns": [
         "ID*",
+        "leather",
+        "scratch",
         "_*"
       ],
       "basic_rgb": false
