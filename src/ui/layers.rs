@@ -67,9 +67,9 @@ pub fn handle_layer_tree_click(
     }
     
     // WARSTWA - kliknięcie w warstwę (📁) - zawsze load composite
-    if trimmed.starts_with("  📁") {
+    if trimmed.starts_with("📁") {
         if let Some(ui) = ui_handle.upgrade() {
-            let layer_name = trimmed.trim_start_matches("  📁").trim().to_string();
+            let layer_name = trimmed.trim_start_matches("📁 ").trim().to_string();
             
             // Loading layer composite
             
@@ -280,4 +280,3 @@ pub fn toggle_all_layer_groups(
         ui.set_status_text(format!("{} all groups", if expand { "Expanded" } else { "Collapsed" }).into());
     }
 }
-

@@ -676,13 +676,17 @@ fn compose_composite_from_channels(layer_channels: &LayerChannels) -> Vec<f32> {
     };
 
     // Sprawdź czy warstwa ma kanały RGB - jeśli nie, użyj pierwszych 3 dostępnych kanałów
-    let has_rgb = pick_exact_index("R").is_some() || pick_prefix_index('R').is_some();
-    
-    let (r_idx, g_idx, b_idx) = if has_rgb {
-        // Standardowe mapowanie RGB
-        let r_idx = pick_exact_index("R").or_else(|| pick_prefix_index('R')).unwrap_or(0);
-        let g_idx = pick_exact_index("G").or_else(|| pick_prefix_index('G')).unwrap_or(r_idx);
-        let b_idx = pick_exact_index("B").or_else(|| pick_prefix_index('B')).unwrap_or(g_idx);
+    let r_idx_opt = pick_exact_index("R").or_else(|| pick_prefix_index('R'));
+    let g_idx_opt = pick_exact_index("G").or_else(|| pick_prefix_index('G'));
+    let b_idx_opt = pick_exact_index("B").or_else(|| pick_prefix_index('B'));
+
+    let has_any_rgb = r_idx_opt.is_some() || g_idx_opt.is_some() || b_idx_opt.is_some();
+
+    let (r_idx, g_idx, b_idx) = if has_any_rgb {
+        // Mamy co najmniej jeden z kanałów R, G, B. Zbuduj z nich obraz (ew. grayscale).
+        let r_idx = r_idx_opt.unwrap_or_else(|| g_idx_opt.or(b_idx_opt).unwrap_or(0));
+        let g_idx = g_idx_opt.unwrap_or(r_idx);
+        let b_idx = b_idx_opt.unwrap_or(g_idx);
         (r_idx, g_idx, b_idx)
     } else {
         // Dla warstw bez RGB (np. cryptomatte) - użyj pierwszych 3 kanałów
