@@ -88,6 +88,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     image_cache.clone(),
                     console_model.clone(),
                     full_exr_cache.clone(),
+                    ui_state.clone(),
                     first_exr.clone(),
                 );
 

@@ -7,6 +7,8 @@ use std::collections::HashMap;
 pub struct UiState {
     pub item_to_layer: HashMap<String, String>,
     pub display_to_real_layer: HashMap<String, String>,
+    pub expanded_groups: HashMap<String, bool>,
+    pub expanded_layers: HashMap<String, bool>,
     #[allow(dead_code)] // Prepared for future refactoring
     pub current_file_path: Option<PathBuf>,
     #[allow(dead_code)] // Prepared for future refactoring
@@ -18,6 +20,8 @@ impl UiState {
         Self {
             item_to_layer: HashMap::new(),
             display_to_real_layer: HashMap::new(),
+            expanded_groups: HashMap::new(),
+            expanded_layers: HashMap::new(),
             current_file_path: None,
             last_preview_log: None,
         }
@@ -27,6 +31,24 @@ impl UiState {
     pub fn clear_layer_mappings(&mut self) {
         self.item_to_layer.clear();
         self.display_to_real_layer.clear();
+    }
+
+    pub fn is_group_expanded(&self, group_name: &str) -> bool {
+        self.expanded_groups.get(group_name).copied().unwrap_or(true)
+    }
+
+    pub fn is_layer_expanded(&self, layer_name: &str) -> bool {
+        self.expanded_layers.get(layer_name).copied().unwrap_or(true)
+    }
+
+    pub fn toggle_group_expansion(&mut self, group_name: &str) {
+        let current = self.is_group_expanded(group_name);
+        self.expanded_groups.insert(group_name.to_string(), !current);
+    }
+
+    pub fn toggle_layer_expansion(&mut self, layer_name: &str) {
+        let current = self.is_layer_expanded(layer_name);
+        self.expanded_layers.insert(layer_name.to_string(), !current);
     }
 
     #[allow(dead_code)] // Prepared for future refactoring

@@ -11,6 +11,28 @@ pub type ImageCacheType = Arc<Mutex<Option<ImageCache>>>;
 pub type CurrentFilePathType = Arc<Mutex<Option<PathBuf>>>;
 pub type ConsoleModel = std::rc::Rc<VecModel<SharedString>>;
 
+/// Refreshes the layer model UI with current expand/collapse state
+fn refresh_layer_model(
+    ui_handle: Weak<AppWindow>,
+    image_cache: ImageCacheType,
+    ui_state: SharedUiState,
+) {
+    if let Some(ui) = ui_handle.upgrade() {
+        let layers_info_vec = {
+            let guard = lock_or_recover(&image_cache);
+            guard.as_ref().map(|c| c.layers_info.clone()).unwrap_or_default()
+        };
+        
+        if !layers_info_vec.is_empty() {
+            let (layers_model, layers_colors, layers_font_sizes) = 
+                crate::ui::file_handlers::create_layers_model(&layers_info_vec, &ui, &ui_state);
+            ui.set_layers_model(layers_model);
+            ui.set_layers_colors(layers_colors);
+            ui.set_layers_font_sizes(layers_font_sizes);
+        }
+    }
+}
+
 pub fn handle_layer_tree_click(
     ui_handle: Weak<AppWindow>,
     image_cache: ImageCacheType,
@@ -19,6 +41,47 @@ pub fn handle_layer_tree_click(
     console: ConsoleModel,
     ui_state: SharedUiState,
 ) {
+    let trimmed = clicked_item.trim_start();
+    
+    // Check for expand/collapse arrow clicks on groups
+    if trimmed.starts_with("▼ 📂") || trimmed.starts_with("▶ 📂") {
+        if let Some(ui) = ui_handle.upgrade() {
+            let group_name = trimmed.trim_start_matches("▼ 📂").trim_start_matches("▶ 📂").trim().to_string();
+            
+            // Toggle group expansion state
+            {
+                let mut state_guard = lock_or_recover(&ui_state);
+                state_guard.toggle_group_expansion(&group_name);
+            }
+            
+            // Refresh the layer model
+            refresh_layer_model(ui_handle.clone(), image_cache.clone(), ui_state.clone());
+            
+            push_console(&ui, &console, format!("[layer] toggled group: {}", group_name));
+        }
+        return;
+    }
+    
+    // Check for expand/collapse arrow clicks on layers
+    if trimmed.starts_with("  ▼ 📁") || trimmed.starts_with("  ▶ 📁") {
+        if let Some(ui) = ui_handle.upgrade() {
+            let layer_name = trimmed.trim_start_matches("  ▼ 📁").trim_start_matches("  ▶ 📁").trim().to_string();
+            
+            // Toggle layer expansion state
+            {
+                let mut state_guard = lock_or_recover(&ui_state);
+                state_guard.toggle_layer_expansion(&layer_name);
+            }
+            
+            // Refresh the layer model
+            refresh_layer_model(ui_handle.clone(), image_cache.clone(), ui_state.clone());
+            
+            push_console(&ui, &console, format!("[layer] toggled layer: {}", layer_name));
+        }
+        return;
+    }
+    
+    // Handle regular layer clicks (non-arrow clicks)
     if clicked_item.trim_start().starts_with("📁") {
         if let Some(ui) = ui_handle.upgrade() {
             let display_layer_name = clicked_item.trim_start().trim_start_matches("📁").trim().to_string();

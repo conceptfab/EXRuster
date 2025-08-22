@@ -39,8 +39,9 @@ pub fn setup_menu_callbacks(
         let image_cache = image_cache.clone();
         let console = console_model.clone();
         let full_exr_cache = full_exr_cache.clone();
+        let ui_state_for_open = ui_state.clone();
         move || {
-            crate::ui::handle_open_exr(ui_handle.clone(), current_file_path.clone(), image_cache.clone(), console.clone(), full_exr_cache.clone());
+            crate::ui::handle_open_exr(ui_handle.clone(), current_file_path.clone(), image_cache.clone(), console.clone(), full_exr_cache.clone(), ui_state_for_open.clone());
         }
     });
 
@@ -216,6 +217,7 @@ pub fn setup_panel_callbacks(
     image_cache: ImageCacheType,
     console_model: Rc<VecModel<SharedString>>,
     full_exr_cache: FullExrCache,
+    ui_state: SharedUiState,
 ) {
 
     ui.on_key_pressed_debug({
@@ -251,6 +253,7 @@ pub fn setup_panel_callbacks(
         let image_cache = image_cache.clone();
         let console_model = console_model.clone();
         let full_exr_cache = full_exr_cache.clone();
+        let ui_state_for_thumbnail = ui_state.clone();
         move |path_str: slint::SharedString| {
             if let Some(_ui) = ui_handle.upgrade() {
                 let path = std::path::PathBuf::from(path_str.as_str());
@@ -258,7 +261,7 @@ pub fn setup_panel_callbacks(
                     let line = SharedString::from(format!("[thumbnails] opening file {}", path.display()));
                     console_model.push(line.clone());
                 }
-                crate::ui::handle_open_exr_from_path(ui_handle.clone(), current_file_path.clone(), image_cache.clone(), console_model.clone(), full_exr_cache.clone(), path);
+                crate::ui::handle_open_exr_from_path(ui_handle.clone(), current_file_path.clone(), image_cache.clone(), console_model.clone(), full_exr_cache.clone(), ui_state_for_thumbnail.clone(), path);
             }
         }
     });
@@ -269,6 +272,8 @@ pub fn setup_panel_callbacks(
         let current_file_path = current_file_path.clone();
         let image_cache = image_cache.clone();
         let console_model = console_model.clone();
+        let full_exr_cache = full_exr_cache.clone();
+        let ui_state_for_navigate = ui_state.clone();
         move |delta: i32| {
             if delta == 0 { return; }
             if let Some(ui) = ui_handle.upgrade() {
@@ -304,6 +309,7 @@ pub fn setup_panel_callbacks(
                         image_cache.clone(),
                         console_model.clone(),
                         full_exr_cache.clone(),
+                        ui_state_for_navigate.clone(),
                         path,
                     );
                 }
@@ -352,7 +358,7 @@ pub fn setup_ui_callbacks(
 
     setup_menu_callbacks(ui, current_file_path.clone(), image_cache.clone(), console_model.clone(), full_exr_cache.clone(), ui_state.clone());
     setup_image_control_callbacks(ui, image_cache.clone(), current_file_path.clone(), console_model.clone());
-    setup_panel_callbacks(ui, current_file_path.clone(), image_cache.clone(), console_model.clone(), full_exr_cache.clone());
+    setup_panel_callbacks(ui, current_file_path.clone(), image_cache.clone(), console_model.clone(), full_exr_cache.clone(), ui_state.clone());
 
     console_model
 }

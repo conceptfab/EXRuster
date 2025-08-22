@@ -7,6 +7,7 @@ use crate::io::exr_metadata;
 use crate::io::image_cache::{ImageCache, LayerInfo};
 use crate::io::full_exr_cache::{build_full_exr_cache, FullExrCacheData, FullLayer};
 use crate::ui::ui_handlers::{push_console, lock_or_recover, ConsoleModel, ImageCacheType, CurrentFilePathType, FullExrCache};
+use crate::ui::state::{SharedUiState, UiState};
 use crate::{AppWindow, utils::{get_channel_info, UiErrorReporter, WeakProgressExt, patterns}};
 use anyhow::{Result, Context};
 
@@ -24,6 +25,7 @@ pub fn handle_open_exr(
     image_cache: ImageCacheType,
     console: ConsoleModel,
     full_exr_cache: FullExrCache,
+    ui_state: SharedUiState,
 ) {
     if let Some(ui) = ui_handle.upgrade() {
         let _prog = ui.as_weak().scoped_progress()
@@ -31,7 +33,7 @@ pub fn handle_open_exr(
         push_console(&ui, &console, "[file] opening EXR file".to_string());
 
         if let Some(path) = open_file_dialog() {
-            handle_open_exr_from_path(ui_handle, current_file_path, image_cache, console, full_exr_cache, path);
+            handle_open_exr_from_path(ui_handle, current_file_path, image_cache, console, full_exr_cache, ui_state, path);
         } else {
             ui.set_status_text("File selection canceled".into());
             push_console(&ui, &console, "[file] selection canceled".to_string());
@@ -46,6 +48,7 @@ pub fn handle_open_exr_from_path(
     image_cache: ImageCacheType,
     console: ConsoleModel,
     full_exr_cache: FullExrCache,
+    ui_state: SharedUiState,
     path: PathBuf,
 ) {
     if let Some(ui) = ui_handle.upgrade() {
@@ -143,7 +146,7 @@ pub fn handle_open_exr_from_path(
                                                     guard.as_ref().map(|c| c.layers_info.clone()).unwrap_or_default()
                                                 };
                                                 if !layers_info_vec.is_empty() {
-                                                    let (layers_model, layers_colors, layers_font_sizes) = create_layers_model(&layers_info_vec, &ui2);
+                                                    let (layers_model, layers_colors, layers_font_sizes) = create_layers_model(&layers_info_vec, &ui2, &ui_state);
                                                     ui2.set_layers_model(layers_model);
                                                     ui2.set_layers_colors(layers_colors);
                                                     ui2.set_layers_font_sizes(layers_font_sizes);
@@ -236,7 +239,7 @@ pub fn handle_open_exr_from_path(
                                                 }
 
                                                 if !layers_info_vec.is_empty() {
-                                                    let (layers_model, layers_colors, layers_font_sizes) = create_layers_model(&layers_info_vec, &ui2);
+                                                    let (layers_model, layers_colors, layers_font_sizes) = create_layers_model(&layers_info_vec, &ui2, &ui_state);
                                                     ui2.set_layers_model(layers_model);
                                                     ui2.set_layers_colors(layers_colors);
                                                     ui2.set_layers_font_sizes(layers_font_sizes);
@@ -320,6 +323,7 @@ pub fn load_metadata(
 pub fn create_layers_model(
     layers_info: &[LayerInfo],
     ui: &AppWindow,
+    ui_state: &SharedUiState,
 ) -> (ModelRc<SharedString>, ModelRc<Color>, ModelRc<i32>) {
     use crate::processing::channel_classification::determine_channel_group_with_config;
     use crate::utils::channel_config::{load_channel_config, get_fallback_config};
@@ -362,56 +366,69 @@ pub fn create_layers_model(
 
     // 3. Build the UI model from the new hierarchy
     for (group_name, layers) in sorted_groups {
-        // Add group header
-        items.push(format!("📂 {}", group_name).into());
+        // Add group header with expand/collapse arrow
+        let state_guard: std::sync::MutexGuard<'_, UiState> = crate::ui::lock_or_recover(ui_state);
+        let is_expanded = state_guard.is_group_expanded(&group_name);
+        let arrow = if is_expanded { "▼" } else { "▶" };
+        items.push(format!("{} 📂 {}", arrow, group_name).into());
         colors.push(ui.get_layers_color_group());
         font_sizes.push(12);
+        drop(state_guard);
 
-        // Sort layers alphabetically within the group
-        let mut sorted_layers = layers;
-        sorted_layers.sort_by_key(|l| &l.name);
+        // Only show layers if group is expanded
+        if is_expanded {
+            // Sort layers alphabetically within the group
+            let mut sorted_layers = layers;
+            sorted_layers.sort_by_key(|l| &l.name);
 
-        for layer in sorted_layers {
-            let display_name = if layer.name.is_empty() { "Beauty".to_string() } else { layer.name.clone() };
-            {
-                let mut map = lock_or_recover(&DISPLAY_TO_REAL_LAYER);
-                map.insert(display_name.clone(), layer.name.clone());
-            }
-
-            // Add layer header
-            items.push(format!("  📁 {}", display_name).into());
-            colors.push(ui.get_layers_color_default());
-            font_sizes.push(11);
-
-            // Add channels for the layer
-            let mut channels_to_sort = layer.channels.clone();
-            // Special sort for RGBA
-            channels_to_sort.sort_by(|a, b| {
-                let a_upper = a.name.to_uppercase();
-                let b_upper = b.name.to_uppercase();
-                let order = ["R", "G", "B", "A"];
-                let a_pos = order.iter().position(|&s| s == a_upper.as_str()).unwrap_or(99);
-                let b_pos = order.iter().position(|&s| s == b_upper.as_str()).unwrap_or(99);
-                if a_pos != 99 || b_pos != 99 {
-                    a_pos.cmp(&b_pos)
-                } else {
-                    a.name.cmp(&b.name)
+            for layer in sorted_layers {
+                let display_name = if layer.name.is_empty() { "Beauty".to_string() } else { layer.name.clone() };
+                {
+                    let mut map = lock_or_recover(&DISPLAY_TO_REAL_LAYER);
+                    map.insert(display_name.clone(), layer.name.clone());
                 }
-            });
 
-            for ch_info in channels_to_sort {
-                let (_color, emoji, display_ch) = get_channel_info(&ch_info.name, ui);
-                let base = format!("    {} {}", emoji, display_ch);
-                let line = format!("{} @{}", base, display_name);
-                
-                ITEM_TO_LAYER
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .insert(line.clone(), layer.name.clone());
-                
-                items.push(line.into());
-                colors.push(_color);
-                font_sizes.push(10);
+                // Add layer header with expand/collapse arrow
+                let state_guard: std::sync::MutexGuard<'_, UiState> = crate::ui::lock_or_recover(ui_state);
+                let is_layer_expanded = state_guard.is_layer_expanded(&display_name);
+                let layer_arrow = if is_layer_expanded { "▼" } else { "▶" };
+                items.push(format!("  {} 📁 {}", layer_arrow, display_name).into());
+                colors.push(ui.get_layers_color_default());
+                font_sizes.push(11);
+                drop(state_guard);
+
+                // Add channels for the layer (only if layer is expanded)
+                if is_layer_expanded {
+                    let mut channels_to_sort = layer.channels.clone();
+                    // Special sort for RGBA
+                    channels_to_sort.sort_by(|a, b| {
+                        let a_upper = a.name.to_uppercase();
+                        let b_upper = b.name.to_uppercase();
+                        let order = ["R", "G", "B", "A"];
+                        let a_pos = order.iter().position(|&s| s == a_upper.as_str()).unwrap_or(99);
+                        let b_pos = order.iter().position(|&s| s == b_upper.as_str()).unwrap_or(99);
+                        if a_pos != 99 || b_pos != 99 {
+                            a_pos.cmp(&b_pos)
+                        } else {
+                            a.name.cmp(&b.name)
+                        }
+                    });
+
+                    for ch_info in channels_to_sort {
+                        let (_color, emoji, display_ch) = get_channel_info(&ch_info.name, ui);
+                        let base = format!("      {} {}", emoji, display_ch);
+                        let line = format!("{} @{}", base, display_name);
+                        
+                        ITEM_TO_LAYER
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .insert(line.clone(), layer.name.clone());
+                        
+                        items.push(line.into());
+                        colors.push(_color);
+                        font_sizes.push(10);
+                    }
+                }
             }
         }
     }
