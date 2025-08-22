@@ -63,17 +63,12 @@ pub fn handle_layer_tree_click(
             
             push_console(&ui, &console, format!("[expand] toggled group: {}", group_name));
         }
-        return;
-    }
-    
+    } 
     // WARSTWA - kliknięcie w warstwę (📁) - zawsze load composite
-    if trimmed.starts_with("📁") {
+    else if trimmed.starts_with("📁") {
         if let Some(ui) = ui_handle.upgrade() {
             let layer_name = trimmed.trim_start_matches("📁 ").trim().to_string();
             
-            // Loading layer composite
-            
-            // Kontynuuj z ładowaniem warstwy
             let real_layer_name = {
                 let state_guard = lock_or_recover(&ui_state);
                 state_guard.get_real_layer_for_display(&layer_name)
@@ -81,53 +76,49 @@ pub fn handle_layer_tree_click(
                     .unwrap_or_else(|| layer_name.clone())
             };
         
-        let mut status_msg = String::new();
-        status_msg.push_str(&format!("Loading layer: {}", layer_name));
-        push_console(&ui, &console, format!("[layer] clicked: {} (real='{}')", layer_name, real_layer_name));
-        
-        let file_path = {
-            let path_guard = lock_or_recover(&current_file_path);
-            path_guard.clone()
-        };
-        
-        if let Some(path) = file_path {
-            let mut cache_guard = lock_or_recover(&image_cache);
-            if let Some(ref mut cache) = *cache_guard {
-                let _prog = patterns::processing(ui.as_weak(), "Loading layer");
-                match cache.load_layer(&path, &real_layer_name, Some(_prog.inner())) {
-                    Ok(()) => {
-                        let exposure = ui.get_exposure_value();
-                        let gamma = ui.get_gamma_value();
-                        let tonemap_mode = ui.get_tonemap_mode() as i32;
-                        let image = cache.process_to_composite(exposure, gamma, tonemap_mode, true);
-                        ui.set_exr_image(image);
-                        push_console(&ui, &console, format!("[layer] {} → mode: RGB (composite)", real_layer_name));
-                        push_console(&ui, &console, format!("[preview] updated → mode: RGB (composite), layer: {}", real_layer_name));
-                        let channels = cache.layers_info
-                            .iter()
-                            .find(|l| l.name == real_layer_name)
-                            .map(|l| l.channels.iter().map(|c| c.name.clone()).collect::<Vec<_>>().join(", "))
-                            .unwrap_or_else(|| "?".into());
-                        status_msg = format!("Layer: {} | mode: RGB | channels: {}", real_layer_name, channels);
-                        ui.set_status_text(status_msg.into());
-                        ui.set_selected_layer_item(format!("📁 {}", layer_name).into());
-                    }
-                    Err(e) => {
-                        ui.report_error_with_status(&console, "layer", &format!("Error loading layer {}", real_layer_name), e);
-                        // Progress automatically resets on scope exit
+            let mut status_msg = String::new();
+            status_msg.push_str(&format!("Loading layer: {}", layer_name));
+            push_console(&ui, &console, format!("[layer] clicked: {} (real='{}')", layer_name, real_layer_name));
+            
+            let file_path = {
+                let path_guard = lock_or_recover(&current_file_path);
+                path_guard.clone()
+            };
+            
+            if let Some(path) = file_path {
+                let mut cache_guard = lock_or_recover(&image_cache);
+                if let Some(ref mut cache) = *cache_guard {
+                    let _prog = patterns::processing(ui.as_weak(), "Loading layer");
+                    match cache.load_layer(&path, &real_layer_name, Some(_prog.inner())) {
+                        Ok(()) => {
+                            let exposure = ui.get_exposure_value();
+                            let gamma = ui.get_gamma_value();
+                            let tonemap_mode = ui.get_tonemap_mode() as i32;
+                            let image = cache.process_to_composite(exposure, gamma, tonemap_mode, true);
+                            ui.set_exr_image(image);
+                            push_console(&ui, &console, format!("[layer] {} → mode: RGB (composite)", real_layer_name));
+                            push_console(&ui, &console, format!("[preview] updated → mode: RGB (composite), layer: {}", real_layer_name));
+                            let channels = cache.layers_info
+                                .iter()
+                                .find(|l| l.name == real_layer_name)
+                                .map(|l| l.channels.iter().map(|c| c.name.clone()).collect::<Vec<_>>().join(", "))
+                                .unwrap_or_else(|| "?".into());
+                            status_msg = format!("Layer: {} | mode: RGB | channels: {}", real_layer_name, channels);
+                            ui.set_status_text(status_msg.into());
+                            ui.set_selected_layer_item(format!("  📁 {}", layer_name).into());
+                        }
+                        Err(e) => {
+                            ui.report_error_with_status(&console, "layer", &format!("Error loading layer {}", real_layer_name), e);
+                        }
                     }
                 }
+            } else {
+                ui.report_error(&console, "file", "No file loaded");
             }
-        } else {
-            ui.report_error(&console, "file", "No file loaded");
         }
-        }
-        return;
-    }
-    
+    } 
     // KANAŁY - pozostała logika bez zmian
     else {
-        let trimmed = clicked_item.trim();
         let is_dot = trimmed.starts_with("• ");
         let is_rgba_emoji = trimmed.starts_with("🔴") || trimmed.starts_with("🟢") || trimmed.starts_with("🔵") || trimmed.starts_with("⚪");
         if !(is_dot || is_rgba_emoji) { return; }
@@ -204,23 +195,11 @@ pub fn handle_layer_tree_click(
                             push_console(&ui, &console, format!("[channel] {}@{} → mode: Grayscale (auto-normalized)", channel_short, active_layer));
                             push_console(&ui, &console, format!("[preview] updated → mode: Grayscale (auto-normalized), {}::{}", active_layer, channel_short));
                         }
-                        let display_layer = {
-                            let state_guard = lock_or_recover(&ui_state);
-                            state_guard.get_display_for_real_layer(&active_layer)
-                                .unwrap_or(active_layer.clone())
-                        };
-                        let (_, emoji, display_name) = get_channel_info(&channel_short, &ui);
-                        let label = if emoji == "•" { "    • ".to_string() } else { format!("    {} {}", emoji, display_name) };
-                        let selected = if label == "    • " {
-                            format!("{} @{}", channel_short, display_layer)
-                        } else {
-                            format!("{} @{}", label, display_layer)
-                        };
-                        ui.set_selected_layer_item(selected.into());
+                        push_console(&ui, &console, format!("[selection] trying to select: '{}'", &clicked_item));
+                        ui.set_selected_layer_item(clicked_item.into());
                     }
                     Err(e) => {
                         ui.report_error_with_status(&console, "channel", &format!("Error loading channel {}", channel_short), format!("{}@{}: {}", channel_short, active_layer, e));
-                        // Progress automatically resets on scope exit
                     }
                 }
             }
