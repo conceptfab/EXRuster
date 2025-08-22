@@ -146,6 +146,7 @@ export component AppWindow inherits Window {
     callback delete-thumbnail(string); // usuń plik na podstawie ścieżki
     callback open-console-window(); // otwórz okno konsoli
     callback navigate-thumbnails(int); // nawigacja miniatur: -1 wstecz, +1 dalej
+    callback navigate-layers(int); // nawigacja warstw: -1 góra, +1 dół
     callback key-pressed-debug(string); // diagnostyka: logowanie nazwy klawisza
      // Export callbacks
      callback export-convert();
@@ -1410,9 +1411,13 @@ export component AppWindow inherits Window {
                  root.internal-console-visible = !root.internal-console-visible; return accept;
              } else if (event.text == "h" || event.text == "H") {
                  root.internal-histogram-visible = !root.internal-histogram-visible; return accept;
-             } else if (event.text == "Left" || event.text == "ArrowLeft" || event.text == "") { // U+F702
+             } else if (event.text == "Up" || event.text == "ArrowUp" || event.text == "") {
+                 root.navigate-layers(-1); return accept;
+             } else if (event.text == "Down" || event.text == "ArrowDown" || event.text == "") {
+                 root.navigate-layers(1); return accept;
+             } else if (event.text == "Left" || event.text == "ArrowLeft" || event.text == "") {
                  root.navigate-thumbnails(-1); return accept;
-             } else if (event.text == "Right" || event.text == "ArrowRight" || event.text == "") { // U+F703
+             } else if (event.text == "Right" || event.text == "ArrowRight" || event.text == "") {
                  root.navigate-thumbnails(1); return accept;
              }
              return reject;

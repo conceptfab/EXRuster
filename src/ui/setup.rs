@@ -317,6 +317,29 @@ pub fn setup_panel_callbacks(
         }
     });
 
+    // Zwijanie/rozwijanie WSZYSTKICH grup klawiszami (delta: -1 zwiń wszystkie, +1 rozwiń wszystkie)
+    ui.on_navigate_layers({
+        let ui_handle = ui.as_weak();
+        let image_cache = image_cache.clone();
+        let console_model = console_model.clone();
+        let ui_state_for_navigate = ui_state.clone();
+        move |delta: i32| {
+            if delta == 0 { return; }
+            if let Some(_ui) = ui_handle.upgrade() {
+                // delta > 0 = strzałka w dół = rozwiń wszystkie grupy ✅
+                // delta < 0 = strzałka w górę = zwiń wszystkie grupy ✅
+                let expand_all = delta > 0;
+                crate::ui::toggle_all_layer_groups(
+                    ui_handle.clone(),
+                    image_cache.clone(),
+                    console_model.clone(),
+                    ui_state_for_navigate.clone(),
+                    expand_all
+                );
+            }
+        }
+    });
+
     // Usunięcie pliku z poziomu miniatur (menu kontekstowe)
     ui.on_delete_thumbnail({
         let ui_handle = ui.as_weak();

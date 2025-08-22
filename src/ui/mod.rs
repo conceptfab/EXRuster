@@ -12,7 +12,7 @@ pub use ui_handlers::{
     handle_parameter_changed_throttled, load_thumbnails_for_directory,
     update_preview_image, ImageCacheType, CurrentFilePathType, FullExrCache, ThrottledUpdate
 };
-pub use layers::{handle_layer_tree_click};
+pub use layers::{handle_layer_tree_click, toggle_all_layer_groups};
 pub use state::{SharedUiState, create_shared_state};
 pub use setup::{setup_ui_callbacks};
 // Don't re-export progress - use full path crate::ui::progress::

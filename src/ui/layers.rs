@@ -1,6 +1,7 @@
 use slint::{Weak, ComponentHandle, VecModel, SharedString};
 use std::sync::{Arc, Mutex};
 use std::path::PathBuf;
+use std::collections::HashSet;
 use crate::io::image_cache::ImageCache;
 use crate::ui::state::{SharedUiState, UiState};
 use crate::ui::{push_console, lock_or_recover};
@@ -43,7 +44,6 @@ pub fn handle_layer_tree_click(
     console: ConsoleModel,
     ui_state: SharedUiState,
 ) {
-    // Debug removed - keeping UI clean
     
     let trimmed = clicked_item.trim();
     
@@ -225,6 +225,59 @@ pub fn handle_layer_tree_click(
                 }
             }
         }
+    }
+}
+
+/// FUNKCJA: Zwijanie/rozwijanie WSZYSTKICH grup na raz za pomocą strzałek góra/dół
+pub fn toggle_all_layer_groups(
+    ui_handle: Weak<AppWindow>,
+    image_cache: ImageCacheType,
+    console: ConsoleModel,
+    ui_state: SharedUiState,
+    expand: bool, // true = rozwiń wszystkie, false = zwiń wszystkie
+) {
+    if let Some(ui) = ui_handle.upgrade() {
+        // Pobierz nazwy grup z image_cache (nie z ui_state, bo może być puste na starcie)
+        let group_names = {
+            let guard = lock_or_recover(&image_cache);
+            if let Some(cache) = guard.as_ref() {
+                // Pobierz wszystkie warstwy i określ ich grupy
+                let mut groups = HashSet::new();
+                for layer in &cache.layers_info {
+                    let name_for_classification = if layer.name.is_empty() { "Beauty" } else { &layer.name };
+                    use crate::processing::channel_classification::determine_channel_group_with_config;
+                    use crate::utils::channel_config::{load_channel_config, get_fallback_config};
+                    
+                    let config = load_channel_config().unwrap_or_else(|_| get_fallback_config());
+                    let group_name = determine_channel_group_with_config(name_for_classification, &config);
+                    groups.insert(group_name);
+                }
+                groups.into_iter().collect::<Vec<String>>()
+            } else {
+                vec![]
+            }
+        };
+        
+        if group_names.is_empty() {
+            push_console(&ui, &console, "[toggle] no groups found in image cache".to_string());
+            return;
+        }
+        
+        let action = if expand { "expanded" } else { "collapsed" };
+        
+        // Ustaw stan wszystkich grup na raz
+        {
+            let mut state_guard = lock_or_recover(&ui_state);
+            for group_name in &group_names {
+                state_guard.set_group_expansion(group_name, expand);
+            }
+        } // Zwolnij lock
+        
+        // Odśwież model warstw
+        refresh_layer_model(ui_handle.clone(), image_cache.clone(), ui_state.clone());
+        
+        push_console(&ui, &console, format!("[toggle] {} ALL groups: {} (arrow navigation)", action, group_names.join(", ")));
+        ui.set_status_text(format!("{} all groups", if expand { "Expanded" } else { "Collapsed" }).into());
     }
 }
 

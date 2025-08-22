@@ -344,6 +344,7 @@ pub fn create_layers_model(
     
     lock_or_recover(&ITEM_TO_LAYER).clear();
     lock_or_recover(&DISPLAY_TO_REAL_LAYER).clear();
+    
 
     // 1. Group layers by their group name
     let mut grouped_layers: HashMap<String, Vec<&LayerInfo>> = HashMap::new();
@@ -376,7 +377,7 @@ pub fn create_layers_model(
         font_sizes.push(12);
         drop(state_guard);
 
-        // Only show layers if group is expanded
+        // Show layers only if group is expanded
         if is_expanded {
             // Sort layers alphabetically within the group
             let mut sorted_layers = layers;
@@ -390,7 +391,8 @@ pub fn create_layers_model(
                 }
 
                 // Add layer header WITHOUT arrows (arrows only for groups)
-                items.push(format!("  📁 {}", display_name).into());
+                let layer_item = format!("  📁 {}", display_name);
+                items.push(layer_item.into());
                 colors.push(ui.get_layers_color_default());
                 font_sizes.push(11);
 

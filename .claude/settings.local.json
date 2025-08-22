@@ -20,7 +20,8 @@
       "Bash(timeout 15s cargo check --features unified_simd)",
       "Bash(timeout 20s cargo run --bin EXruster_nightly)",
       "Bash(timeout 20s cargo run --bin EXruster_nightly \"C:\\_cloud\\___EXRuster\\__viewer\\deploy\\icon\\Macbeth_rgb.exr\")",
-      "Bash(wmic:*)"
+      "Bash(wmic:*)",
+      "Bash(timeout 10s cargo check)"
     ],
     "deny": [],
     "ask": []
