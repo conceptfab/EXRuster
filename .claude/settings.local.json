@@ -17,7 +17,8 @@
       "Bash(rg:*)",
       "Bash(sed:*)",
       "Bash(grep:*)",
-      "Bash(timeout 15s cargo check --features unified_simd)"
+      "Bash(timeout 15s cargo check --features unified_simd)",
+      "Bash(timeout 20s cargo run --bin EXruster_nightly)"
     ],
     "deny": [],
     "ask": []

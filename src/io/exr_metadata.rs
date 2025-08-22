@@ -3,6 +3,9 @@ use std::path::Path;
 use anyhow::Context;
 use ::exr::meta::attribute::AttributeValue;
 use crate::utils::human_size;
+use crate::io::fast_exr_metadata::{read_exr_metadata_ultra_fast, FastEXRMetadata};
+use crate::processing::channel_classification::{group_channels_parallel, determine_channel_group_with_config};
+use crate::utils::channel_config::{load_channel_config, get_fallback_config};
 
 #[derive(Debug, Clone)]
 pub struct MetadataGroup {
@@ -27,7 +30,86 @@ pub struct ExrMetadata {
 }
 
 /// Publiczne API: odczytuje metadane z pliku EXR, porządkuje je i zwraca strukturę
+/// Wykorzystuje ultra-szybki parser z optymalizacjami SIMD
 pub fn read_and_group_metadata(path: &Path) -> anyhow::Result<ExrMetadata> {
+    // Spróbuj najpierw ultra-szybkiej metody
+    match read_and_group_metadata_fast(path) {
+        Ok(metadata) => return Ok(metadata),
+        Err(e) => {
+            eprintln!("Fast metadata reading failed, falling back to standard method: {}", e);
+        }
+    }
+    
+    // Fallback do standardowej metody
+    read_and_group_metadata_standard(path)
+}
+
+/// Ultra-szybka metoda odczytu metadanych z optymalizacjami
+fn read_and_group_metadata_fast(path: &Path) -> anyhow::Result<ExrMetadata> {
+    let fast_meta = read_exr_metadata_ultra_fast(path)
+        .with_context(|| format!("Błąd ultra-szybkiego odczytu EXR: {}", path.display()))?;
+    
+    // Grupa ogólna: podstawowe informacje o pliku i obrazie
+    let mut general_items: Vec<(String, String)> = Vec::new();
+    general_items.push(("Ścieżka".into(), path.display().to_string()));
+    general_items.push(("Rozmiar pliku".into(), human_size(fs::metadata(path).map(|m| m.len()).unwrap_or(0))));
+    general_items.push(("Kanały".into(), fast_meta.channels.len().to_string()));
+    
+    // Nagłówek z ultra-szybkich metadanych
+    let mut header_items: Vec<(String, String)> = Vec::new();
+    header_items.push(("display_window".into(), format!("{:?}", fast_meta.display_window)));
+    header_items.push(("pixel_aspect".into(), format!("{:.3}", fast_meta.pixel_aspect)));
+    header_items.push(("compression".into(), fast_meta.compression.clone()));
+    header_items.push(("line_order".into(), fast_meta.line_order.clone()));
+    
+    if let Some(layer_name) = &fast_meta.layer_name {
+        header_items.push(("layer_name".into(), layer_name.clone()));
+    }
+    
+    // Dodaj niestandardowe atrybuty
+    for (name, value) in &fast_meta.custom_attributes {
+        header_items.push((name.clone(), value.clone()));
+    }
+    
+    // Grupowanie kanałów z użyciem słownika z pliku JSON
+    let config = load_channel_config().unwrap_or_else(|e| {
+        eprintln!("Warning: Failed to load channel config: {}. Using fallback.", e);
+        get_fallback_config()
+    });
+    let channel_groups = group_channels_parallel(&fast_meta.channels, Some(&config));
+    
+    // Dodaj informacje o grupach kanałów do nagłówka
+    let mut channel_info = Vec::new();
+    for (group_name, channels) in &channel_groups {
+        channel_info.push(format!("{}: {}", group_name, channels.join(", ")));
+    }
+    header_items.push(("channel_groups".into(), channel_info.join("; ")));
+    
+    let mut groups: Vec<MetadataGroup> = Vec::with_capacity(3);
+    groups.push(MetadataGroup { name: "Ogólne".into(), items: general_items });
+    groups.push(MetadataGroup { name: "Nagłówek".into(), items: header_items });
+    
+    // Dodaj grupę z podziałem kanałów
+    let mut channel_group_items = Vec::new();
+    for (group_name, channels) in channel_groups {
+        channel_group_items.push((group_name, channels.join(", ")));
+    }
+    groups.push(MetadataGroup { name: "Grupy kanałów".into(), items: channel_group_items });
+    
+    // Warstwy - używamy informacji z fast metadata
+    let layer_name = fast_meta.layer_name.unwrap_or_else(|| "".to_string());
+    let layers = vec![LayerMetadata {
+        name: layer_name,
+        width: (fast_meta.display_window.2 - fast_meta.display_window.0 + 1) as u32,
+        height: (fast_meta.display_window.3 - fast_meta.display_window.1 + 1) as u32,
+        attributes: Vec::new(),
+    }];
+    
+    Ok(ExrMetadata { groups, layers })
+}
+
+/// Standardowa metoda odczytu metadanych (fallback)
+fn read_and_group_metadata_standard(path: &Path) -> anyhow::Result<ExrMetadata> {
     // Odczytaj wyłącznie meta-dane (nagłówki) bez pikseli
     let meta = ::exr::meta::MetaData::read_from_file(path, /*pedantic=*/false)
         .with_context(|| format!("Błąd odczytu EXR (nagłówki): {}", path.display()))?;
@@ -222,4 +304,19 @@ fn format_attribute_value(value: &AttributeValue, normalized_key: &str) -> Strin
         }
         other => format!("{:?}", other),
     }
+}
+
+/// Publiczne API dla ultra-szybkiego odczytu z grupowaniem kanałów
+/// Używa słownika z channel_groups.json
+pub fn read_fast_metadata_with_channels(path: &Path) -> anyhow::Result<(FastEXRMetadata, std::collections::HashMap<String, Vec<String>>)> {
+    let fast_meta = read_exr_metadata_ultra_fast(path)
+        .with_context(|| format!("Błąd ultra-szybkiego odczytu EXR: {}", path.display()))?;
+    
+    let config = load_channel_config().unwrap_or_else(|e| {
+        eprintln!("Warning: Failed to load channel config: {}. Using fallback.", e);
+        get_fallback_config()
+    });
+    let channel_groups = group_channels_parallel(&fast_meta.channels, Some(&config));
+    
+    Ok((fast_meta, channel_groups))
 }

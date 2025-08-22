@@ -1,0 +1,86 @@
+{
+  "config": {
+    "basic_rgb_channels": [
+      "R",
+      "G",
+      "B",
+      "A"
+    ],
+    "group_priority_order": [
+      "cryptomatte",
+      "light",
+      "scene",
+      "technical",
+      "scene_objects"
+    ],
+    "fallback_names": {
+      "basic_rgb": "Basic RGB",
+      "default": "Other"
+    },
+    "paths": {
+      "data_folder": "data"
+    }
+  },
+  "groups": {
+    "technical": {
+      "name": "Technical",
+      "prefixes": [
+        "RenderStamp",
+        "RenderStamp0"
+      ],
+      "patterns": [],
+      "basic_rgb": false
+    },
+    "light": {
+      "name": "Light",
+      "prefixes": [
+        "Sky",
+        "Sun",
+        "LightMix"
+      ],
+      "patterns": [
+        "Light*"
+      ],
+      "basic_rgb": false
+    },
+    "scene": {
+      "name": "Scene",
+      "prefixes": [
+        "Background",
+        "Translucency",
+        "Translucency0",
+        "VirtualBeauty",
+        "ZDepth"
+      ],
+      "patterns": [],
+      "basic_rgb": false
+    },
+    "base": {
+      "name": "Base",
+      "prefixes": [
+        "Beauty"
+      ],
+      "patterns": [],
+      "basic_rgb": true
+    },
+    "scene_objects": {
+      "name": "Scene Objects",
+      "prefixes": [],
+      "patterns": [
+        "ID*",
+        "_*"
+      ],
+      "basic_rgb": false
+    },
+    "cryptomatte": {
+      "name": "Cryptomatte",
+      "prefixes": [
+        "Cryptomatte",
+        "Cryptomatte0"
+      ],
+      "patterns": [],
+      "basic_rgb": false
+    }
+  },
+  "default_group": "Other"
+}

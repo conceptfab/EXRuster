@@ -315,18 +315,38 @@ pub fn load_metadata(
     Ok(())
 }
 
-/// Creates layers model for UI from LayerInfo
+/// Creates layers model for UI from LayerInfo with dictionary-based channel grouping
 pub fn create_layers_model(
     layers_info: &[LayerInfo],
     ui: &AppWindow,
 ) -> (ModelRc<SharedString>, ModelRc<Color>, ModelRc<i32>) {
-    // SIMPLIFIED TREE: Layer → actual channels (no groups). RGBA only if they exist in file.
+    use crate::utils::channel_config::{load_channel_config, get_fallback_config};
+    use crate::processing::channel_classification::determine_channel_group_with_config;
+    use std::collections::HashMap;
+    
+    // Ładuj konfigurację grupowania kanałów z obsługą błędów
+    let config = match load_channel_config() {
+        Ok(cfg) => {
+            println!("[config] Successfully loaded channel groups from {}", crate::utils::channel_config::CHANNEL_CONFIG_PATH);
+            cfg
+        },
+        Err(e) => {
+            eprintln!("Warning: Failed to load channel config: {}. Using fallback.", e);
+            // Zapisz komunikat do konsoli UI jeśli dostępna
+            let fallback = get_fallback_config();
+            println!("[config] Using fallback configuration with {} groups", fallback.groups.len());
+            fallback
+        }
+    };
+    
     let mut items: Vec<SharedString> = Vec::new();
     let mut colors: Vec<Color> = Vec::new();
     let mut font_sizes: Vec<i32> = Vec::new();
+    
     // Clear map
     lock_or_recover(&ITEM_TO_LAYER).clear();
     lock_or_recover(&DISPLAY_TO_REAL_LAYER).clear();
+    
     for layer in layers_info {
         // Friendly name for empty RGBA layer
         let display_name = if layer.name.is_empty() { "Beauty".to_string() } else { layer.name.clone() };
@@ -335,51 +355,79 @@ pub fn create_layers_model(
             let mut map = lock_or_recover(&DISPLAY_TO_REAL_LAYER);
             map.insert(display_name.clone(), layer.name.clone());
         }
+        
         // Layer header row
         items.push(format!("📁 {}", display_name).into());
         colors.push(ui.get_layers_color_default());
         font_sizes.push(12);
 
-        // Collect list of actual channels (short names)
-        let mut short_channels: Vec<String> = layer
-            .channels
-            .iter()
-            .map(|c| c.name.split('.').last().unwrap_or(&c.name).to_string())
-            .collect();
-
-        // Preserve order: R, G, B, A (if present), then rest alphabetically
-        // Include synonyms: Red/Green/Blue/Alpha (case-insensitive)
-        let mut ordered: Vec<String> = Vec::new();
-        let wanted_groups: [&[&str]; 4] = [
-            &["R", "RED"],
-            &["G", "GREEN"],
-            &["B", "BLUE"],
-            &["A", "ALPHA"],
-        ];
-        for aliases in wanted_groups {
-            if let Some(pos) = short_channels.iter().position(|s| {
-                let su = s.to_ascii_uppercase();
-                aliases.iter().any(|a| su == *a || su.starts_with(*a))
-            }) {
-                ordered.push(short_channels.remove(pos));
-            }
+        // Grupuj kanały według słownika
+        let mut channel_groups: HashMap<String, Vec<String>> = HashMap::new();
+        
+        for channel in &layer.channels {
+            let short_name = channel.name.split('.').last().unwrap_or(&channel.name).to_string();
+            let group_name = determine_channel_group_with_config(&channel.name, &config);
+            channel_groups.entry(group_name).or_insert_with(Vec::new).push(short_name);
         }
-        short_channels.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
-        ordered.extend(short_channels);
-
-        for ch in ordered {
-            // Emoji for RGBA, dot for others, plus suffix @<layer> for uniqueness
-            let (_color, emoji, display_ch) = get_channel_info(&ch, ui);
-            let base = format!("    {} {}", emoji, display_ch);
-            let line = format!("{} @{}", base, display_name);
-            ITEM_TO_LAYER
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .insert(line.clone(), layer.name.clone());
-            items.push(line.clone().into());
-            let (c, _emoji2, _display2) = get_channel_info(&ch, ui);
-            colors.push(c);
-            font_sizes.push(10);
+        
+        // Sortuj grupy według priorytetu z konfiguracji
+        let mut sorted_groups: Vec<(String, Vec<String>)> = channel_groups.into_iter().collect();
+        sorted_groups.sort_by(|a, b| {
+            let a_priority = config.group_priority_order.iter().position(|x| {
+                config.groups.get(x).map(|g| &g.name) == Some(&a.0)
+            }).unwrap_or(999);
+            let b_priority = config.group_priority_order.iter().position(|x| {
+                config.groups.get(x).map(|g| &g.name) == Some(&b.0)
+            }).unwrap_or(999);
+            a_priority.cmp(&b_priority)
+        });
+        
+        for (group_name, mut channels) in sorted_groups {
+            // Grupa nagłówek jeśli nie jest to Base z pojedynczymi RGBA
+            let is_simple_rgba = group_name == "Base" && channels.len() <= 4 && 
+                channels.iter().all(|c| matches!(c.to_uppercase().as_str(), "R" | "G" | "B" | "A"));
+            
+            if !is_simple_rgba {
+                items.push(format!("  📂 {}", group_name).into());
+                colors.push(ui.get_layers_color_group()); // Nowy kolor dla grup
+                font_sizes.push(11);
+            }
+            
+            // Sortuj kanały w grupie
+            if group_name == "Base" {
+                // Specjalna kolejność dla RGBA
+                let mut ordered: Vec<String> = Vec::new();
+                let wanted_order = ["R", "G", "B", "A"];
+                for wanted in wanted_order {
+                    if let Some(pos) = channels.iter().position(|c| c.to_uppercase() == wanted) {
+                        ordered.push(channels.remove(pos));
+                    }
+                }
+                channels.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
+                ordered.extend(channels);
+                channels = ordered;
+            } else {
+                channels.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
+            }
+            
+            let indent = if is_simple_rgba { "    " } else { "      " };
+            
+            for ch in channels {
+                // Emoji dla RGBA, dot dla innych
+                let (_color, emoji, display_ch) = get_channel_info(&ch, ui);
+                let base = format!("{}{} {}", indent, emoji, display_ch);
+                let line = format!("{} @{}", base, display_name);
+                
+                ITEM_TO_LAYER
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert(line.clone(), layer.name.clone());
+                
+                items.push(line.clone().into());
+                let (c, _emoji2, _display2) = get_channel_info(&ch, ui);
+                colors.push(c);
+                font_sizes.push(10);
+            }
         }
     }
 
