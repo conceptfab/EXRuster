@@ -7,11 +7,12 @@
       "A"
     ],
     "group_priority_order": [
-      "cryptomatte",
-      "light",
-      "scene",
+      "base",
       "technical",
-      "scene_objects"
+      "scene",
+      "light",
+      "scene_objects",
+      "cryptomatte"
     ],
     "fallback_names": {
       "basic_rgb": "Basic RGB",

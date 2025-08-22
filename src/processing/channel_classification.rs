@@ -70,7 +70,7 @@ static CHANNEL_PREFIX_MAP: Lazy<HashMap<&'static str, &'static str>> = Lazy::new
 });
 
 /// String interning cache for group names to avoid repeated allocations
-static GROUP_NAME_CACHE: Lazy<HashMap<&'static str, String>> = Lazy::new(|| {
+pub static GROUP_NAME_CACHE: Lazy<HashMap<&'static str, String>> = Lazy::new(|| {
     let mut cache = HashMap::new();
     cache.insert("base", "Base".to_string());
     cache.insert("scene", "Scene".to_string());
@@ -318,8 +318,29 @@ pub fn determine_channel_group_with_config(channel_name: &str, config: &ChannelG
             }
         }
     }
+
+    // Check remaining groups not in the priority list to catch misconfigurations
+    for (group_key, group_def) in &config.groups {
+        if !config.group_priority_order.contains(group_key) {
+            // Check exact prefix matches
+            for prefix_str in &group_def.prefixes {
+                if prefix == prefix_str {
+                    return GROUP_NAME_CACHE.get(group_key.as_str()).cloned()
+                        .unwrap_or_else(|| group_def.name.clone());
+                }
+            }
+            
+            // Check pattern matches
+            for pattern in &group_def.patterns {
+                if matches_pattern_simd(prefix, pattern) {
+                    return GROUP_NAME_CACHE.get(group_key.as_str()).cloned()
+                        .unwrap_or_else(|| group_def.name.clone());
+                }
+            }
+        }
+    }
     
-    // Default to Scene Objects for unknown channels
+    // Default fallback
     GROUP_NAME_CACHE.get("other").cloned()
         .unwrap_or_else(|| config.fallback_names.default.clone())
 }

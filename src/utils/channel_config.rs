@@ -118,6 +118,7 @@ fn create_default_config_file() -> ConfigFile {
         config: ConfigSettings {
             basic_rgb_channels: vec!["R".to_string(), "G".to_string(), "B".to_string(), "A".to_string()],
             group_priority_order: vec![
+                "base".to_string(),
                 "cryptomatte".to_string(), 
                 "light".to_string(), 
                 "scene".to_string(), 
