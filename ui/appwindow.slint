@@ -374,15 +374,16 @@ export component AppWindow inherits Window {
                             height: 18px;
                             width: parent.width;
                             clip: true;
-                            background: (root.selected-layer-item == layer-item) ? Kolory.suwak_tlo
+                            background: (root.selected-layer-item == layer-item) ? Kolory.hover
                                         : (layer-hover.has-hover ? Kolory.suwak_tlo : Kolory.przezroczysty);
 
-                            // Lewy znacznik wyboru
+                            // Lewy znacznik wyboru - szerszy i bardziej widoczny
                             Rectangle {
                                 x: 0px;
-                                width: 3px;
+                                width: (root.selected-layer-item == layer-item) ? 5px : 0px;
                                 height: parent.height;
-                                background: (root.selected-layer-item == layer-item) ? root.layers-colors[index] : Kolory.przezroczysty;
+                                background: root.layers-colors[index];
+                                border-radius: 2px;
                             }
 
                             Text {
@@ -395,7 +396,7 @@ export component AppWindow inherits Window {
                                 x: 4px;
                                 width: parent.width - 8px;
                                 wrap: no-wrap;
-                                font-weight: (root.selected-layer-item == layer-item) ? 700 : 400;
+                                font-weight: (root.selected-layer-item == layer-item) ? 800 : 400;
                             }
 
                             layer-hover := TouchArea {

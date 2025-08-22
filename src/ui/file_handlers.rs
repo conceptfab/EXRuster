@@ -370,6 +370,7 @@ pub fn create_layers_model(
         let state_guard: std::sync::MutexGuard<'_, UiState> = crate::ui::lock_or_recover(ui_state);
         let is_expanded = state_guard.is_group_expanded(&group_name);
         let arrow = if is_expanded { "▼" } else { "▶" };
+        // Clean display without markers
         items.push(format!("{} 📂 {}", arrow, group_name).into());
         colors.push(ui.get_layers_color_group());
         font_sizes.push(12);
@@ -388,17 +389,13 @@ pub fn create_layers_model(
                     map.insert(display_name.clone(), layer.name.clone());
                 }
 
-                // Add layer header with expand/collapse arrow
-                let state_guard: std::sync::MutexGuard<'_, UiState> = crate::ui::lock_or_recover(ui_state);
-                let is_layer_expanded = state_guard.is_layer_expanded(&display_name);
-                let layer_arrow = if is_layer_expanded { "▼" } else { "▶" };
-                items.push(format!("  {} 📁 {}", layer_arrow, display_name).into());
+                // Add layer header WITHOUT arrows (arrows only for groups)
+                items.push(format!("  📁 {}", display_name).into());
                 colors.push(ui.get_layers_color_default());
                 font_sizes.push(11);
-                drop(state_guard);
 
-                // Add channels for the layer (only if layer is expanded)
-                if is_layer_expanded {
+                // Add channels for the layer (always show all channels)
+                {
                     let mut channels_to_sort = layer.channels.clone();
                     // Special sort for RGBA
                     channels_to_sort.sort_by(|a, b| {
