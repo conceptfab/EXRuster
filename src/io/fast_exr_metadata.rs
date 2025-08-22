@@ -21,8 +21,11 @@ pub struct FastEXRMetadata {
 #[derive(Debug, Clone)]
 pub struct ChannelInfo {
     pub name: String,
+    #[allow(dead_code)]
     pub sample_type: SampleType,
+    #[allow(dead_code)]
     pub sampling: (i32, i32), // x_sampling, y_sampling
+    #[allow(dead_code)]
     pub quantize_linearly: bool,
 }
 

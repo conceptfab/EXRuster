@@ -13,7 +13,7 @@ pub const CHANNEL_CONFIG_PATH: &str = "channel_groups.json";
 
 /// Struktura konfiguracji zgodna z plikiem JSON
 #[derive(Deserialize, Serialize)]
-struct ConfigFile {
+pub struct ConfigFile {
     config: ConfigSettings,
     groups: HashMap<String, GroupDefinition>,
     default_group: String,
@@ -154,23 +154,6 @@ pub fn get_fallback_config() -> ChannelGroupConfig {
         .unwrap_or_else(|_| crate::processing::channel_classification::create_default_config())
 }
 
-/// Sprawdza czy plik konfiguracyjny istnieje
-pub fn config_file_exists() -> bool {
-    Path::new(CHANNEL_CONFIG_PATH).exists()
-}
-
-/// Pobiera ścieżkę do folderu danych z konfiguracji
-pub fn get_data_folder_path() -> Result<String> {
-    let config = load_channel_config()?;
-    // Najpierw spróbuj z oryginalnego pliku, potem fallback
-    if config_file_exists() {
-        let config_content = fs::read_to_string(CHANNEL_CONFIG_PATH)?;
-        let config_file: ConfigFile = serde_json::from_str(&config_content)?;
-        Ok(config_file.config.paths.data_folder)
-    } else {
-        Ok("data".to_string())
-    }
-}
 
 #[cfg(test)]
 mod tests {

@@ -3,8 +3,8 @@ use std::path::Path;
 use anyhow::Context;
 use ::exr::meta::attribute::AttributeValue;
 use crate::utils::human_size;
-use crate::io::fast_exr_metadata::{read_exr_metadata_ultra_fast, FastEXRMetadata};
-use crate::processing::channel_classification::{group_channels_parallel, determine_channel_group_with_config};
+use crate::io::fast_exr_metadata::read_exr_metadata_ultra_fast;
+use crate::processing::channel_classification::group_channels_parallel;
 use crate::utils::channel_config::{load_channel_config, get_fallback_config};
 
 #[derive(Debug, Clone)]
@@ -306,17 +306,3 @@ fn format_attribute_value(value: &AttributeValue, normalized_key: &str) -> Strin
     }
 }
 
-/// Publiczne API dla ultra-szybkiego odczytu z grupowaniem kanałów
-/// Używa słownika z channel_groups.json
-pub fn read_fast_metadata_with_channels(path: &Path) -> anyhow::Result<(FastEXRMetadata, std::collections::HashMap<String, Vec<String>>)> {
-    let fast_meta = read_exr_metadata_ultra_fast(path)
-        .with_context(|| format!("Błąd ultra-szybkiego odczytu EXR: {}", path.display()))?;
-    
-    let config = load_channel_config().unwrap_or_else(|e| {
-        eprintln!("Warning: Failed to load channel config: {}. Using fallback.", e);
-        get_fallback_config()
-    });
-    let channel_groups = group_channels_parallel(&fast_meta.channels, Some(&config));
-    
-    Ok((fast_meta, channel_groups))
-}
