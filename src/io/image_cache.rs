@@ -675,9 +675,28 @@ fn compose_composite_from_channels(layer_channels: &LayerChannels) -> Vec<f32> {
         layer_channels.channel_names.iter().position(|n| n.to_ascii_uppercase().starts_with(prefix))
     };
 
-    let r_idx = pick_exact_index("R").or_else(|| pick_prefix_index('R')).unwrap_or(0);
-    let g_idx = pick_exact_index("G").or_else(|| pick_prefix_index('G')).unwrap_or(r_idx);
-    let b_idx = pick_exact_index("B").or_else(|| pick_prefix_index('B')).unwrap_or(g_idx);
+    // Sprawdź czy warstwa ma kanały RGB - jeśli nie, użyj pierwszych 3 dostępnych kanałów
+    let has_rgb = pick_exact_index("R").is_some() || pick_prefix_index('R').is_some();
+    
+    let (r_idx, g_idx, b_idx) = if has_rgb {
+        // Standardowe mapowanie RGB
+        let r_idx = pick_exact_index("R").or_else(|| pick_prefix_index('R')).unwrap_or(0);
+        let g_idx = pick_exact_index("G").or_else(|| pick_prefix_index('G')).unwrap_or(r_idx);
+        let b_idx = pick_exact_index("B").or_else(|| pick_prefix_index('B')).unwrap_or(g_idx);
+        (r_idx, g_idx, b_idx)
+    } else {
+        // Dla warstw bez RGB (np. cryptomatte) - użyj pierwszych 3 kanałów
+        let num_channels = layer_channels.channel_names.len();
+        let r_idx = 0;
+        let g_idx = if num_channels > 1 { 1 } else { 0 };
+        let b_idx = if num_channels > 2 { 2 } else { g_idx };
+        println!("Non-RGB layer '{}': mapping channels [{}] -> R:{}, G:{}, B:{}", 
+                 layer_channels.layer_name, 
+                 layer_channels.channel_names.join(", "), 
+                 r_idx, g_idx, b_idx);
+        (r_idx, g_idx, b_idx)
+    };
+    
     let a_idx = pick_exact_index("A").or_else(|| pick_prefix_index('A'));
 
     let base_r = r_idx * pixel_count;

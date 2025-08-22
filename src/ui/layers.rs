@@ -19,9 +19,9 @@ pub fn handle_layer_tree_click(
     console: ConsoleModel,
     ui_state: SharedUiState,
 ) {
-    if clicked_item.starts_with("📁") {
+    if clicked_item.trim_start().starts_with("📁") {
         if let Some(ui) = ui_handle.upgrade() {
-            let display_layer_name = clicked_item.trim_start_matches("📁").trim().to_string();
+            let display_layer_name = clicked_item.trim_start().trim_start_matches("📁").trim().to_string();
             let layer_name = {
                 let state_guard = lock_or_recover(&ui_state);
                 state_guard.get_real_layer_for_display(&display_layer_name)
