@@ -144,7 +144,7 @@ pub fn handle_open_exr_from_path(
                                                 // Update layers list
                                                 let layers_info_vec = {
                                                     let guard = lock_or_recover(&image_cache_c);
-                                                    guard.as_ref().map(|c| c.layers_info.clone()).unwrap_or_default()
+                                                    guard.as_ref().map(|c| &c.layers_info).unwrap_or(&vec![]).clone()
                                                 };
                                                 if !layers_info_vec.is_empty() {
                                                     let (layers_model, layers_colors, layers_font_sizes) = create_layers_model(&layers_info_vec, &ui2, &ui_state);
@@ -367,13 +367,19 @@ pub fn create_layers_model(
     });
 
     // 3. Build the UI model from the new hierarchy
+    // Reuse string buffer for formatting
+    let mut format_buffer = String::with_capacity(128);
+    
     for (group_name, layers) in sorted_groups {
         // Add group header with expand/collapse arrow
         let state_guard: std::sync::MutexGuard<'_, UiState> = crate::ui::lock_or_recover(ui_state);
         let is_expanded = state_guard.is_group_expanded(&group_name);
         let arrow = if is_expanded { "▼" } else { "▶" };
-        // Clean display without markers
-        items.push(format!("{} 📂 {}", arrow, group_name).into());
+        // Clean display without markers - use buffer to avoid allocation
+        format_buffer.clear();
+        use std::fmt::Write;
+        write!(&mut format_buffer, "{} 📂 {}", arrow, group_name).unwrap();
+        items.push(format_buffer.clone().into());
         colors.push(ui.get_layers_color_group());
         font_sizes.push(12);
         drop(state_guard);
@@ -391,9 +397,10 @@ pub fn create_layers_model(
                     map.insert(display_name.clone(), layer.name.clone());
                 }
 
-                // Add layer header WITHOUT arrows (arrows only for groups)
-                let layer_item = format!("  📁 {}", display_name);
-                items.push(layer_item.into());
+                // Add layer header WITHOUT arrows (arrows only for groups) - use buffer
+                format_buffer.clear();
+                write!(&mut format_buffer, "  📁 {}", display_name).unwrap();
+                items.push(format_buffer.clone().into());
                 colors.push(ui.get_layers_color_default());
                 font_sizes.push(11);
 
@@ -416,8 +423,10 @@ pub fn create_layers_model(
 
                     for ch_info in channels_to_sort {
                         let (_color, emoji, display_ch) = get_channel_info(&ch_info.name, ui);
-                        let base = format!("      {} {}", emoji, display_ch);
-                        let line = format!("{} @{}", base, display_name);
+                        // Use buffer for nested loop - most critical hot path
+                        format_buffer.clear();
+                        write!(&mut format_buffer, "      {} {} @{}", emoji, display_ch, display_name).unwrap();
+                        let line = format_buffer.clone();
                         
                         lock_or_recover(&ITEM_TO_LAYER)
                             .insert(line.clone(), layer.name.clone());

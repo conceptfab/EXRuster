@@ -2,6 +2,7 @@ use slint::{Weak, ComponentHandle, VecModel, SharedString};
 use std::sync::{Arc, Mutex};
 use std::path::PathBuf;
 use std::collections::HashSet;
+use std::fmt::Write;
 use crate::io::image_cache::ImageCache;
 use crate::ui::state::{SharedUiState, UiState};
 use crate::ui::{push_console, lock_or_recover};
@@ -75,9 +76,14 @@ pub fn handle_layer_tree_click(
                 map.get(&layer_name).cloned().unwrap_or_else(|| layer_name.clone())
             };
         
-            let mut status_msg = String::new();
-            status_msg.push_str(&format!("Loading layer: {}", layer_name));
-            push_console(&ui, &console, format!("[layer] clicked: {} (real='{}')", layer_name, real_layer_name));
+            let mut status_msg = String::with_capacity(64);
+            use std::fmt::Write;
+            write!(&mut status_msg, "Loading layer: {}", layer_name).unwrap();
+            
+            // Use a separate buffer for console messages to avoid conflicting borrows
+            let mut console_buffer = String::with_capacity(128);
+            write!(&mut console_buffer, "[layer] clicked: {} (real='{}')", layer_name, real_layer_name).unwrap();
+            push_console(&ui, &console, console_buffer.clone());
             
             let file_path = {
                 let path_guard = lock_or_recover(&current_file_path);
@@ -95,19 +101,29 @@ pub fn handle_layer_tree_click(
                             let tonemap_mode = ui.get_tonemap_mode() as i32;
                             let image = cache.process_to_composite(exposure, gamma, tonemap_mode, true);
                             ui.set_exr_image(image);
-                            push_console(&ui, &console, format!("[layer] {} → mode: RGB (composite)", real_layer_name));
-                            push_console(&ui, &console, format!("[preview] updated → mode: RGB (composite), layer: {}", real_layer_name));
+                            console_buffer.clear();
+                            write!(&mut console_buffer, "[layer] {} → mode: RGB (composite)", real_layer_name).unwrap();
+                            push_console(&ui, &console, console_buffer.clone());
+                            
+                            console_buffer.clear();
+                            write!(&mut console_buffer, "[preview] updated → mode: RGB (composite), layer: {}", real_layer_name).unwrap();
+                            push_console(&ui, &console, console_buffer.clone());
                             let channels = cache.layers_info
                                 .iter()
                                 .find(|l| l.name == real_layer_name)
                                 .map(|l| l.channels.iter().map(|c| c.name.clone()).collect::<Vec<_>>().join(", "))
                                 .unwrap_or_else(|| "?".into());
-                            status_msg = format!("Layer: {} | mode: RGB | channels: {}", real_layer_name, channels);
+                            status_msg.clear();
+                            write!(&mut status_msg, "Layer: {} | mode: RGB | channels: {}", real_layer_name, channels).unwrap();
                             ui.set_status_text(status_msg.into());
-                            ui.set_selected_layer_item(format!("  📁 {}", layer_name).into());
+                            console_buffer.clear();
+                            write!(&mut console_buffer, "  📁 {}", layer_name).unwrap();
+                            ui.set_selected_layer_item(console_buffer.into());
                         }
                         Err(e) => {
-                            ui.report_error_with_status(&console, "layer", &format!("Error loading layer {}", real_layer_name), e);
+                            status_msg.clear();
+                            write!(&mut status_msg, "Error loading layer {}", real_layer_name).unwrap();
+                            ui.report_error_with_status(&console, "layer", &status_msg, e);
                         }
                     }
                 }
@@ -131,6 +147,10 @@ pub fn handle_layer_tree_click(
 
             let mut cache_guard = lock_or_recover(&image_cache);
             if let Some(ref mut cache) = *cache_guard {
+                // Pre-allocate string buffers for the channel processing section
+                let mut status_msg = String::with_capacity(128);
+                let mut console_buffer = String::with_capacity(128);
+                
                 let (active_layer, channel_short) = {
                     let s = trimmed;
                     if let Some(at_pos) = s.rfind('@') {
@@ -180,21 +200,45 @@ pub fn handle_layer_tree_click(
                         if upper == "Z" || upper.contains("DEPTH") {
                             let image = cache.process_depth_image_with_progress(true, Some(_prog.inner()));
                             ui.set_exr_image(image);
-                            ui.set_status_text(format!("Layer: {} | Channel: {} | mode: Depth (auto-normalized, inverted)", active_layer, channel_short).into());
-                            push_console(&ui, &console, format!("[channel] {}@{} → mode: Depth (auto-normalized, inverted)", channel_short, active_layer));
-                            push_console(&ui, &console, format!("[preview] updated → mode: Depth (auto-normalized, inverted), {}::{}", active_layer, channel_short));
+                            
+                            status_msg.clear();
+                            write!(&mut status_msg, "Layer: {} | Channel: {} | mode: Depth (auto-normalized, inverted)", active_layer, channel_short).unwrap();
+                            ui.set_status_text(status_msg.clone().into());
+                            
+                            console_buffer.clear();
+                            write!(&mut console_buffer, "[channel] {}@{} → mode: Depth (auto-normalized, inverted)", channel_short, active_layer).unwrap();
+                            push_console(&ui, &console, console_buffer.clone());
+                            
+                            console_buffer.clear();
+                            write!(&mut console_buffer, "[preview] updated → mode: Depth (auto-normalized, inverted), {}::{}", active_layer, channel_short).unwrap();
+                            push_console(&ui, &console, console_buffer.clone());
                         } else {
                             let image = cache.process_depth_image_with_progress(false, Some(_prog.inner()));
                             ui.set_exr_image(image);
-                            ui.set_status_text(format!("Layer: {} | Channel: {} | mode: Grayscale (auto-normalized)", active_layer, channel_short).into());
-                            push_console(&ui, &console, format!("[channel] {}@{} → mode: Grayscale (auto-normalized)", channel_short, active_layer));
-                            push_console(&ui, &console, format!("[preview] updated → mode: Grayscale (auto-normalized), {}::{}", active_layer, channel_short));
+                            
+                            status_msg.clear();
+                            write!(&mut status_msg, "Layer: {} | Channel: {} | mode: Grayscale (auto-normalized)", active_layer, channel_short).unwrap();
+                            ui.set_status_text(status_msg.clone().into());
+                            
+                            console_buffer.clear();
+                            write!(&mut console_buffer, "[channel] {}@{} → mode: Grayscale (auto-normalized)", channel_short, active_layer).unwrap();
+                            push_console(&ui, &console, console_buffer.clone());
+                            
+                            console_buffer.clear();
+                            write!(&mut console_buffer, "[preview] updated → mode: Grayscale (auto-normalized), {}::{}", active_layer, channel_short).unwrap();
+                            push_console(&ui, &console, console_buffer.clone());
                         }
-                        push_console(&ui, &console, format!("[selection] trying to select: '{}'", &clicked_item));
+                        console_buffer.clear();
+                        write!(&mut console_buffer, "[selection] trying to select: '{}'", &clicked_item).unwrap();
+                        push_console(&ui, &console, console_buffer.clone());
                         ui.set_selected_layer_item(clicked_item.into());
                     }
                     Err(e) => {
-                        ui.report_error_with_status(&console, "channel", &format!("Error loading channel {}", channel_short), format!("{}@{}: {}", channel_short, active_layer, e));
+                        status_msg.clear();
+                        write!(&mut status_msg, "Error loading channel {}", channel_short).unwrap();
+                        console_buffer.clear();
+                        write!(&mut console_buffer, "{}@{}: {}", channel_short, active_layer, e).unwrap();
+                        ui.report_error_with_status(&console, "channel", &status_msg, console_buffer.clone());
                     }
                 }
             }

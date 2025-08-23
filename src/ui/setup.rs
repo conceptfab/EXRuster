@@ -35,20 +35,20 @@ pub fn setup_menu_callbacks(
 
     ui.on_open_exr({
         let ui_handle = ui.as_weak();
-        let current_file_path = current_file_path.clone();
-        let image_cache = image_cache.clone();
+        let current_file_path = Arc::clone(&current_file_path);
+        let image_cache = Arc::clone(&image_cache);
         let console = console_model.clone();
-        let full_exr_cache = full_exr_cache.clone();
-        let ui_state_for_open = ui_state.clone();
+        let full_exr_cache = Arc::clone(&full_exr_cache);
+        let ui_state_for_open = Arc::clone(&ui_state);
         move || {
-            crate::ui::handle_open_exr(ui_handle.clone(), current_file_path.clone(), image_cache.clone(), console.clone(), full_exr_cache.clone(), ui_state_for_open.clone());
+            crate::ui::handle_open_exr(ui_handle.clone(), Arc::clone(&current_file_path), Arc::clone(&image_cache), console.clone(), Arc::clone(&full_exr_cache), Arc::clone(&ui_state_for_open));
         }
     });
 
     // Callback dla żądania histogramu
     ui.on_histogram_requested({
         let ui_handle = ui.as_weak();
-        let image_cache = image_cache.clone();
+        let image_cache = Arc::clone(&image_cache);
         let console = console_model.clone();
         move || {
             if let Some(ui) = ui_handle.upgrade() {
@@ -130,7 +130,7 @@ pub fn setup_image_control_callbacks(
     let throttled_update = Arc::new(Mutex::new(throttled_updater));
 
     ui.on_exposure_changed({
-        let throttled_update = throttled_update.clone();
+        let throttled_update = Arc::clone(&throttled_update);
         
         move |exposure: f32| {
             let updater = throttled_update.lock().unwrap();
@@ -139,7 +139,7 @@ pub fn setup_image_control_callbacks(
     });
 
     ui.on_gamma_changed({
-        let throttled_update = throttled_update.clone();
+        let throttled_update = Arc::clone(&throttled_update);
         
         move |gamma: f32| {
             let updater = throttled_update.lock().unwrap();
@@ -150,7 +150,7 @@ pub fn setup_image_control_callbacks(
     // Tonemap mode changed
     ui.on_tonemap_mode_changed({
         let ui_handle = ui.as_weak();
-        let image_cache = image_cache.clone();
+        let image_cache = Arc::clone(&image_cache);
         let console = console_model.clone();
         move |mode: i32| {
             if let Some(ui) = ui_handle.upgrade() {
