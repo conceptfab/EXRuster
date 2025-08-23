@@ -1,6 +1,4 @@
 use std::sync::{Arc, Mutex};
-use std::path::PathBuf;
-use std::time::Instant;
 use std::collections::HashMap;
 
 #[derive(Debug)]
@@ -8,10 +6,6 @@ pub struct UiState {
     pub item_to_layer: HashMap<String, String>,
     pub display_to_real_layer: HashMap<String, String>,
     pub expanded_groups: HashMap<String, bool>,
-    #[allow(dead_code)] // Prepared for future refactoring
-    pub current_file_path: Option<PathBuf>,
-    #[allow(dead_code)] // Prepared for future refactoring
-    pub last_preview_log: Option<Instant>,
 }
 
 impl UiState {
@@ -20,16 +14,9 @@ impl UiState {
             item_to_layer: HashMap::new(),
             display_to_real_layer: HashMap::new(),
             expanded_groups: HashMap::new(),
-            current_file_path: None,
-            last_preview_log: None,
         }
     }
 
-    #[allow(dead_code)] // Prepared for future refactoring
-    pub fn clear_layer_mappings(&mut self) {
-        self.item_to_layer.clear();
-        self.display_to_real_layer.clear();
-    }
 
     pub fn is_group_expanded(&self, group_name: &str) -> bool {
         self.expanded_groups.get(group_name).copied().unwrap_or(true)
@@ -58,17 +45,6 @@ impl UiState {
 
 
 
-    #[allow(dead_code)] // Prepared for future refactoring
-    pub fn update_last_preview_log(&mut self) {
-        self.last_preview_log = Some(Instant::now());
-    }
-
-    #[allow(dead_code)] // Prepared for future refactoring
-    pub fn should_log_preview(&self, min_interval_ms: u64) -> bool {
-        self.last_preview_log
-            .map(|t| Instant::now().duration_since(t).as_millis() >= min_interval_ms as u128)
-            .unwrap_or(true)
-    }
 }
 
 impl Default for UiState {

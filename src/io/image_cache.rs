@@ -202,62 +202,6 @@ impl ImageCache {
         })
     }
     
-    /// Create ImageCache with lazy loading (low memory usage)
-    #[allow(dead_code)]
-    pub fn new_with_lazy_loader(path: &PathBuf, max_cached_layers: usize) -> anyhow::Result<Self> {
-        println!("=== ImageCache::new_with_lazy_loader START === {}", path.display());
-        
-        // Create lazy loader (loads only metadata)
-        let lazy_loader = Arc::new(LazyExrLoader::new(path.clone(), max_cached_layers)?);
-        
-        // Extract layer info from metadata  
-        let metadata = lazy_loader.get_metadata();
-        let mut layers_info = Vec::with_capacity(metadata.len());
-        
-        for layer_meta in metadata {
-            let channels = layer_meta.channel_names.iter()
-                .map(|name| ChannelInfo { name: name.clone() })
-                .collect();
-            layers_info.push(LayerInfo {
-                name: layer_meta.name.clone(),
-                channels,
-            });
-        }
-        
-        // Find best layer and load it initially
-        let best_layer = find_best_layer(&layers_info);
-        let layer_data = lazy_loader.get_layer_data(&best_layer, None)?;
-        let layer_channels = layer_data.to_layer_channels();
-        
-        let raw_pixels = compose_composite_from_channels(&layer_channels);
-        let width = layer_channels.width;
-        let height = layer_channels.height;
-        let current_layer_name = layer_channels.layer_name.clone();
-        
-        // Color matrix calculation
-        let mut color_matrices = HashMap::new();
-        let color_matrix_rgb_to_srgb = crate::processing::color_processing::compute_rgb_to_srgb_matrix_from_file_for_layer_cached(path, &best_layer).ok();
-        if let Some(matrix) = color_matrix_rgb_to_srgb {
-            color_matrices.insert(best_layer.clone(), matrix);
-        }
-        
-        let mip_levels = build_mip_chain(&raw_pixels, width, height, 4, true);
-        
-        Ok(ImageCache {
-            raw_pixels,
-            width,
-            height,
-            layers_info,
-            current_layer_name,
-            color_matrix_rgb_to_srgb,
-            color_matrices,
-            current_layer_channels: Some(layer_channels),
-            data_source: ExrDataSource::Lazy(lazy_loader),
-            mip_levels,
-            histogram: None,
-        })
-    }
-    
     pub fn load_layer(&mut self, path: &PathBuf, layer_name: &str, progress: Option<&dyn ProgressSink>) -> anyhow::Result<()> {
         println!("=== ImageCache::load_layer START === layer: {}", layer_name);
         
@@ -865,29 +809,6 @@ impl ImageCache {
 
         if let Some(p) = progress { p.finish(Some("Depth processed")); }
         Image::from_rgba8(buffer)
-    }
-    
-    /// Get memory usage statistics for monitoring
-    #[allow(dead_code)]
-    pub fn get_memory_stats(&self) -> String {
-        match &self.data_source {
-            ExrDataSource::Full(_) => {
-                let current_mb = (self.raw_pixels.len() * 4) / (1024 * 1024);
-                let mip_mb: usize = self.mip_levels.iter()
-                    .map(|mip| (mip.pixels.len() * 4) / (1024 * 1024))
-                    .sum();
-                format!("Full cache mode: {}MB current + {}MB MIPs", current_mb, mip_mb)
-            },
-            ExrDataSource::Lazy(loader) => {
-                let (cached_layers, total_layers, cached_mb) = loader.get_cache_stats();
-                let current_mb = (self.raw_pixels.len() * 4) / (1024 * 1024);
-                let mip_mb: usize = self.mip_levels.iter()
-                    .map(|mip| (mip.pixels.len() * 4) / (1024 * 1024))
-                    .sum();
-                format!("Lazy mode: {}/{} layers cached ({}MB) + current {}MB + MIPs {}MB", 
-                       cached_layers, total_layers, cached_mb, current_mb, mip_mb)
-            }
-        }
     }
     
     /// Clear cached data to free memory (only works in lazy mode)
