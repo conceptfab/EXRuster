@@ -8,7 +8,8 @@ use crate::io::image_cache::{ImageCache, LayerInfo};
 use crate::io::full_exr_cache::{build_full_exr_cache, FullExrCacheData, FullLayer};
 use crate::ui::ui_handlers::{push_console, lock_or_recover, ConsoleModel, ImageCacheType, CurrentFilePathType, FullExrCache};
 use crate::ui::state::{SharedUiState, UiState};
-use crate::{AppWindow, utils::{get_channel_info, UiErrorReporter, WeakProgressExt, patterns}};
+use crate::{AppWindow, utils::{get_channel_info, UiErrorReporter}};
+use crate::ui::progress::{WeakProgressExt, patterns};
 use anyhow::{Result, Context};
 
 // Global static variables for layer mapping (to be moved to state in future refactoring)

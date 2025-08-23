@@ -5,7 +5,8 @@ use std::collections::HashSet;
 use crate::io::image_cache::ImageCache;
 use crate::ui::state::{SharedUiState, UiState};
 use crate::ui::{push_console, lock_or_recover};
-use crate::utils::{normalize_channel_name, UiErrorReporter, patterns};
+use crate::utils::{normalize_channel_name, UiErrorReporter};
+use crate::ui::progress::patterns;
 use crate::AppWindow;
 
 pub type ImageCacheType = Arc<Mutex<Option<ImageCache>>>;
