@@ -1,11 +1,6 @@
 {
   "config": {
-    "basic_rgb_channels": [
-      "R",
-      "G",
-      "B",
-      "A"
-    ],
+    "basic_rgb_channels": ["R", "G", "B", "A"],
     "group_priority_order": [
       "base",
       "technical",
@@ -19,29 +14,20 @@
       "default": "Other"
     },
     "paths": {
-      "data_folder": "data"
+      "data_folder": "."
     }
   },
   "groups": {
     "technical": {
       "name": "Technical",
-      "prefixes": [
-        "RenderStamp",
-        "RenderStamp0"
-      ],
+      "prefixes": ["RenderStamp", "RenderStamp0"],
       "patterns": [],
       "basic_rgb": false
     },
     "light": {
       "name": "Light",
-      "prefixes": [
-        "Sky",
-        "Sun",
-        "LightMix"
-      ],
-      "patterns": [
-        "Light*"
-      ],
+      "prefixes": ["Sky", "Sun", "LightMix"],
+      "patterns": ["Light*"],
       "basic_rgb": false
     },
     "scene": {
@@ -58,29 +44,19 @@
     },
     "base": {
       "name": "Base",
-      "prefixes": [
-        "Beauty"
-      ],
+      "prefixes": ["Beauty"],
       "patterns": [],
       "basic_rgb": true
     },
     "scene_objects": {
       "name": "Scene Objects",
       "prefixes": [],
-      "patterns": [
-        "ID*",
-        "leather",
-        "scratch",
-        "_*"
-      ],
+      "patterns": ["ID*", "leather", "scratch", "_*"],
       "basic_rgb": false
     },
     "cryptomatte": {
       "name": "Cryptomatte",
-      "prefixes": [
-        "Cryptomatte",
-        "Cryptomatte0"
-      ],
+      "prefixes": ["Cryptomatte", "Cryptomatte0"],
       "patterns": [],
       "basic_rgb": false
     }

@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python3ca
 """
 Automatyczny skrypt kompilacji dla aplikacji rustExR
 Autor: Projekt rustExR - EXR File Viewer

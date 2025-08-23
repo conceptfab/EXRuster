@@ -1,15 +1,22 @@
 /// Zarządzanie konfiguracją grupowania kanałów z obsługą słownika JSON
 /// Automatyczne tworzenie z hardkodowanego szablonu jeśli plik nie istnieje
 
-use std::path::Path;
+use std::path::PathBuf;
 use std::fs;
+use std::env;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use crate::processing::channel_classification::{ChannelGroupConfig, GroupDefinition, FallbackNames};
 
-/// Ścieżka do pliku konfiguracyjnego grupowania kanałów
-pub const CHANNEL_CONFIG_PATH: &str = "channel_groups.json";
+/// Zwraca ścieżkę do pliku konfiguracyjnego w katalogu .exe
+pub fn get_channel_config_path() -> Result<PathBuf> {
+    let exe_path = env::current_exe()
+        .with_context(|| "Failed to get executable path")?;
+    let exe_dir = exe_path.parent()
+        .ok_or_else(|| anyhow::anyhow!("Failed to get executable directory"))?;
+    Ok(exe_dir.join("channel_groups.json"))
+}
 
 /// Struktura konfiguracji zgodna z plikiem JSON
 #[derive(Deserialize, Serialize)]
@@ -35,29 +42,32 @@ struct ConfigPaths {
 /// Ładuje konfigurację grupowania kanałów z pliku JSON
 /// Tworzy plik z domyślną konfiguracją jeśli nie istnieje
 pub fn load_channel_config() -> Result<ChannelGroupConfig> {
-    if !Path::new(CHANNEL_CONFIG_PATH).exists() {
-        println!("Creating default channel groups config file: {}", CHANNEL_CONFIG_PATH);
+    let config_path = get_channel_config_path()?;
+    
+    if !config_path.exists() {
+        println!("Creating default channel groups config file: {}", config_path.display());
         let default_config = create_default_config_file();
         save_channel_config(&default_config)?;
         return convert_to_channel_group_config(default_config);
     }
     
-    let config_content = fs::read_to_string(CHANNEL_CONFIG_PATH)
-        .with_context(|| format!("Failed to read config file: {}", CHANNEL_CONFIG_PATH))?;
+    let config_content = fs::read_to_string(&config_path)
+        .with_context(|| format!("Failed to read config file: {}", config_path.display()))?;
     
     let config_file: ConfigFile = serde_json::from_str(&config_content)
-        .with_context(|| format!("Failed to parse JSON config: {}", CHANNEL_CONFIG_PATH))?;
+        .with_context(|| format!("Failed to parse JSON config: {}", config_path.display()))?;
     
     convert_to_channel_group_config(config_file)
 }
 
 /// Zapisuje konfigurację do pliku JSON
 pub fn save_channel_config(config: &ConfigFile) -> Result<()> {
+    let config_path = get_channel_config_path()?;
     let json_content = serde_json::to_string_pretty(config)
         .context("Failed to serialize config to JSON")?;
     
-    fs::write(CHANNEL_CONFIG_PATH, json_content)
-        .with_context(|| format!("Failed to write config file: {}", CHANNEL_CONFIG_PATH))?;
+    fs::write(&config_path, json_content)
+        .with_context(|| format!("Failed to write config file: {}", config_path.display()))?;
     
     Ok(())
 }
@@ -130,7 +140,7 @@ fn create_default_config_file() -> ConfigFile {
                 default: "Other".to_string(),
             },
             paths: ConfigPaths {
-                data_folder: "data".to_string(),
+                data_folder: ".".to_string(),
             },
         },
         groups,
