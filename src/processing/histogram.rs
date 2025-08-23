@@ -132,21 +132,6 @@ impl HistogramData {
         self.max_value
     }
 
-    #[allow(dead_code)]
-    pub fn get_peak_bin(&self, channel: HistogramChannel) -> usize {
-        let bins = match channel {
-            HistogramChannel::Red => &self.red_bins,
-            HistogramChannel::Green => &self.green_bins,
-            HistogramChannel::Blue => &self.blue_bins,
-            HistogramChannel::Luminance => &self.luminance_bins,
-        };
-
-        bins.iter()
-            .enumerate()
-            .max_by_key(|(_, &count)| count)
-            .map(|(i, _)| i)
-            .unwrap_or(0)
-    }
 
     /// Apply histogram data directly to UI - eliminates all the repetitive boilerplate
     pub fn apply_to_ui(&self, ui: &AppWindow) {

@@ -92,9 +92,8 @@ pub fn apply_tonemap_scalar(r: f32, g: f32, b: f32, mode: ToneMapMode) -> (f32, 
 }
 
 // SIMD versions
-#[allow(dead_code)]
 #[inline]
-pub fn aces_tonemap_simd(x: f32x4) -> f32x4 {
+fn aces_tonemap_simd(x: f32x4) -> f32x4 {
     let a = Simd::splat(2.51);
     let b = Simd::splat(0.03);
     let c = Simd::splat(2.43);
@@ -105,16 +104,14 @@ pub fn aces_tonemap_simd(x: f32x4) -> f32x4 {
     ((x * (a * x + b)) / (x * (c * x + d) + e)).simd_clamp(zero, one)
 }
 
-#[allow(dead_code)]
 #[inline]
-pub fn reinhard_tonemap_simd(x: f32x4) -> f32x4 {
+fn reinhard_tonemap_simd(x: f32x4) -> f32x4 {
     let one = Simd::splat(1.0);
     (x / (one + x)).simd_clamp(Simd::splat(0.0), one)
 }
 
-#[allow(dead_code)]
 #[inline]
-pub fn filmic_tonemap_simd(x: f32x4) -> f32x4 {
+fn filmic_tonemap_simd(x: f32x4) -> f32x4 {
     // Prostsze filmic tone mapping (bez normalizacji białej) - identyczne z wersją skalarną
     let x_safe = x.simd_max(Simd::splat(0.0));
     let a = Simd::splat(0.15f32);
@@ -128,9 +125,8 @@ pub fn filmic_tonemap_simd(x: f32x4) -> f32x4 {
     result.simd_clamp(Simd::splat(0.0), Simd::splat(1.0))
 }
 
-#[allow(dead_code)]
 #[inline]
-pub fn hable_tonemap_simd(x: f32x4) -> f32x4 {
+fn hable_tonemap_simd(x: f32x4) -> f32x4 {
     // Uncharted 2 tone mapping (John Hable) - PRAWIDŁOWA IMPLEMENTACJA
     let x_safe: f32x4 = x.simd_max(Simd::splat(0.0_f32));
     let a: f32x4 = Simd::splat(0.15_f32);
@@ -147,9 +143,8 @@ pub fn hable_tonemap_simd(x: f32x4) -> f32x4 {
     (curr * white_scale).simd_clamp(Simd::splat(0.0), Simd::splat(1.0))
 }
 
-#[allow(dead_code)]
 #[inline]
-pub fn srgb_oetf_simd(x: f32x4) -> f32x4 {
+fn srgb_oetf_simd(x: f32x4) -> f32x4 {
     // Prawdziwa krzywa sRGB (OETF), zastosowana do wartości w [0,1]
     let x = x.simd_clamp(Simd::splat(0.0), Simd::splat(1.0));
     let threshold = Simd::splat(0.003_130_8);
@@ -174,9 +169,8 @@ pub fn apply_gamma_lut(value: f32, gamma_inv: f32) -> f32 {
     value.powf(gamma_inv)
 }
 
-#[allow(dead_code)]
 #[inline]
-pub fn apply_gamma_lut_simd(values: f32x4, gamma_inv: f32) -> f32x4 {
+fn apply_gamma_lut_simd(values: f32x4, gamma_inv: f32) -> f32x4 {
     // Optimized SIMD implementation - direct power operation on all lanes
     
     // Clamp values to positive range to avoid issues with powf
@@ -197,7 +191,6 @@ pub fn apply_gamma_lut_simd(values: f32x4, gamma_inv: f32) -> f32x4 {
     f32x4::from_array(result)
 }
 
-#[allow(dead_code)]
 pub fn apply_tonemap_simd(r: f32x4, g: f32x4, b: f32x4, mode: ToneMapMode) -> (f32x4, f32x4, f32x4) {
     match mode {
         ToneMapMode::ACES => (aces_tonemap_simd(r), aces_tonemap_simd(g), aces_tonemap_simd(b)),

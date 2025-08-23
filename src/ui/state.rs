@@ -3,16 +3,12 @@ use std::collections::HashMap;
 
 #[derive(Debug)]
 pub struct UiState {
-    pub item_to_layer: HashMap<String, String>,
-    pub display_to_real_layer: HashMap<String, String>,
     pub expanded_groups: HashMap<String, bool>,
 }
 
 impl UiState {
     pub fn new() -> Self {
         Self {
-            item_to_layer: HashMap::new(),
-            display_to_real_layer: HashMap::new(),
             expanded_groups: HashMap::new(),
         }
     }
@@ -33,15 +29,6 @@ impl UiState {
 
 
 
-    #[allow(dead_code)] // Prepared for future refactoring
-    pub fn insert_layer_mapping(&mut self, item: String, layer: String) {
-        self.item_to_layer.insert(item, layer);
-    }
-
-    #[allow(dead_code)] // Prepared for future refactoring
-    pub fn insert_display_mapping(&mut self, display: String, real: String) {
-        self.display_to_real_layer.insert(display, real);
-    }
 
 
 

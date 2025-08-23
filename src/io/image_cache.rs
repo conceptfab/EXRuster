@@ -85,84 +85,11 @@ pub struct ImageCache {
     // EXR data source (full cache or lazy loader)
     data_source: ExrDataSource,
     // MIP cache: przeskalowane podglądy (float RGBA) do szybkiego preview
-    pub mip_levels: Vec<MipLevel>,
     // Histogram data dla analizy kolorów
     pub histogram: Option<Arc<crate::processing::histogram::HistogramData>>,
 }
 
-#[derive(Clone, Debug)]
-pub struct MipLevel {
-    pub width: u32,
-    pub height: u32,
-    pub pixels: Vec<f32>,
-}
 
-/// Ujednolicona funkcja MIP generation - automatycznie wybiera GPU lub CPU
-fn build_mip_chain(
-    base_pixels: &[f32],
-    width: u32,
-    height: u32,
-    max_levels: usize,
-    _use_gpu: bool,
-) -> Vec<MipLevel> {
-    // CPU-only processing
-    build_mip_chain_cpu(base_pixels, width, height, max_levels)
-}
-
-
-fn build_mip_chain_cpu(
-    base_pixels: &[f32],
-    mut width: u32,
-    mut height: u32,
-    max_levels: usize,
-) -> Vec<MipLevel> {
-    let mut levels: Vec<MipLevel> = Vec::with_capacity(max_levels);
-    let mut prev: Vec<f32> = base_pixels.to_vec();
-    for _ in 0..max_levels {
-        if width <= 1 && height <= 1 { break; }
-        let new_w = (width / 2).max(1);
-        let new_h = (height / 2).max(1);
-        
-        // Use buffer pool for better performance - optimized allocation
-        let pixel_count = (new_w as usize) * (new_h as usize) * 4;
-        let mut next = if let Some(pool) = get_buffer_pool() {
-            let mut buffer = pool.get_f32_buffer(pixel_count);
-            buffer.clear();
-            buffer.resize(pixel_count, 0.0);
-            buffer
-        } else {
-            Vec::with_capacity(pixel_count) // Preallocate capacity
-        };
-        if next.len() < pixel_count {
-            next.resize(pixel_count, 0.0);
-        }
-        // Jednowątkowe uśrednianie 2x2
-        for y_out in 0..(new_h as usize) {
-            let y0 = (y_out * 2).min(height as usize - 1);
-            let y1 = (y0 + 1).min(height as usize - 1);
-            for x_out in 0..(new_w as usize) {
-                let x0 = (x_out * 2).min(width as usize - 1);
-                let x1 = (x0 + 1).min(width as usize - 1);
-                let base0 = (y0 * (width as usize) + x0) * 4;
-                let base1 = (y0 * (width as usize) + x1) * 4;
-                let base2 = (y1 * (width as usize) + x0) * 4;
-                let base3 = (y1 * (width as usize) + x1) * 4;
-                let out_base = (y_out * (new_w as usize) + x_out) * 4;
-                
-                // Uśrednij 4 kanały RGBA
-                for c in 0..4 {
-                    let acc = (prev[base0 + c] + prev[base1 + c] + prev[base2 + c] + prev[base3 + c]) * 0.25;
-                    next[out_base + c] = acc;
-                }
-            }
-        }
-        levels.push(MipLevel { width: new_w, height: new_h, pixels: next.clone() });
-        prev = next;
-        width = new_w; height = new_h;
-        if new_w <= 32 && new_h <= 32 { break; }
-    }
-    levels
-}
 
 impl ImageCache {
     pub fn new_with_full_cache(path: &PathBuf, full_cache: Arc<FullExrCacheData>) -> anyhow::Result<Self> {
@@ -184,7 +111,6 @@ impl ImageCache {
             color_matrices.insert(best_layer.clone(), matrix);
         }
 
-        let mip_levels = build_mip_chain(&raw_pixels, width, height, 4, true);
         Ok(ImageCache {
             raw_pixels,
             width,
@@ -195,7 +121,6 @@ impl ImageCache {
             color_matrices,
             current_layer_channels: Some(layer_channels),
             data_source: ExrDataSource::Full(full_cache),
-            mip_levels,
             histogram: None, // Będzie obliczany na żądanie
         })
     }
@@ -228,8 +153,6 @@ impl ImageCache {
                 self.color_matrices.insert(layer_name.to_string(), matrix);
             }
         }
-        // Odbuduj MIP-y dla nowego obrazu
-        self.mip_levels = build_mip_chain(&self.raw_pixels, self.width, self.height, 4, true);
 
         Ok(())
     }

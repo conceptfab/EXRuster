@@ -2,9 +2,7 @@ pub mod image_processing;
 pub mod color_processing;
 pub mod tone_mapping;
 pub mod simd_processing;
-pub mod simd_traits;
 pub mod histogram;
-pub mod pipeline;
 pub mod channel_classification;
 
 // Re-export key types and functions used by other modules

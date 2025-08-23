@@ -4,8 +4,135 @@ use slint::Rgba8Pixel;
 use glam::{Mat3, Vec3};
 use crate::processing::image_processing::process_pixel;
 
+#[cfg(feature = "unified_simd")]
+use crate::processing::tone_mapping::ToneMapMode;
+
 /// Optimized SIMD processing functions for image processing
 /// Separates SIMD and scalar code paths for better performance
+
+#[cfg(feature = "unified_simd")]
+mod unified_processing {
+    use super::*;
+    
+    /// Parameters for pixel processing operations
+    #[derive(Clone, Copy)]
+    pub struct ProcessParams {
+        pub exposure: f32,
+        pub gamma: f32,
+        pub tonemap_mode: ToneMapMode,
+    }
+
+    impl ProcessParams {
+        pub fn new(exposure: f32, gamma: f32, tonemap_mode: i32) -> Self {
+            Self {
+                exposure,
+                gamma,
+                tonemap_mode: ToneMapMode::from(tonemap_mode),
+            }
+        }
+    }
+
+    /// Scalar processing implementation
+    pub struct ScalarProcessor;
+
+    impl ScalarProcessor {
+        pub fn apply_exposure(&self, value: f32, exposure_multiplier: f32) -> f32 {
+            value * exposure_multiplier
+        }
+        
+        pub fn apply_tonemap(&self, value: f32, mode: ToneMapMode) -> f32 {
+            use ToneMapMode::*;
+            match mode {
+                ACES => {
+                    let a = 2.51;
+                    let b = 0.03;
+                    let c = 2.43;
+                    let d = 0.59;
+                    let e = 0.14;
+                    ((value * (a * value + b)) / (value * (c * value + d) + e)).clamp(0.0, 1.0)
+                },
+                Reinhard => value / (1.0 + value),
+                Filmic => {
+                    let x_max = 0.22 * 11.2;
+                    let linear = 0.22 * value;
+                    let squared = 0.1 * value * value;
+                    ((linear + squared) / (1.0 + linear + squared)).min(x_max)
+                },
+                Hable => {
+                    let a = 0.15;
+                    let b = 0.50;
+                    let c = 0.10;
+                    let d = 0.20;
+                    let e = 0.02;
+                    let f = 0.30;
+                    let w = 11.2;
+                    
+                    let curr = ((value * (a * value + c * b) + d * e) / (value * (a * value + b) + d * f)) - e / f;
+                    let white_scale = ((w * (a * w + c * b) + d * e) / (w * (a * w + b) + d * f)) - e / f;
+                    (curr / white_scale).clamp(0.0, 1.0)
+                },
+                Linear => value.clamp(0.0, 1.0),
+                Local => value.clamp(0.0, 1.0), // Fallback for local tone mapping
+            }
+        }
+        
+        pub fn apply_gamma(&self, value: f32, gamma_inv: f32, use_srgb: bool) -> f32 {
+            if use_srgb {
+                if value <= 0.0031308 {
+                    12.92 * value
+                } else {
+                    1.055 * value.powf(1.0 / 2.4) - 0.055
+                }
+            } else {
+                value.powf(gamma_inv).clamp(0.0, 1.0)
+            }
+        }
+        
+        pub fn clamp_unit(&self, value: f32) -> f32 {
+            value.clamp(0.0, 1.0)
+        }
+        
+        pub fn select_finite(&self, value: f32, fallback: f32) -> f32 {
+            if value.is_finite() && value >= 0.0 { value } else { fallback }
+        }
+    }
+
+    /// Unified processing function that works with scalar types
+    pub fn process_pixel_unified(
+        processor: &ScalarProcessor,
+        r: f32, g: f32, b: f32, a: f32,
+        params: &ProcessParams,
+    ) -> (f32, f32, f32, f32) {
+        let exposure_multiplier = 2.0_f32.powf(params.exposure);
+        
+        // Clean up inputs (handle NaN/Inf)
+        let clean_r = processor.select_finite(r, 0.0);
+        let clean_g = processor.select_finite(g, 0.0);
+        let clean_b = processor.select_finite(b, 0.0);
+        let clean_a = processor.select_finite(a, 1.0);
+        
+        // Apply exposure
+        let exposed_r = processor.apply_exposure(clean_r, exposure_multiplier);
+        let exposed_g = processor.apply_exposure(clean_g, exposure_multiplier);
+        let exposed_b = processor.apply_exposure(clean_b, exposure_multiplier);
+        
+        // Apply tone mapping
+        let tone_mapped_r = processor.apply_tonemap(exposed_r, params.tonemap_mode);
+        let tone_mapped_g = processor.apply_tonemap(exposed_g, params.tonemap_mode);
+        let tone_mapped_b = processor.apply_tonemap(exposed_b, params.tonemap_mode);
+        
+        // Apply gamma correction
+        let use_srgb = (params.gamma - 2.2).abs() < 0.2 || (params.gamma - 2.4).abs() < 0.2;
+        let gamma_inv = 1.0 / params.gamma.max(1e-4);
+        
+        let final_r = processor.apply_gamma(tone_mapped_r, gamma_inv, use_srgb);
+        let final_g = processor.apply_gamma(tone_mapped_g, gamma_inv, use_srgb);
+        let final_b = processor.apply_gamma(tone_mapped_b, gamma_inv, use_srgb);
+        let final_a = processor.clamp_unit(clean_a);
+        
+        (final_r, final_g, final_b, final_a)
+    }
+}
 
 /// SIMD processing configuration
 pub const SIMD_CHUNK_SIZE: usize = 16; // 4 pixels * 4 channels RGBA
@@ -140,7 +267,7 @@ pub fn process_scalar_pixels(
     // Option to use unified processing approach
     #[cfg(feature = "unified_simd")]
     {
-        use crate::processing::simd_traits::{ScalarProcessor, ProcessParams, process_pixel_unified};
+        use unified_processing::{ScalarProcessor, ProcessParams, process_pixel_unified};
         let processor = ScalarProcessor;
         let params = ProcessParams::new(exposure, gamma, tonemap_mode);
         
