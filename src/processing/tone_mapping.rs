@@ -257,6 +257,50 @@ pub fn tone_map_and_gamma_simd(
     }
 }
 
+/// Scalar version: ekspozycja → tone-map → gamma/sRGB
+/// Zwraca wartości w [0, 1] po korekcji gamma.
+#[inline]
+pub fn tone_map_and_gamma(
+    r: f32,
+    g: f32, 
+    b: f32,
+    exposure: f32,
+    gamma: f32,
+    tonemap_mode: ToneMapMode,
+) -> (f32, f32, f32) {
+    let exposure_multiplier = 2.0_f32.powf(exposure);
+
+    // Sprawdzenie NaN/Inf i clamp do sensownych wartości
+    let safe_r = if r.is_finite() { r.max(0.0) } else { 0.0 };
+    let safe_g = if g.is_finite() { g.max(0.0) } else { 0.0 };
+    let safe_b = if b.is_finite() { b.max(0.0) } else { 0.0 };
+
+    // Zastosowanie ekspozycji
+    let exposed_r = safe_r * exposure_multiplier;
+    let exposed_g = safe_g * exposure_multiplier;
+    let exposed_b = safe_b * exposure_multiplier;
+
+    // Tone mapping
+    let (tm_r, tm_g, tm_b) = apply_tonemap_scalar(exposed_r, exposed_g, exposed_b, tonemap_mode);
+
+    // Korekcja wyjściowa: preferuj prawdziwą krzywą sRGB (OETF) dla gamma ~2.2/2.4
+    let use_srgb = (gamma - 2.2).abs() < 0.2 || (gamma - 2.4).abs() < 0.2;
+    if use_srgb {
+        (
+            srgb_oetf(tm_r),
+            srgb_oetf(tm_g), 
+            srgb_oetf(tm_b),
+        )
+    } else {
+        let gamma_inv = 1.0 / gamma.max(1e-4);
+        (
+            apply_gamma_lut(tm_r, gamma_inv),
+            apply_gamma_lut(tm_g, gamma_inv),
+            apply_gamma_lut(tm_b, gamma_inv),
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

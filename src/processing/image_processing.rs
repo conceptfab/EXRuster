@@ -1,10 +1,7 @@
 use slint::Rgba8Pixel;
 
 // Import funkcji tone mapping z tone_mapping.rs
-use crate::processing::tone_mapping::{
-    apply_gamma_lut,
-    srgb_oetf,
-};
+use crate::processing::tone_mapping::ToneMapMode;
 
 // Thread-local cache LUT został usunięty - funkcja apply_gamma_lut
 // została przeniesiona do tone_mapping.rs
@@ -45,6 +42,7 @@ pub fn process_pixel(
 
 /// Wspólny pipeline: ekspozycja → tone-map (wg trybu) → gamma/sRGB
 /// Zwraca wartości w [0, 1] po korekcji gamma.
+/// Wykorzystuje skonsolidowaną implementację z tone_mapping.rs
 #[inline]
 pub fn tone_map_and_gamma(
     r: f32,
@@ -54,38 +52,8 @@ pub fn tone_map_and_gamma(
     gamma: f32,
     tonemap_mode: i32,
 ) -> (f32, f32, f32) {
-    let exposure_multiplier = 2.0_f32.powf(exposure);
-
-    // Sprawdzenie NaN/Inf i clamp do sensownych wartości
-    let safe_r = if r.is_finite() { r.max(0.0) } else { 0.0 };
-    let safe_g = if g.is_finite() { g.max(0.0) } else { 0.0 };
-    let safe_b = if b.is_finite() { b.max(0.0) } else { 0.0 };
-
-    // Zastosowanie ekspozycji
-    let exposed_r = safe_r * exposure_multiplier;
-    let exposed_g = safe_g * exposure_multiplier;
-    let exposed_b = safe_b * exposure_multiplier;
-
-    // Tone mapping używając skonsolidowanej funkcji
-    let mode = crate::processing::tone_mapping::ToneMapMode::from(tonemap_mode);
-    let (tm_r, tm_g, tm_b) = crate::processing::tone_mapping::apply_tonemap_scalar(exposed_r, exposed_g, exposed_b, mode);
-
-    // Korekcja wyjściowa: preferuj prawdziwą krzywą sRGB (OETF) dla gamma ~2.2/2.4; w innym wypadku użyj niestandardowej gammy
-    let use_srgb = (gamma - 2.2).abs() < 0.2 || (gamma - 2.4).abs() < 0.2;
-    if use_srgb {
-        (
-            srgb_oetf(tm_r),
-            srgb_oetf(tm_g),
-            srgb_oetf(tm_b),
-        )
-    } else {
-        let gamma_inv = 1.0 / gamma.max(1e-4);
-        (
-            apply_gamma_lut(tm_r, gamma_inv),
-            apply_gamma_lut(tm_g, gamma_inv),
-            apply_gamma_lut(tm_b, gamma_inv),
-        )
-    }
+    let mode = ToneMapMode::from(tonemap_mode);
+    crate::processing::tone_mapping::tone_map_and_gamma(r, g, b, exposure, gamma, mode)
 }
 
 // ===================== SIMD warianty =====================
