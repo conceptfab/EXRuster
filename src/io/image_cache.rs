@@ -638,18 +638,32 @@ pub(crate) fn load_all_channels_for_layer(
             let num_channels = layer.channel_data.list.len();
             let mut channel_names: Vec<String> = Vec::with_capacity(num_channels);
             
-            // Use buffer pool for channel data
+            // Use buffer pool for channel data - optimized loading
             let channel_data_size = pixel_count * num_channels;
             let mut channel_data_vec = if let Some(pool) = get_buffer_pool() {
-                pool.get_f32_buffer(channel_data_size)
+                let mut buffer = pool.get_f32_buffer(channel_data_size);
+                buffer.clear();
+                buffer.reserve(channel_data_size);
+                buffer
             } else {
                 Vec::with_capacity(channel_data_size)
             };
-            for (ci, ch) in layer.channel_data.list.iter().enumerate() {
-                let full = ch.name.to_string();
-                let (_lname, short) = split_layer_and_short(&full, base_attr.as_deref());
-                channel_names.push(short);
-                for i in 0..pixel_count { channel_data_vec.push(layer.channel_data.list[ci].sample_data.value_by_flat_index(i).to_f32()); }
+            
+            // Pre-allocate the full buffer and use direct indexing for better performance
+            unsafe {
+                channel_data_vec.set_len(channel_data_size);
+                let data_ptr = channel_data_vec.as_mut_ptr();
+                
+                for (ci, ch) in layer.channel_data.list.iter().enumerate() {
+                    let full = ch.name.to_string();
+                    let (_lname, short) = split_layer_and_short(&full, base_attr.as_deref());
+                    channel_names.push(short);
+                    
+                    let channel_base = ci * pixel_count;
+                    for i in 0..pixel_count { 
+                        *data_ptr.add(channel_base + i) = layer.channel_data.list[ci].sample_data.value_by_flat_index(i).to_f32();
+                    }
+                }
             }
             let channel_data = Arc::from(channel_data_vec.into_boxed_slice()); // Convert Vec to Arc<[f32]>
             return Ok(LayerChannels { layer_name: layer_name.to_string(), width, height, channel_names, channel_data });
@@ -784,19 +798,29 @@ impl ImageCache {
         let base = channel_index * pixel_count;
         let channel_slice = &layer_cache.channel_data[base..base + pixel_count];
 
-        // Use buffer pool for better performance
+        // Use buffer pool for better performance - optimized grayscale expansion
         let buffer_size = pixel_count * 4;
         let mut out = if let Some(pool) = get_buffer_pool() {
-            pool.get_f32_buffer(buffer_size)
+            let mut buffer = pool.get_f32_buffer(buffer_size);
+            buffer.clear();
+            buffer.reserve(buffer_size);
+            buffer
         } else {
             Vec::with_capacity(buffer_size)
         };
         
-        for &v in channel_slice.iter() {
-            out.push(v); // R
-            out.push(v); // G
-            out.push(v); // B
-            out.push(1.0); // A
+        // Optimized: expand grayscale channel to RGBA more efficiently
+        unsafe {
+            out.set_len(buffer_size);
+            let out_ptr = out.as_mut_ptr();
+            
+            for (i, &v) in channel_slice.iter().enumerate() {
+                let base_idx = i * 4;
+                *out_ptr.add(base_idx) = v;     // R
+                *out_ptr.add(base_idx + 1) = v; // G
+                *out_ptr.add(base_idx + 2) = v; // B
+                *out_ptr.add(base_idx + 3) = 1.0; // A
+            }
         }
 
         self.raw_pixels = out;
