@@ -23,7 +23,14 @@
       "Bash(wmic:*)",
       "Bash(timeout 10s cargo check)",
       "Bash(timeout 20s cargo check)",
-      "Bash(timeout 30s cargo build)"
+      "Bash(timeout 30s cargo build)",
+      "Bash(timeout 30s cargo check)",
+      "Bash(timeout 30s cargo test test_filmic_simd_scalar_consistency -- --nocapture)",
+      "Bash(timeout 30s cargo test test_tonemap -- --nocapture)",
+      "WebSearch",
+      "WebFetch(domain:filmicworlds.com)",
+      "Bash(timeout 30s cargo test test_all_tonemap_simd_scalar_consistency -- --nocapture)",
+      "Bash(timeout 30s cargo test test_filmic_vs_hable_difference -- --nocapture)"
     ],
     "deny": [],
     "ask": []

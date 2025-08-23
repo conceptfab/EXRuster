@@ -102,11 +102,7 @@ pub fn update_preview_image(
     let display_long_side_logical = if container_ratio > image_ratio { preview_h * image_ratio } else { preview_w };
     let target = (display_long_side_logical * dpr).round().max(1.0) as u32;
     
-    let image = if cache.raw_pixels.len() > 2_000_000 {
-        cache.process_to_thumbnail(exposure, gamma, tonemap_mode, target)
-    } else {
-        cache.process_to_image(exposure, gamma, tonemap_mode)
-    };
+    let image = cache.process_to_image(exposure, gamma, tonemap_mode);
     
     // Throttled log to console: at least 300ms interval, with DPI and fitting diagnostics
     let mut last = lock_or_recover(&LAST_PREVIEW_LOG);

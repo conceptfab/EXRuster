@@ -6,12 +6,10 @@ use std::collections::HashMap; // potrzebne dla extract_layers_info
 use crate::utils::split_layer_and_short;
 use crate::ui::progress::ProgressSink;
 // use crate::color_processing::compute_rgb_to_srgb_matrix_from_file_for_layer;
-use glam::{Mat3, Vec3};
+use glam::Mat3;
 use std::sync::Arc;
 use crate::io::full_exr_cache::FullExrCacheData;
 use crate::io::lazy_exr_loader::LazyExrLoader;
-use core::simd::{f32x4, Simd};
-use std::simd::prelude::SimdFloat;
 use crate::utils::buffer_pool::BufferPool;
 use std::sync::OnceLock;
 
@@ -294,107 +292,6 @@ impl ImageCache {
         crate::processing::simd_processing::process_rgba_chunk_optimized(
             input, output, exposure, gamma, tonemap_mode, color_m, !lighting_rgb, false
         );
-    }
-    
-    // Nowa metoda dla preview (szybsze przetwarzanie małego obrazka)
-    pub fn process_to_thumbnail(&self, exposure: f32, gamma: f32, tonemap_mode: i32, max_size: u32) -> Image {
-        let scale = (max_size as f32 / self.width.max(self.height) as f32).min(1.0);
-        let thumb_width = (self.width as f32 * scale) as u32;
-        let thumb_height = (self.height as f32 * scale) as u32;
-        
-        let mut buffer = SharedPixelBuffer::<Rgba8Pixel>::new(thumb_width, thumb_height);
-        let slice = buffer.make_mut_slice();
-        
-        // Wybierz najlepsze źródło: oryginał lub najbliższy MIP >= docelowej wielkości
-        let (src_pixels, src_w, src_h): (&[f32], u32, u32) = {
-            if self.mip_levels.is_empty() { (&self.raw_pixels[..], self.width, self.height) } else {
-                // wybierz poziom, którego dłuższy bok jest najbliższy docelowemu, ale nie mniejszy niż docelowy
-                let target = thumb_width.max(thumb_height);
-                if let Some(lvl) = self.mip_levels.iter().find(|lvl| lvl.width.max(lvl.height) >= target) {
-                    (&lvl.pixels[..], lvl.width, lvl.height)
-                } else {
-            
-                    (&self.raw_pixels[..], self.width, self.height)
-                }
-            }
-        };
-
-        // GPU processing removed - CPU only
-        let gpu_processed_src: Option<Vec<u8>> = None;
-
-        // Proste nearest neighbor sampling dla szybkości, ale przetwarzanie blokami 4 pikseli
-        let m = self.color_matrix_rgb_to_srgb;
-        let scale_x = (src_w as f32) / (thumb_width.max(1) as f32);
-        let scale_y = (src_h as f32) / (thumb_height.max(1) as f32);
-        // SIMD: paczki po 4 piksele miniatury (równolegle na blokach 4 pikseli)
-        if let Some(ref gpu_src) = gpu_processed_src {
-            // Skalowanie NN z już przetworzonych RGBA8 (piksel-po-pikselu)
-            slice
-                .par_iter_mut()
-                .enumerate()
-                .for_each(|(i, px)| {
-                    if i >= (thumb_width as usize) * (thumb_height as usize) { return; }
-                    let x = (i as u32) % thumb_width;
-                    let y = (i as u32) / thumb_width;
-                    let src_x = ((x as f32) * scale_x) as u32;
-                    let src_y = ((y as f32) * scale_y) as u32;
-                    let sx = src_x.min(src_w.saturating_sub(1)) as usize;
-                    let sy = src_y.min(src_h.saturating_sub(1)) as usize;
-                    let src_idx = sy * (src_w as usize) + sx;
-                    let base = src_idx * 4;
-                    *px = Rgba8Pixel { r: gpu_src[base], g: gpu_src[base + 1], b: gpu_src[base + 2], a: gpu_src[base + 3] };
-                });
-        } else {
-            slice
-                .par_chunks_mut(4) // 4 piksele na blok
-                .enumerate()
-                .for_each(|(block_idx, out_block)| {
-                    let base = block_idx * 4;
-                    let mut rr = [0.0f32; 4];
-                    let mut gg = [0.0f32; 4];
-                    let mut bb = [0.0f32; 4];
-                    let mut aa = [1.0f32; 4];
-                    let mut valid = 0usize;
-                    for lane in 0..4 {
-                        let i = base + lane;
-                        if i >= (thumb_width as usize) * (thumb_height as usize) { break; }
-                        let x = (i as u32) % thumb_width;
-                        let y = (i as u32) / thumb_width;
-                        let src_x = ((x as f32) * scale_x) as u32;
-                        let src_y = ((y as f32) * scale_y) as u32;
-                        let sx = src_x.min(src_w.saturating_sub(1)) as usize;
-                        let sy = src_y.min(src_h.saturating_sub(1)) as usize;
-                        let src_idx = sy * (src_w as usize) + sx;
-                        let pixel_start = src_idx * 4;
-                        let mut r = src_pixels[pixel_start];
-                        let mut g = src_pixels[pixel_start + 1];
-                        let mut b = src_pixels[pixel_start + 2];
-                        let a = src_pixels[pixel_start + 3];
-                        if let Some(mat) = m {
-                            let v = mat * Vec3::new(r, g, b);
-                            r = v.x; g = v.y; b = v.z;
-                        }
-                        rr[lane] = r; gg[lane] = g; bb[lane] = b; aa[lane] = a; valid += 1;
-                    }
-                    let (r8, g8, b8) = crate::processing::tone_mapping::tone_map_and_gamma_simd(
-                        f32x4::from_array(rr), f32x4::from_array(gg), f32x4::from_array(bb), exposure, gamma, tonemap_mode);
-                    let a8 = f32x4::from_array(aa).simd_clamp(Simd::splat(0.0), Simd::splat(1.0));
-                    let ra: [f32; 4] = r8.into();
-                    let ga: [f32; 4] = g8.into();
-                    let ba: [f32; 4] = b8.into();
-                    let aa: [f32; 4] = a8.into();
-                    for lane in 0..valid.min(4) {
-                        out_block[lane] = Rgba8Pixel {
-                            r: (ra[lane] * 255.0).round().clamp(0.0, 255.0) as u8,
-                            g: (ga[lane] * 255.0).round().clamp(0.0, 255.0) as u8,
-                            b: (ba[lane] * 255.0).round().clamp(0.0, 255.0) as u8,
-                            a: (aa[lane] * 255.0).round().clamp(0.0, 255.0) as u8,
-                        };
-                    }
-                });
-        }
-        
-        Image::from_rgba8(buffer)
     }
 
 
