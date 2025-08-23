@@ -1,12 +1,13 @@
-use std::sync::{Arc, Mutex};
-use std::collections::VecDeque;
+use std::sync::Mutex;
+use std::collections::BTreeMap;
 
 /// Buffer pool for reusing Vec<f32> and Vec<u8> allocations
 /// Eliminates frequent allocations in hot image processing paths
+/// Uses BTreeMap for O(log n) buffer selection by size
 pub struct BufferPool {
-    f32_buffers: Mutex<VecDeque<Vec<f32>>>,
+    f32_buffers_by_size: Mutex<BTreeMap<usize, Vec<Vec<f32>>>>,
     #[allow(dead_code)]
-    u8_buffers: Mutex<VecDeque<Vec<u8>>>,
+    u8_buffers_by_size: Mutex<BTreeMap<usize, Vec<Vec<u8>>>>,
     max_pool_size: usize,
 }
 
@@ -14,25 +15,27 @@ impl BufferPool {
     /// Create a new buffer pool with specified maximum pool size
     pub fn new(max_pool_size: usize) -> Self {
         Self {
-            f32_buffers: Mutex::new(VecDeque::with_capacity(max_pool_size)),
-            u8_buffers: Mutex::new(VecDeque::with_capacity(max_pool_size)),
+            f32_buffers_by_size: Mutex::new(BTreeMap::new()),
+            u8_buffers_by_size: Mutex::new(BTreeMap::new()),
             max_pool_size,
         }
     }
 
     /// Get a Vec<f32> buffer with at least the specified capacity
     /// Returns a reused buffer if available, otherwise creates a new one
+    /// Uses O(log n) search to find the smallest suitable buffer
     pub fn get_f32_buffer(&self, min_capacity: usize) -> Vec<f32> {
-        if let Ok(mut pool) = self.f32_buffers.lock() {
-            // Look for a buffer with sufficient capacity
-            if let Some(mut buffer) = pool.pop_back() {
-                if buffer.capacity() >= min_capacity {
+        if let Ok(mut pool) = self.f32_buffers_by_size.lock() {
+            // Find the smallest buffer with sufficient capacity in O(log n)
+            if let Some((_, buffers)) = pool.range_mut(min_capacity..).next() {
+                if let Some(mut buffer) = buffers.pop() {
                     buffer.clear();
+                    // Remove empty size entry to keep BTreeMap clean
+                    if buffers.is_empty() {
+                        let capacity = buffer.capacity();
+                        pool.remove(&capacity);
+                    }
                     return buffer;
-                }
-                // Buffer too small, put it back and create a new one
-                if pool.len() < self.max_pool_size {
-                    pool.push_back(buffer);
                 }
             }
         }
@@ -43,28 +46,40 @@ impl BufferPool {
     }
 
     /// Return a Vec<f32> buffer to the pool for reuse
+    /// Organizes buffers by capacity for efficient retrieval
     #[allow(dead_code)]
     pub fn return_f32_buffer(&self, buffer: Vec<f32>) {
-        if let Ok(mut pool) = self.f32_buffers.lock() {
-            if pool.len() < self.max_pool_size && buffer.capacity() > 0 {
-                pool.push_back(buffer);
+        if buffer.capacity() == 0 {
+            return; // Don't store empty buffers
+        }
+        
+        if let Ok(mut pool) = self.f32_buffers_by_size.lock() {
+            // Count total buffers across all sizes
+            let total_buffers: usize = pool.values().map(|v| v.len()).sum();
+            
+            if total_buffers < self.max_pool_size {
+                let capacity = buffer.capacity();
+                pool.entry(capacity).or_insert_with(Vec::new).push(buffer);
             }
-            // If pool is full or buffer has no capacity, just drop it
+            // If pool is full, just drop the buffer
         }
     }
 
     /// Get a Vec<u8> buffer with at least the specified capacity
+    /// Uses O(log n) search to find the smallest suitable buffer
     #[allow(dead_code)]
     pub fn get_u8_buffer(&self, min_capacity: usize) -> Vec<u8> {
-        if let Ok(mut pool) = self.u8_buffers.lock() {
-            if let Some(mut buffer) = pool.pop_back() {
-                if buffer.capacity() >= min_capacity {
+        if let Ok(mut pool) = self.u8_buffers_by_size.lock() {
+            // Find the smallest buffer with sufficient capacity in O(log n)
+            if let Some((_, buffers)) = pool.range_mut(min_capacity..).next() {
+                if let Some(mut buffer) = buffers.pop() {
                     buffer.clear();
+                    // Remove empty size entry to keep BTreeMap clean
+                    if buffers.is_empty() {
+                        let capacity = buffer.capacity();
+                        pool.remove(&capacity);
+                    }
                     return buffer;
-                }
-                // Buffer too small, put it back and create a new one
-                if pool.len() < self.max_pool_size {
-                    pool.push_back(buffer);
                 }
             }
         }
@@ -74,20 +89,34 @@ impl BufferPool {
     }
 
     /// Return a Vec<u8> buffer to the pool for reuse
+    /// Organizes buffers by capacity for efficient retrieval
     #[allow(dead_code)]
     pub fn return_u8_buffer(&self, buffer: Vec<u8>) {
-        if let Ok(mut pool) = self.u8_buffers.lock() {
-            if pool.len() < self.max_pool_size && buffer.capacity() > 0 {
-                pool.push_back(buffer);
+        if buffer.capacity() == 0 {
+            return; // Don't store empty buffers
+        }
+        
+        if let Ok(mut pool) = self.u8_buffers_by_size.lock() {
+            // Count total buffers across all sizes
+            let total_buffers: usize = pool.values().map(|v| v.len()).sum();
+            
+            if total_buffers < self.max_pool_size {
+                let capacity = buffer.capacity();
+                pool.entry(capacity).or_insert_with(Vec::new).push(buffer);
             }
+            // If pool is full, just drop the buffer
         }
     }
 
     /// Get pool statistics for debugging/monitoring
     #[allow(dead_code)]
     pub fn stats(&self) -> BufferPoolStats {
-        let f32_count = self.f32_buffers.lock().map(|pool| pool.len()).unwrap_or(0);
-        let u8_count = self.u8_buffers.lock().map(|pool| pool.len()).unwrap_or(0);
+        let f32_count = self.f32_buffers_by_size.lock()
+            .map(|pool| pool.values().map(|v| v.len()).sum())
+            .unwrap_or(0);
+        let u8_count = self.u8_buffers_by_size.lock()
+            .map(|pool| pool.values().map(|v| v.len()).sum())
+            .unwrap_or(0);
         
         BufferPoolStats {
             f32_buffers_available: f32_count,
@@ -99,10 +128,10 @@ impl BufferPool {
     /// Clear all buffers from the pool (useful for memory cleanup)
     #[allow(dead_code)]
     pub fn clear(&self) {
-        if let Ok(mut pool) = self.f32_buffers.lock() {
+        if let Ok(mut pool) = self.f32_buffers_by_size.lock() {
             pool.clear();
         }
-        if let Ok(mut pool) = self.u8_buffers.lock() {
+        if let Ok(mut pool) = self.u8_buffers_by_size.lock() {
             pool.clear();
         }
     }
@@ -122,82 +151,6 @@ pub struct BufferPoolStats {
     pub max_pool_size: usize,
 }
 
-/// RAII wrapper for automatic buffer return to pool
-#[allow(dead_code)]
-pub struct PooledF32Buffer {
-    buffer: Option<Vec<f32>>,
-    pool: Arc<BufferPool>,
-}
-
-#[allow(dead_code)]
-impl PooledF32Buffer {
-    pub fn new(pool: Arc<BufferPool>, min_capacity: usize) -> Self {
-        let buffer = pool.get_f32_buffer(min_capacity);
-        Self {
-            buffer: Some(buffer),
-            pool,
-        }
-    }
-
-    pub fn as_mut(&mut self) -> &mut Vec<f32> {
-        self.buffer.as_mut().expect("Buffer already taken")
-    }
-
-    pub fn as_ref(&self) -> &Vec<f32> {
-        self.buffer.as_ref().expect("Buffer already taken")
-    }
-
-    /// Take the buffer out of the wrapper (buffer won't be returned to pool automatically)
-    pub fn take(mut self) -> Vec<f32> {
-        self.buffer.take().expect("Buffer already taken")
-    }
-}
-
-impl Drop for PooledF32Buffer {
-    fn drop(&mut self) {
-        if let Some(buffer) = self.buffer.take() {
-            self.pool.return_f32_buffer(buffer);
-        }
-    }
-}
-
-/// RAII wrapper for automatic buffer return to pool
-#[allow(dead_code)]
-pub struct PooledU8Buffer {
-    buffer: Option<Vec<u8>>,
-    pool: Arc<BufferPool>,
-}
-
-#[allow(dead_code)]
-impl PooledU8Buffer {
-    pub fn new(pool: Arc<BufferPool>, min_capacity: usize) -> Self {
-        let buffer = pool.get_u8_buffer(min_capacity);
-        Self {
-            buffer: Some(buffer),
-            pool,
-        }
-    }
-
-    pub fn as_mut(&mut self) -> &mut Vec<u8> {
-        self.buffer.as_mut().expect("Buffer already taken")
-    }
-
-    pub fn as_ref(&self) -> &Vec<u8> {
-        self.buffer.as_ref().expect("Buffer already taken")
-    }
-
-    pub fn take(mut self) -> Vec<u8> {
-        self.buffer.take().expect("Buffer already taken")
-    }
-}
-
-impl Drop for PooledU8Buffer {
-    fn drop(&mut self) {
-        if let Some(buffer) = self.buffer.take() {
-            self.pool.return_u8_buffer(buffer);
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests {
