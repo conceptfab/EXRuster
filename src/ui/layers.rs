@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use crate::io::image_cache::ImageCache;
 use crate::ui::state::{SharedUiState, UiState};
 use crate::ui::{push_console, lock_or_recover};
-use crate::utils::{get_channel_info, normalize_channel_name, UiErrorReporter, patterns};
+use crate::utils::{normalize_channel_name, UiErrorReporter, patterns};
 use crate::AppWindow;
 
 pub type ImageCacheType = Arc<Mutex<Option<ImageCache>>>;
@@ -70,10 +70,8 @@ pub fn handle_layer_tree_click(
             let layer_name = trimmed.trim_start_matches("📁 ").trim().to_string();
             
             let real_layer_name = {
-                let state_guard = lock_or_recover(&ui_state);
-                state_guard.get_real_layer_for_display(&layer_name)
-                    .cloned()
-                    .unwrap_or_else(|| layer_name.clone())
+                let map = lock_or_recover(&crate::ui::file_handlers::DISPLAY_TO_REAL_LAYER);
+                map.get(&layer_name).cloned().unwrap_or_else(|| layer_name.clone())
             };
         
             let mut status_msg = String::new();
@@ -137,10 +135,8 @@ pub fn handle_layer_tree_click(
                     if let Some(at_pos) = s.rfind('@') {
                         let layer_display = s[at_pos + 1..].trim().to_string();
                         let layer = {
-                            let state_guard = lock_or_recover(&ui_state);
-                            state_guard.get_real_layer_for_display(&layer_display)
-                                .cloned()
-                                .unwrap_or(layer_display)
+                            let map = lock_or_recover(&crate::ui::file_handlers::DISPLAY_TO_REAL_LAYER);
+                            map.get(&layer_display).cloned().unwrap_or(layer_display)
                         };
                         let left = s[..at_pos].trim();
                         let ch_short = if is_dot {
@@ -152,10 +148,8 @@ pub fn handle_layer_tree_click(
                     } else {
                         let active_layer = {
                             let key = clicked_item.trim_end().to_string();
-                            let state_guard = lock_or_recover(&ui_state);
-                            state_guard.get_layer_for_item(&key)
-                                .cloned()
-                                .unwrap_or_else(|| cache.current_layer_name.clone())
+                            let map = lock_or_recover(&crate::ui::file_handlers::ITEM_TO_LAYER);
+                            map.get(&key).cloned().unwrap_or_else(|| cache.current_layer_name.clone())
                         };
                         let ch_short = if is_dot {
                             trimmed.trim_start_matches("• ").trim().to_string()

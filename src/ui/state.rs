@@ -56,19 +56,7 @@ impl UiState {
         self.display_to_real_layer.insert(display, real);
     }
 
-    pub fn get_layer_for_item(&self, item: &str) -> Option<&String> {
-        self.item_to_layer.get(item)
-    }
 
-    pub fn get_real_layer_for_display(&self, display: &str) -> Option<&String> {
-        self.display_to_real_layer.get(display)
-    }
-
-    pub fn get_display_for_real_layer(&self, real_layer: &str) -> Option<String> {
-        self.display_to_real_layer
-            .iter()
-            .find_map(|(k, v)| if v == real_layer { Some(k.clone()) } else { None })
-    }
 
     #[allow(dead_code)] // Prepared for future refactoring
     pub fn update_last_preview_log(&mut self) {

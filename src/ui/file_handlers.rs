@@ -12,10 +12,10 @@ use crate::{AppWindow, utils::{get_channel_info, UiErrorReporter, WeakProgressEx
 use anyhow::{Result, Context};
 
 // Global static variables for layer mapping (to be moved to state in future refactoring)
-static ITEM_TO_LAYER: std::sync::LazyLock<std::sync::Mutex<HashMap<String, String>>> =
+pub static ITEM_TO_LAYER: std::sync::LazyLock<std::sync::Mutex<HashMap<String, String>>> =
     std::sync::LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
 
-static DISPLAY_TO_REAL_LAYER: std::sync::LazyLock<std::sync::Mutex<HashMap<String, String>>> =
+pub static DISPLAY_TO_REAL_LAYER: std::sync::LazyLock<std::sync::Mutex<HashMap<String, String>>> =
     std::sync::LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
 
 /// Handles EXR file opening callback
@@ -418,9 +418,7 @@ pub fn create_layers_model(
                         let base = format!("      {} {}", emoji, display_ch);
                         let line = format!("{} @{}", base, display_name);
                         
-                        ITEM_TO_LAYER
-                            .lock()
-                            .unwrap_or_else(|e| e.into_inner())
+                        lock_or_recover(&ITEM_TO_LAYER)
                             .insert(line.clone(), layer.name.clone());
                         
                         items.push(line.into());
