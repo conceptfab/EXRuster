@@ -15,8 +15,7 @@ pub use ui_handlers::{
     update_preview_image, ImageCacheType, CurrentFilePathType, FullExrCache, ThrottledUpdate
 };
 pub use export_handlers::{
-    handle_export_base_layer, handle_export_layers, export_base_layer_png16, 
-    export_base_layer_tiff16, export_base_layer_tiff32_float, UiExportConfig
+    export_base_layer_png16, export_base_layer_tiff16, export_base_layer_tiff32_float
 };
 pub use layers::{handle_layer_tree_click, toggle_all_layer_groups};
 pub use state::{SharedUiState, create_shared_state};

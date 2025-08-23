@@ -1,19 +1,15 @@
-use slint::{Weak, ComponentHandle, SharedString};
-use std::sync::{Arc, Mutex};
+use slint::{Weak, ComponentHandle};
 use std::path::PathBuf;
 use anyhow::Result;
 use crate::AppWindow;
-use crate::processing::layer_export::{LayerExporter, LayerExportConfig, ExportFormat, ExportParams};
+use crate::processing::layer_export::{LayerExporter, ExportFormat, ExportParams};
 use crate::processing::tone_mapping::ToneMapMode;
-use crate::io::full_exr_cache::FullExrCacheData;
-use crate::io::image_cache::LayerInfo;
 use crate::ui::ui_handlers::{push_console, lock_or_recover, ConsoleModel, FullExrCache, CurrentFilePathType};
 use crate::ui::progress::patterns;
 
 /// Export configuration passed from UI
 #[derive(Clone, Debug)]
 pub struct UiExportConfig {
-    pub config_type: LayerExportConfig,
     pub format: ExportFormat,
     pub output_directory: PathBuf,
     pub base_filename: String,
@@ -49,34 +45,6 @@ pub fn handle_export_base_layer(
     }
 }
 
-/// Handle multiple layer export
-pub fn handle_export_layers(
-    ui_handle: Weak<AppWindow>,
-    full_cache: FullExrCache,
-    current_file_path: CurrentFilePathType,
-    console: ConsoleModel,
-    export_config: UiExportConfig,
-) {
-    if let Some(ui) = ui_handle.upgrade() {
-        let _prog = patterns::processing(ui.as_weak(), "Exporting layers");
-
-        match export_layers_impl(&ui, &full_cache, &current_file_path, export_config) {
-            Ok(output_paths) => {
-                let count = output_paths.len();
-                for path in output_paths {
-                    let msg = format!("[export] Layer saved to: {}", path.display());
-                    push_console(&ui, &console, msg);
-                }
-                ui.set_status_text(format!("Exported {} layers successfully", count).into());
-            }
-            Err(e) => {
-                let msg = format!("[export] Failed to export layers: {}", e);
-                push_console(&ui, &console, msg);
-                ui.set_status_text("Layer export failed".into());
-            }
-        }
-    }
-}
 
 /// Implementation for base layer export
 fn export_base_layer_impl(
@@ -115,43 +83,6 @@ fn export_base_layer_impl(
     )
 }
 
-/// Implementation for multiple layer export
-fn export_layers_impl(
-    ui: &AppWindow,
-    full_cache: &FullExrCache,
-    current_file_path: &CurrentFilePathType,
-    export_config: UiExportConfig,
-) -> Result<Vec<PathBuf>> {
-    // Get current file path
-    let file_path = {
-        let guard = lock_or_recover(current_file_path);
-        guard.clone().ok_or_else(|| anyhow::anyhow!("No file loaded"))?
-    };
-
-    // Get full cache data
-    let cache_data = {
-        let guard = lock_or_recover(full_cache);
-        guard.clone().ok_or_else(|| anyhow::anyhow!("No EXR cache available"))?
-    };
-
-    // Extract layers info
-    let layers_info = crate::io::image_cache::extract_layers_info(&file_path)?;
-
-    // Create export parameters
-    let export_params = create_export_params(ui, &export_config)?;
-
-    // Create exporter
-    let exporter = LayerExporter::new(cache_data, layers_info)
-        .with_params(export_params);
-
-    // Export layers
-    exporter.export_layers(
-        export_config.config_type,
-        export_config.format,
-        &export_config.output_directory,
-        &export_config.base_filename,
-    )
-}
 
 /// Create export parameters from UI state
 fn create_export_params(ui: &AppWindow, config: &UiExportConfig) -> Result<ExportParams> {
@@ -173,13 +104,13 @@ fn create_export_params(ui: &AppWindow, config: &UiExportConfig) -> Result<Expor
         exposure,
         gamma,
         tonemap_mode,
-        apply_color_matrix: true,
     })
 }
 
 /// Helper function to show export dialog and get configuration
 pub fn show_export_dialog(
     ui_handle: Weak<AppWindow>,
+    current_file_path: &CurrentFilePathType,
     console: ConsoleModel,
 ) -> Option<UiExportConfig> {
     if let Some(ui) = ui_handle.upgrade() {
@@ -187,13 +118,17 @@ pub fn show_export_dialog(
         // In a full implementation, this would show a proper file dialog
 
         // Get current file path for default output directory
-        let current_file = ui.get_current_file_path();
-        if current_file.is_empty() {
-            push_console(&ui, &console, "[export] No file loaded".to_string());
-            return None;
-        }
+        let file_path = {
+            let guard = lock_or_recover(current_file_path);
+            match guard.as_ref() {
+                Some(path) => path.clone(),
+                None => {
+                    push_console(&ui, &console, "[export] No file loaded".to_string());
+                    return None;
+                }
+            }
+        };
 
-        let file_path = PathBuf::from(current_file.to_string());
         let output_dir = file_path.parent().unwrap_or(&file_path).to_path_buf();
         let base_filename = file_path.file_stem()
             .and_then(|s| s.to_str())
@@ -201,7 +136,6 @@ pub fn show_export_dialog(
             .to_string();
 
         Some(UiExportConfig {
-            config_type: LayerExportConfig::BaseOnly,
             format: ExportFormat::Png16,
             output_directory: output_dir,
             base_filename,
@@ -222,7 +156,7 @@ pub fn export_base_layer_png16(
     current_file_path: CurrentFilePathType,
     console: ConsoleModel,
 ) {
-    if let Some(config) = show_export_dialog(ui_handle.clone(), console.clone()) {
+    if let Some(config) = show_export_dialog(ui_handle.clone(), &current_file_path, console.clone()) {
         let export_config = UiExportConfig {
             format: ExportFormat::Png16,
             ..config
@@ -239,7 +173,7 @@ pub fn export_base_layer_tiff16(
     current_file_path: CurrentFilePathType,
     console: ConsoleModel,
 ) {
-    if let Some(config) = show_export_dialog(ui_handle.clone(), console.clone()) {
+    if let Some(config) = show_export_dialog(ui_handle.clone(), &current_file_path, console.clone()) {
         let export_config = UiExportConfig {
             format: ExportFormat::Tiff16,
             ..config
@@ -256,7 +190,7 @@ pub fn export_base_layer_tiff32_float(
     current_file_path: CurrentFilePathType,
     console: ConsoleModel,
 ) {
-    if let Some(config) = show_export_dialog(ui_handle.clone(), console.clone()) {
+    if let Some(config) = show_export_dialog(ui_handle.clone(), &current_file_path, console.clone()) {
         let export_config = UiExportConfig {
             format: ExportFormat::Tiff32Float,
             ..config

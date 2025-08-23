@@ -152,6 +152,10 @@ export component AppWindow inherits Window {
      callback export-convert();
      callback export-beauty();
      callback export-channels();
+     // New layer export callbacks
+     callback export-base-png16();
+     callback export-base-tiff16();
+     callback export-base-tiff32();
      
      
      
@@ -267,6 +271,11 @@ export component AppWindow inherits Window {
             spacing: 0px;
             
             PozycjaMenu { width: 100px; text: "Open EXR"; clicked => { file-menu-open = false; file-menu-timer-running = false; open-exr(); } }
+            Rectangle { height: 1px; background: Kolory.menu_obramowanie; } // separator
+            PozycjaMenu { width: 100px; text: "Export Base (PNG)"; clicked => { file-menu-open = false; file-menu-timer-running = false; export-base-png16(); } }
+            PozycjaMenu { width: 100px; text: "Export Base (TIFF)"; clicked => { file-menu-open = false; file-menu-timer-running = false; export-base-tiff16(); } }
+            PozycjaMenu { width: 100px; text: "Export Base (Float)"; clicked => { file-menu-open = false; file-menu-timer-running = false; export-base-tiff32(); } }
+            Rectangle { height: 1px; background: Kolory.menu_obramowanie; } // separator
             PozycjaMenu { width: 100px; text: "Exit"; clicked => { file-menu-open = false; file-menu-timer-running = false; exit(); } }
         }
         

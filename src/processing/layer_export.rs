@@ -2,38 +2,16 @@ use anyhow::Result;
 use std::path::PathBuf;
 use std::sync::Arc;
 use rayon::prelude::*;
-use crate::io::image_cache::{ImageCache, LayerInfo, LayerChannels};
+use crate::io::image_cache::{LayerInfo, LayerChannels};
 use crate::io::full_exr_cache::FullExrCacheData;
 use crate::processing::tone_mapping::{tone_map_and_gamma, ToneMapMode};
-use crate::utils::buffer_pool::BufferPool;
-use std::sync::OnceLock;
-
-/// Global buffer pool for export operations
-static EXPORT_BUFFER_POOL: OnceLock<Arc<BufferPool>> = OnceLock::new();
-
-pub fn set_export_buffer_pool(pool: Arc<BufferPool>) {
-    EXPORT_BUFFER_POOL.set(pool).ok();
-}
-
-fn get_export_buffer_pool() -> Option<&'static Arc<BufferPool>> {
-    EXPORT_BUFFER_POOL.get()
-}
 
 /// Layer export configuration types
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub enum LayerExportConfig {
     /// Export only the base/beauty layer
     BaseOnly,
-    /// Export only scene object layers (diffuse, reflection, etc.)
-    SceneObjectsOnly,
-    /// Export only technical layers (depth, normal, motion vectors, etc.)
-    TechnicalOnly,
-    /// Export only light layers
-    LightsOnly,
-    /// Export all layers
-    All,
-    /// Export selected layers by name pattern
-    Custom(Vec<String>),
 }
 
 /// Export format configuration
@@ -53,7 +31,6 @@ pub struct ExportParams {
     pub exposure: f32,
     pub gamma: f32,
     pub tonemap_mode: ToneMapMode,
-    pub apply_color_matrix: bool,
 }
 
 impl Default for ExportParams {
@@ -62,7 +39,6 @@ impl Default for ExportParams {
             exposure: 0.0,
             gamma: 2.2,
             tonemap_mode: ToneMapMode::ACES,
-            apply_color_matrix: true,
         }
     }
 }
@@ -91,32 +67,6 @@ impl LayerExporter {
     }
 
     /// Export layers based on configuration
-    pub fn export_layers(
-        &self,
-        config: LayerExportConfig,
-        format: ExportFormat,
-        output_dir: &PathBuf,
-        base_filename: &str,
-    ) -> Result<Vec<PathBuf>> {
-        let layers_to_export = self.filter_layers_by_config(&config)?;
-        let mut exported_files = Vec::with_capacity(layers_to_export.len());
-
-        // Process layers in parallel for maximum performance
-        let results: Result<Vec<_>, _> = layers_to_export
-            .par_iter()
-            .map(|layer_info| {
-                self.export_single_layer(layer_info, &format, output_dir, base_filename)
-            })
-            .collect();
-
-        match results {
-            Ok(files) => {
-                exported_files.extend(files);
-                Ok(exported_files)
-            }
-            Err(e) => Err(e),
-        }
-    }
 
     /// Export the base layer specifically
     pub fn export_base_layer(
@@ -129,29 +79,6 @@ impl LayerExporter {
         self.export_single_layer(&base_layer, &format, output_dir, base_filename)
     }
 
-    /// Filter layers based on export configuration
-    fn filter_layers_by_config(&self, config: &LayerExportConfig) -> Result<Vec<LayerInfo>> {
-        match config {
-            LayerExportConfig::BaseOnly => {
-                Ok(vec![self.find_base_layer()?])
-            }
-            LayerExportConfig::SceneObjectsOnly => {
-                Ok(self.filter_scene_object_layers())
-            }
-            LayerExportConfig::TechnicalOnly => {
-                Ok(self.filter_technical_layers())
-            }
-            LayerExportConfig::LightsOnly => {
-                Ok(self.filter_light_layers())
-            }
-            LayerExportConfig::All => {
-                Ok(self.layers_info.clone())
-            }
-            LayerExportConfig::Custom(patterns) => {
-                Ok(self.filter_layers_by_patterns(patterns))
-            }
-        }
-    }
 
     /// Find the base/beauty layer
     fn find_base_layer(&self) -> Result<LayerInfo> {
@@ -165,68 +92,6 @@ impl LayerExporter {
             .ok_or_else(|| anyhow::anyhow!("Base layer not found: {}", base_layer_name))
     }
 
-    /// Filter scene object layers (diffuse, reflection, specular, etc.)
-    fn filter_scene_object_layers(&self) -> Vec<LayerInfo> {
-        let scene_patterns = [
-            "diffuse", "reflection", "specular", "refraction", "sss", "emission",
-            "beauty", "rgba", "color", "albedo", "indirect", "direct"
-        ];
-        
-        self.layers_info
-            .iter()
-            .filter(|layer| {
-                let name_lower = layer.name.to_lowercase();
-                scene_patterns.iter().any(|pattern| name_lower.contains(pattern))
-            })
-            .cloned()
-            .collect()
-    }
-
-    /// Filter technical layers (depth, normal, motion, etc.)
-    fn filter_technical_layers(&self) -> Vec<LayerInfo> {
-        let tech_patterns = [
-            "depth", "z", "normal", "motion", "velocity", "uv", "id", "mask",
-            "crypto", "aov", "world", "camera", "object"
-        ];
-        
-        self.layers_info
-            .iter()
-            .filter(|layer| {
-                let name_lower = layer.name.to_lowercase();
-                tech_patterns.iter().any(|pattern| name_lower.contains(pattern))
-            })
-            .cloned()
-            .collect()
-    }
-
-    /// Filter light layers
-    fn filter_light_layers(&self) -> Vec<LayerInfo> {
-        let light_patterns = [
-            "light", "lamp", "sun", "sky", "env", "hdri", "key", "fill", "rim"
-        ];
-        
-        self.layers_info
-            .iter()
-            .filter(|layer| {
-                let name_lower = layer.name.to_lowercase();
-                light_patterns.iter().any(|pattern| name_lower.contains(pattern))
-            })
-            .cloned()
-            .collect()
-    }
-
-    /// Filter layers by custom patterns
-    fn filter_layers_by_patterns(&self, patterns: &[String]) -> Vec<LayerInfo> {
-        self.layers_info
-            .iter()
-            .filter(|layer| {
-                patterns.iter().any(|pattern| {
-                    layer.name.to_lowercase().contains(&pattern.to_lowercase())
-                })
-            })
-            .cloned()
-            .collect()
-    }
 
     /// Export a single layer with high performance
     fn export_single_layer(
@@ -303,16 +168,9 @@ impl LayerExporter {
     fn compose_rgb_from_channels(&self, layer_channels: &LayerChannels) -> Vec<f32> {
         let pixel_count = (layer_channels.width * layer_channels.height) as usize;
         
-        // Use buffer pool for better performance
+        // Allocate buffer for RGB composition
         let buffer_size = pixel_count * 4;
-        let mut rgb_pixels = if let Some(pool) = get_export_buffer_pool() {
-            let mut buffer = pool.get_f32_buffer(buffer_size);
-            buffer.clear();
-            buffer.reserve(buffer_size);
-            buffer
-        } else {
-            Vec::with_capacity(buffer_size)
-        };
+        let mut rgb_pixels = Vec::with_capacity(buffer_size);
 
         // Find RGB and Alpha channels with optimized lookup
         let find_channel = |name: &str| -> Option<usize> {
@@ -352,19 +210,16 @@ impl LayerExporter {
 
         #[cfg(not(feature = "unified_simd"))]
         {
-            // Fallback to optimized parallel composition
-            unsafe {
-                rgb_pixels.set_len(buffer_size);
-                let rgb_ptr = rgb_pixels.as_mut_ptr();
-
-                (0..pixel_count).into_par_iter().for_each(|i| {
-                    let base_idx = i * 4;
-                    *rgb_ptr.add(base_idx) = r_slice[i];
-                    *rgb_ptr.add(base_idx + 1) = g_slice[i];
-                    *rgb_ptr.add(base_idx + 2) = b_slice[i];
-                    *rgb_ptr.add(base_idx + 3) = a_slice.map_or(1.0, |a| a[i]);
+            // Fallback to safe parallel composition
+            rgb_pixels.resize(buffer_size, 0.0);
+            rgb_pixels.par_chunks_exact_mut(4)
+                .enumerate()
+                .for_each(|(i, chunk)| {
+                    chunk[0] = r_slice[i];
+                    chunk[1] = g_slice[i];
+                    chunk[2] = b_slice[i];
+                    chunk[3] = a_slice.map_or(1.0, |a| a[i]);
                 });
-            }
         }
 
         rgb_pixels
@@ -431,23 +286,20 @@ impl LayerExporter {
     fn process_grayscale_pixels(&self, pixels: &[f32], pixel_count: usize) -> Result<Vec<u16>> {
         let mut processed = Vec::with_capacity(pixel_count * 3);
         
-        processed.extend(
-            pixels.par_chunks_exact(4)
-                .flat_map(|chunk| {
-                    let gray_value = chunk[0];
-                    let (processed_gray, _, _) = tone_map_and_gamma(
-                        gray_value,
-                        gray_value,
-                        gray_value,
-                        self.export_params.exposure,
-                        self.export_params.gamma,
-                        self.export_params.tonemap_mode,
-                    );
-                    
-                    let u16_value = (processed_gray.clamp(0.0, 1.0) * 65535.0).round() as u16;
-                    vec![u16_value, u16_value, u16_value]
-                })
-        );
+        for chunk in pixels.chunks_exact(4) {
+            let gray_value = chunk[0];
+            let (processed_gray, _, _) = tone_map_and_gamma(
+                gray_value,
+                gray_value,
+                gray_value,
+                self.export_params.exposure,
+                self.export_params.gamma,
+                self.export_params.tonemap_mode,
+            );
+            
+            let u16_value = (processed_gray.clamp(0.0, 1.0) * 65535.0).round() as u16;
+            processed.extend_from_slice(&[u16_value, u16_value, u16_value]);
+        }
         
         Ok(processed)
     }
@@ -465,30 +317,27 @@ impl LayerExporter {
         
         #[cfg(not(feature = "unified_simd"))]
         {
-            processed.extend(
-                pixels.par_chunks_exact(4)
-                    .flat_map(|chunk| {
-                        let (r, g, b) = tone_map_and_gamma(
-                            chunk[0],
-                            chunk[1],
-                            chunk[2],
-                            self.export_params.exposure,
-                            self.export_params.gamma,
-                            self.export_params.tonemap_mode,
-                        );
-                        
-                        let r_u16 = (r.clamp(0.0, 1.0) * 65535.0).round() as u16;
-                        let g_u16 = (g.clamp(0.0, 1.0) * 65535.0).round() as u16;
-                        let b_u16 = (b.clamp(0.0, 1.0) * 65535.0).round() as u16;
-                        
-                        if has_alpha {
-                            let a_u16 = (chunk[3].clamp(0.0, 1.0) * 65535.0).round() as u16;
-                            vec![r_u16, g_u16, b_u16, a_u16]
-                        } else {
-                            vec![r_u16, g_u16, b_u16]
-                        }
-                    })
-            );
+            for chunk in pixels.chunks_exact(4) {
+                let (r, g, b) = tone_map_and_gamma(
+                    chunk[0],
+                    chunk[1],
+                    chunk[2],
+                    self.export_params.exposure,
+                    self.export_params.gamma,
+                    self.export_params.tonemap_mode,
+                );
+                
+                let r_u16 = (r.clamp(0.0, 1.0) * 65535.0).round() as u16;
+                let g_u16 = (g.clamp(0.0, 1.0) * 65535.0).round() as u16;
+                let b_u16 = (b.clamp(0.0, 1.0) * 65535.0).round() as u16;
+                
+                if has_alpha {
+                    let a_u16 = (chunk[3].clamp(0.0, 1.0) * 65535.0).round() as u16;
+                    processed.extend_from_slice(&[r_u16, g_u16, b_u16, a_u16]);
+                } else {
+                    processed.extend_from_slice(&[r_u16, g_u16, b_u16]);
+                }
+            }
         }
         
         Ok(processed)
@@ -628,10 +477,10 @@ impl LayerExporter {
 
     /// Save as TIFF 16-bit
     fn save_tiff16(&self, pixels: &ProcessedPixels, output_path: &PathBuf) -> Result<()> {
-        use image::{ImageBuffer, Rgb16, Rgba16};
+        use image::{ImageBuffer, Rgb, Rgba};
 
         if pixels.channels == 4 {
-            let img_buffer = ImageBuffer::<Rgba16, _>::from_raw(
+            let img_buffer = ImageBuffer::<Rgba<u16>, _>::from_raw(
                 pixels.width,
                 pixels.height,
                 pixels.data.clone(),
@@ -639,7 +488,7 @@ impl LayerExporter {
 
             img_buffer.save(output_path)?;
         } else {
-            let img_buffer = ImageBuffer::<Rgb16, _>::from_raw(
+            let img_buffer = ImageBuffer::<Rgb<u16>, _>::from_raw(
                 pixels.width,
                 pixels.height,
                 pixels.data.clone(),

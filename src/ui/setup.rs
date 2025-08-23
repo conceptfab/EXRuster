@@ -103,6 +103,52 @@ pub fn setup_menu_callbacks(
             }
         });
     }
+
+    // Export callbacks
+    ui.on_export_base_png16({
+        let ui_handle = ui.as_weak();
+        let full_exr_cache = full_exr_cache.clone();
+        let current_file_path = current_file_path.clone();
+        let console = console_model.clone();
+        move || {
+            crate::ui::export_base_layer_png16(
+                ui_handle.clone(),
+                full_exr_cache.clone(),
+                current_file_path.clone(),
+                console.clone()
+            );
+        }
+    });
+
+    ui.on_export_base_tiff16({
+        let ui_handle = ui.as_weak();
+        let full_exr_cache = full_exr_cache.clone();
+        let current_file_path = current_file_path.clone();
+        let console = console_model.clone();
+        move || {
+            crate::ui::export_base_layer_tiff16(
+                ui_handle.clone(),
+                full_exr_cache.clone(),
+                current_file_path.clone(),
+                console.clone()
+            );
+        }
+    });
+
+    ui.on_export_base_tiff32({
+        let ui_handle = ui.as_weak();
+        let full_exr_cache = full_exr_cache.clone();
+        let current_file_path = current_file_path.clone();
+        let console = console_model.clone();
+        move || {
+            crate::ui::export_base_layer_tiff32_float(
+                ui_handle.clone(),
+                full_exr_cache.clone(),
+                current_file_path.clone(),
+                console.clone()
+            );
+        }
+    });
 }
 
 /// Setup image control callbacks (exposure, gamma, tonemap mode)
