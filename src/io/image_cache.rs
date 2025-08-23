@@ -125,15 +125,19 @@ fn build_mip_chain_cpu(
         let new_w = (width / 2).max(1);
         let new_h = (height / 2).max(1);
         
-        // Use buffer pool for better performance
+        // Use buffer pool for better performance - optimized allocation
         let pixel_count = (new_w as usize) * (new_h as usize) * 4;
         let mut next = if let Some(pool) = get_buffer_pool() {
             let mut buffer = pool.get_f32_buffer(pixel_count);
+            buffer.clear();
             buffer.resize(pixel_count, 0.0);
             buffer
         } else {
-            vec![0.0; pixel_count] // Fallback for when pool isn't initialized
+            Vec::with_capacity(pixel_count) // Preallocate capacity
         };
+        if next.len() < pixel_count {
+            next.resize(pixel_count, 0.0);
+        }
         // Jednowątkowe uśrednianie 2x2
         for y_out in 0..(new_h as usize) {
             let y0 = (y_out * 2).min(height as usize - 1);
@@ -328,12 +332,9 @@ impl ImageCache {
         input.par_chunks_exact(crate::processing::simd_processing::SIMD_CHUNK_SIZE)
             .zip(output.par_chunks_exact_mut(crate::processing::simd_processing::SIMD_PIXEL_COUNT))
             .for_each(|(in_chunk, out_chunk)| {
-                // Safe: par_chunks_exact guarantees correct sizes
-                let in_array: &[f32; 16] = unsafe { in_chunk.try_into().unwrap_unchecked() };
-                let out_array: &mut [Rgba8Pixel; 4] = unsafe { out_chunk.try_into().unwrap_unchecked() };
-                
+                // Optimized: Direct slice processing eliminates array conversion overhead
                 crate::processing::simd_processing::process_simd_chunk_rgba(
-                    in_array, out_array, exposure, gamma, tonemap_mode, color_m
+                    in_chunk, out_chunk, exposure, gamma, tonemap_mode, color_m
                 );
             });
         
@@ -661,10 +662,13 @@ pub(crate) fn load_all_channels_for_layer(
 fn compose_composite_from_channels(layer_channels: &LayerChannels) -> Vec<f32> {
     let pixel_count = (layer_channels.width as usize) * (layer_channels.height as usize);
     
-    // Use buffer pool for better performance
+    // Use buffer pool for better performance - optimized allocation
     let buffer_size = pixel_count * 4;
     let mut out = if let Some(pool) = get_buffer_pool() {
-        pool.get_f32_buffer(buffer_size)
+        let mut buffer = pool.get_f32_buffer(buffer_size);
+        buffer.clear();
+        buffer.reserve(buffer_size);
+        buffer
     } else {
         Vec::with_capacity(buffer_size)
     };

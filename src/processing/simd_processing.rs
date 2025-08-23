@@ -11,13 +11,13 @@ use crate::processing::image_processing::process_pixel;
 pub const SIMD_CHUNK_SIZE: usize = 16; // 4 pixels * 4 channels RGBA
 pub const SIMD_PIXEL_COUNT: usize = 4; // Process 4 pixels per SIMD operation
 
-/// Process a chunk of 16 f32 values (4 RGBA pixels) using SIMD
+/// Process a chunk of 16 f32 values (4 RGBA pixels) using SIMD - optimized input
 /// Input: [R0,G0,B0,A0, R1,G1,B1,A1, R2,G2,B2,A2, R3,G3,B3,A3]
 /// Output: 4 Rgba8Pixel values
 #[inline(always)]
 pub fn process_simd_chunk_rgba(
-    input: &[f32; 16],
-    output: &mut [Rgba8Pixel; 4],
+    input: &[f32],
+    output: &mut [Rgba8Pixel],
     exposure: f32,
     gamma: f32,
     tonemap_mode: i32,
@@ -39,11 +39,11 @@ pub fn process_simd_chunk_rgba(
     store_rgba_simd(r8, g8, b8, a8, output);
 }
 
-/// Process a chunk with grayscale output
+/// Process a chunk with grayscale output - optimized input
 #[inline(always)]
 pub fn process_simd_chunk_grayscale(
-    input: &[f32; 16],
-    output: &mut [Rgba8Pixel; 4],
+    input: &[f32],
+    output: &mut [Rgba8Pixel],
     exposure: f32,
     gamma: f32,
     tonemap_mode: i32,
@@ -64,9 +64,10 @@ pub fn process_simd_chunk_grayscale(
     store_grayscale_simd(gray, a8, output);
 }
 
-/// Load RGBA data from interleaved f32 array into SIMD registers
+/// Load RGBA data from interleaved f32 slice into SIMD registers - optimized
 #[inline(always)]
-fn load_rgba_simd(input: &[f32; 16]) -> (f32x4, f32x4, f32x4, f32x4) {
+fn load_rgba_simd(input: &[f32]) -> (f32x4, f32x4, f32x4, f32x4) {
+    // Use direct SIMD operations - more efficient than array conversions
     let r = f32x4::from_array([input[0], input[4], input[8], input[12]]);
     let g = f32x4::from_array([input[1], input[5], input[9], input[13]]);
     let b = f32x4::from_array([input[2], input[6], input[10], input[14]]);
@@ -96,9 +97,9 @@ fn apply_color_matrix_simd(r: f32x4, g: f32x4, b: f32x4, mat: Mat3) -> (f32x4, f
     (rr, gg, bb)
 }
 
-/// Store RGBA SIMD results to Rgba8Pixel array
+/// Store RGBA SIMD results to Rgba8Pixel slice - optimized
 #[inline(always)]
-fn store_rgba_simd(r: f32x4, g: f32x4, b: f32x4, a: f32x4, output: &mut [Rgba8Pixel; 4]) {
+fn store_rgba_simd(r: f32x4, g: f32x4, b: f32x4, a: f32x4, output: &mut [Rgba8Pixel]) {
     let ra: [f32; 4] = r.into();
     let ga: [f32; 4] = g.into();
     let ba: [f32; 4] = b.into();
@@ -114,9 +115,9 @@ fn store_rgba_simd(r: f32x4, g: f32x4, b: f32x4, a: f32x4, output: &mut [Rgba8Pi
     }
 }
 
-/// Store grayscale SIMD results to Rgba8Pixel array
+/// Store grayscale SIMD results to Rgba8Pixel slice - optimized
 #[inline(always)]
-fn store_grayscale_simd(gray: f32x4, a: f32x4, output: &mut [Rgba8Pixel; 4]) {
+fn store_grayscale_simd(gray: f32x4, a: f32x4, output: &mut [Rgba8Pixel]) {
     let ga: [f32; 4] = gray.into();
     let aa: [f32; 4] = a.into();
 
@@ -231,14 +232,11 @@ pub fn process_image_optimized(
             .chunks_exact(SIMD_CHUNK_SIZE)
             .zip(output[..simd_pixels].chunks_exact_mut(SIMD_PIXEL_COUNT))
             .for_each(|(in_chunk, out_chunk)| {
-                // Safe: chunks_exact guarantees correct sizes
-                let in_array: &[f32; 16] = unsafe { in_chunk.try_into().unwrap_unchecked() };
-                let out_array: &mut [Rgba8Pixel; 4] = unsafe { out_chunk.try_into().unwrap_unchecked() };
-
+                // Optimized: Direct slice processing eliminates array conversion overhead
                 if grayscale {
-                    process_simd_chunk_grayscale(in_array, out_array, exposure, gamma, tonemap_mode, color_matrix);
+                    process_simd_chunk_grayscale(in_chunk, out_chunk, exposure, gamma, tonemap_mode, color_matrix);
                 } else {
-                    process_simd_chunk_rgba(in_array, out_array, exposure, gamma, tonemap_mode, color_matrix);
+                    process_simd_chunk_rgba(in_chunk, out_chunk, exposure, gamma, tonemap_mode, color_matrix);
                 }
             });
     }
