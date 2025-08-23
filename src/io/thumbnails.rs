@@ -10,7 +10,8 @@ use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use crate::io::image_cache::extract_layers_info;
 use crate::ui::progress::ProgressSink;
 use std::sync::OnceLock;
-use crate::utils::cache::{LruThreadSafeCache, new_thread_safe_lru_cache};
+use lru::LruCache;
+use std::sync::Mutex;
 
 // Dodaj importy dla nowego systemu
 use exr::prelude as exr;
@@ -336,15 +337,17 @@ fn file_mtime_u64(path: &Path) -> u64 {
         .unwrap_or(0)
 }
 
-static THUMB_CACHE: OnceLock<LruThreadSafeCache<ThumbKey, ThumbValue>> = OnceLock::new();
+static THUMB_CACHE: OnceLock<Mutex<LruCache<ThumbKey, ThumbValue>>> = OnceLock::new();
 
-pub fn get_thumb_cache() -> &'static LruThreadSafeCache<ThumbKey, ThumbValue> {
-    THUMB_CACHE.get_or_init(|| new_thread_safe_lru_cache(256))
+pub fn get_thumb_cache() -> &'static Mutex<LruCache<ThumbKey, ThumbValue>> {
+    THUMB_CACHE.get_or_init(|| Mutex::new(LruCache::new(std::num::NonZeroUsize::new(256).unwrap())))
 }
 
 /// Czyści cache miniaturek (force regeneration)
 pub fn clear_thumb_cache() {
-    get_thumb_cache().clear();
+    if let Ok(mut cache) = get_thumb_cache().lock() {
+        cache.clear();
+    }
     println!("Thumbnail cache cleared - forcing regeneration");
 }
 
@@ -357,15 +360,19 @@ pub fn c_get(
 ) -> Option<ExrThumbWork> {
     let preset = make_preset(thumb_h, exposure, gamma, tonemap_mode);
     let key = ThumbKey { path: path.to_path_buf(), modified: file_mtime_u64(path), preset };
-    get_thumb_cache().get(&key, |v| ExrThumbWork {
-        path: key.path.clone(),
-        file_name: v.file_name.clone(),
-        file_size_bytes: v.file_size_bytes,
-        width: v.width,
-        height: v.height,
-        num_layers: v.num_layers,
-        pixels: v.pixels.clone(),
-    })
+    if let Ok(mut cache) = get_thumb_cache().lock() {
+        cache.get(&key).map(|v| ExrThumbWork {
+            path: key.path.clone(),
+            file_name: v.file_name.clone(),
+            file_size_bytes: v.file_size_bytes,
+            width: v.width,
+            height: v.height,
+            num_layers: v.num_layers,
+            pixels: v.pixels.clone(),
+        })
+    } else {
+        None
+    }
 }
 
 pub fn put_thumb_cache(work: &ExrThumbWork, thumb_h: u32, exposure: f32,
@@ -384,5 +391,7 @@ pub fn put_thumb_cache(work: &ExrThumbWork, thumb_h: u32, exposure: f32,
         file_name: work.file_name.clone(),
         pixels: work.pixels.clone(),
     };
-    get_thumb_cache().put(key, value);
+    if let Ok(mut cache) = get_thumb_cache().lock() {
+        cache.put(key, value);
+    }
 }

@@ -2,11 +2,12 @@ use std::path::{Path, PathBuf};
 use ::exr::meta::attribute::AttributeValue;
 use glam::{DMat3, DVec3, Mat3};
 use std::sync::LazyLock;
-use crate::utils::cache::{new_thread_safe_stats_fifo_cache, ThreadSafeStatsFifoCache};
+use lru::LruCache;
+use std::sync::Mutex;
 
 // Global cache dla color matrices - persistent między sesjami
-static COLOR_MATRIX_CACHE: LazyLock<ThreadSafeStatsFifoCache<(PathBuf, String), Mat3>> = 
-    LazyLock::new(|| new_thread_safe_stats_fifo_cache(100));
+static COLOR_MATRIX_CACHE: LazyLock<Mutex<LruCache<(PathBuf, String), Mat3>>> = 
+    LazyLock::new(|| Mutex::new(LruCache::new(std::num::NonZeroUsize::new(100).unwrap())));
 
 // Make the main function public
 pub fn compute_rgb_to_srgb_matrix_from_file_for_layer(path: &Path, layer_name: &str) -> anyhow::Result<Mat3> {
@@ -143,9 +144,11 @@ pub fn compute_rgb_to_srgb_matrix_from_file_for_layer_cached(path: &Path, layer_
     let key = (path.to_path_buf(), layer_name.to_string());
     
     // Sprawdź cache
-    if let Some(matrix) = COLOR_MATRIX_CACHE.get(&key, |&matrix| matrix) {
-        println!("Color matrix cache HIT for {}:{}", path.display(), layer_name);
-        return Ok(matrix);
+    if let Ok(mut cache) = COLOR_MATRIX_CACHE.lock() {
+        if let Some(&matrix) = cache.get(&key) {
+            println!("Color matrix cache HIT for {}:{}", path.display(), layer_name);
+            return Ok(matrix);
+        }
     }
     
     // Cache miss - oblicz nową macierz
@@ -153,14 +156,16 @@ pub fn compute_rgb_to_srgb_matrix_from_file_for_layer_cached(path: &Path, layer_
     
     let matrix = compute_rgb_to_srgb_matrix_from_file_for_layer(path, layer_name)?;
     
-    // Zapisz w cache (automatic size limit handled by FIFO cache)
-    COLOR_MATRIX_CACHE.put(key, matrix);
+    // Zapisz w cache (automatic size limit handled by LRU cache)
+    if let Ok(mut cache) = COLOR_MATRIX_CACHE.lock() {
+        cache.put(key, matrix);
+    }
     
     Ok(matrix)
 }
 
 #[allow(dead_code)]
 pub fn get_color_matrix_cache_stats() -> (u64, u64, f32) {
-    let stats = COLOR_MATRIX_CACHE.stats();
-    (stats.hits, stats.misses, stats.hit_rate() as f32)
+    // LRU cache doesn't track statistics by default, return placeholder
+    (0, 0, 0.0)
 }

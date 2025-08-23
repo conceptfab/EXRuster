@@ -7,6 +7,7 @@ pub mod thumbnails;
 pub mod file_handlers;
 pub mod setup;
 
+// Essential re-exports used by main.rs and internal modules
 pub use ui_handlers::{
     push_console, lock_or_recover, handle_exit, handle_open_exr, handle_open_exr_from_path,
     handle_parameter_changed_throttled, load_thumbnails_for_directory,
