@@ -157,8 +157,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_buffer_pool_reuse() {
-        let pool = Arc::new(BufferPool::new(4));
+    fn test_buffer_pool_basic_reuse() {
+        let pool = BufferPool::new(4);
         
         // Get and return a buffer
         {
@@ -172,19 +172,27 @@ mod tests {
         assert!(buffer2.capacity() >= 100); // Should have the capacity from previous buffer
     }
 
-    #[test] 
-    fn test_pooled_buffer_raii() {
-        let pool = Arc::new(BufferPool::new(4));
+    #[test]
+    fn test_buffer_pool_reuse() {
+        let pool = BufferPool::new(4);
         
-        {
-            let mut pooled = PooledF32Buffer::new(pool.clone(), 100);
-            pooled.as_mut().push(1.0);
-            pooled.as_mut().push(2.0);
-            assert_eq!(pooled.as_ref().len(), 2);
-        } // Buffer automatically returned here
+        // Get a buffer and use it
+        let mut buffer = pool.get_f32_buffer(100);
+        buffer.push(1.0);
+        buffer.push(2.0);
+        assert_eq!(buffer.len(), 2);
+        let capacity = buffer.capacity();
+        
+        // Return buffer to pool
+        pool.return_f32_buffer(buffer);
         
         // Verify buffer was returned by checking pool stats
         let stats = pool.stats();
         assert_eq!(stats.f32_buffers_available, 1);
+        
+        // Get buffer again and verify it's reused
+        let reused_buffer = pool.get_f32_buffer(50);
+        assert_eq!(reused_buffer.capacity(), capacity);
+        assert_eq!(reused_buffer.len(), 0); // Should be cleared
     }
 }
