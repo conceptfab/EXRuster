@@ -211,9 +211,10 @@ pub fn process_scalar_pixels(
     }
 }
 
-/// High-level SIMD+scalar processing function
-/// Processes as much as possible with SIMD, falls back to scalar for remainder
-pub fn process_image_optimized(
+
+/// Unified SIMD processing function - consolidates patterns from image_cache.rs
+/// Handles both parallel and sequential processing with consistent SIMD optimization
+pub fn process_rgba_chunk_optimized(
     input: &[f32],
     output: &mut [Rgba8Pixel],
     exposure: f32,
@@ -221,27 +222,43 @@ pub fn process_image_optimized(
     tonemap_mode: i32,
     color_matrix: Option<Mat3>,
     grayscale: bool,
+    parallel: bool,
 ) {
     let total_pixels = input.len() / 4;
     let simd_pixels = (total_pixels / SIMD_PIXEL_COUNT) * SIMD_PIXEL_COUNT;
     let simd_elements = simd_pixels * 4;
 
-    // Process SIMD chunks
+    // Process SIMD chunks - parallel or sequential
     if simd_pixels > 0 {
-        input[..simd_elements]
-            .chunks_exact(SIMD_CHUNK_SIZE)
-            .zip(output[..simd_pixels].chunks_exact_mut(SIMD_PIXEL_COUNT))
-            .for_each(|(in_chunk, out_chunk)| {
-                // Optimized: Direct slice processing eliminates array conversion overhead
-                if grayscale {
-                    process_simd_chunk_grayscale(in_chunk, out_chunk, exposure, gamma, tonemap_mode, color_matrix);
-                } else {
-                    process_simd_chunk_rgba(in_chunk, out_chunk, exposure, gamma, tonemap_mode, color_matrix);
-                }
-            });
+        if parallel {
+            // Parallel processing using rayon
+            use rayon::prelude::*;
+            input[..simd_elements]
+                .par_chunks_exact(SIMD_CHUNK_SIZE)
+                .zip(output[..simd_pixels].par_chunks_exact_mut(SIMD_PIXEL_COUNT))
+                .for_each(|(in_chunk, out_chunk)| {
+                    if grayscale {
+                        process_simd_chunk_grayscale(in_chunk, out_chunk, exposure, gamma, tonemap_mode, color_matrix);
+                    } else {
+                        process_simd_chunk_rgba(in_chunk, out_chunk, exposure, gamma, tonemap_mode, color_matrix);
+                    }
+                });
+        } else {
+            // Sequential processing
+            input[..simd_elements]
+                .chunks_exact(SIMD_CHUNK_SIZE)
+                .zip(output[..simd_pixels].chunks_exact_mut(SIMD_PIXEL_COUNT))
+                .for_each(|(in_chunk, out_chunk)| {
+                    if grayscale {
+                        process_simd_chunk_grayscale(in_chunk, out_chunk, exposure, gamma, tonemap_mode, color_matrix);
+                    } else {
+                        process_simd_chunk_rgba(in_chunk, out_chunk, exposure, gamma, tonemap_mode, color_matrix);
+                    }
+                });
+        }
     }
 
-    // Process remainder pixels with scalar code
+    // Process remainder pixels with scalar code - consistent for both modes
     if simd_elements < input.len() {
         process_scalar_pixels(
             &input[simd_elements..],

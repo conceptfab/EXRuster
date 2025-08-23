@@ -306,14 +306,15 @@ pub mod processors {
         _width: u32,
         _height: u32,
     ) {
-        crate::processing::simd_processing::process_image_optimized(
+        crate::processing::simd_processing::process_rgba_chunk_optimized(
             input,
             output,
             config.exposure,
             config.gamma,
             config.tonemap_mode,
             config.color_matrix,
-            false, // Not composite mode
+            false, // Not grayscale
+            false, // Sequential processing for pipeline
         );
     }
     
@@ -326,7 +327,7 @@ pub mod processors {
         _height: u32,
     ) {
         let lighting_rgb = config.lighting_rgb.unwrap_or(false);
-        crate::processing::simd_processing::process_image_optimized(
+        crate::processing::simd_processing::process_rgba_chunk_optimized(
             input,
             output,
             config.exposure,
@@ -334,6 +335,7 @@ pub mod processors {
             config.tonemap_mode,
             config.color_matrix,
             !lighting_rgb, // Inverted logic as per original code
+            false, // Sequential processing for pipeline
         );
     }
     

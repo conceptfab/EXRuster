@@ -326,29 +326,10 @@ impl ImageCache {
     }
     
     fn process_rgba_chunks_optimized(&self, input: &[f32], output: &mut [Rgba8Pixel], exposure: f32, gamma: f32, tonemap_mode: i32, color_m: Option<Mat3>) {
-        // Use parallel processing with new optimized SIMD module
-        use rayon::prelude::*;
-        
-        input.par_chunks_exact(crate::processing::simd_processing::SIMD_CHUNK_SIZE)
-            .zip(output.par_chunks_exact_mut(crate::processing::simd_processing::SIMD_PIXEL_COUNT))
-            .for_each(|(in_chunk, out_chunk)| {
-                // Optimized: Direct slice processing eliminates array conversion overhead
-                crate::processing::simd_processing::process_simd_chunk_rgba(
-                    in_chunk, out_chunk, exposure, gamma, tonemap_mode, color_m
-                );
-            });
-        
-        // Handle remainder with optimized scalar processing
-        let simd_elements = (input.len() / crate::processing::simd_processing::SIMD_CHUNK_SIZE) * crate::processing::simd_processing::SIMD_CHUNK_SIZE;
-        let simd_pixels = simd_elements / 4;
-        
-        if simd_elements < input.len() {
-            crate::processing::simd_processing::process_scalar_pixels(
-                &input[simd_elements..],
-                &mut output[simd_pixels..],
-                exposure, gamma, tonemap_mode, color_m, false
-            );
-        }
+        // Use unified SIMD processing function with parallel processing
+        crate::processing::simd_processing::process_rgba_chunk_optimized(
+            input, output, exposure, gamma, tonemap_mode, color_m, false, true
+        );
     }
     
     
@@ -365,9 +346,9 @@ impl ImageCache {
     }
     
     fn process_rgba_chunks_composite_optimized(&self, input: &[f32], output: &mut [Rgba8Pixel], exposure: f32, gamma: f32, tonemap_mode: i32, color_m: Option<Mat3>, lighting_rgb: bool) {
-        // Use the optimized SIMD processing module
-        crate::processing::simd_processing::process_image_optimized(
-            input, output, exposure, gamma, tonemap_mode, color_m, !lighting_rgb
+        // Use unified SIMD processing function with sequential processing
+        crate::processing::simd_processing::process_rgba_chunk_optimized(
+            input, output, exposure, gamma, tonemap_mode, color_m, !lighting_rgb, false
         );
     }
     
