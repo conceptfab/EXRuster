@@ -104,49 +104,58 @@ pub fn setup_menu_callbacks(
         });
     }
 
-    // Export callbacks
-    ui.on_export_base_png16({
+    // Export callbacks - placeholder implementations
+    ui.on_export_beauty({
         let ui_handle = ui.as_weak();
-        let full_exr_cache = full_exr_cache.clone();
-        let current_file_path = current_file_path.clone();
-        let console = console_model.clone();
         move || {
-            crate::ui::export_base_layer_png16(
-                ui_handle.clone(),
-                full_exr_cache.clone(),
-                current_file_path.clone(),
-                console.clone()
-            );
+            if let Some(ui) = ui_handle.upgrade() {
+                ui.set_status_text("Export Beauty - not implemented yet".into());
+            }
         }
     });
 
-    ui.on_export_base_tiff16({
+    ui.on_export_all({
         let ui_handle = ui.as_weak();
-        let full_exr_cache = full_exr_cache.clone();
-        let current_file_path = current_file_path.clone();
-        let console = console_model.clone();
         move || {
-            crate::ui::export_base_layer_tiff16(
-                ui_handle.clone(),
-                full_exr_cache.clone(),
-                current_file_path.clone(),
-                console.clone()
-            );
+            if let Some(ui) = ui_handle.upgrade() {
+                ui.set_status_text("Export All - not implemented yet".into());
+            }
         }
     });
 
-    ui.on_export_base_tiff32({
+    ui.on_export_scene({
         let ui_handle = ui.as_weak();
-        let full_exr_cache = full_exr_cache.clone();
-        let current_file_path = current_file_path.clone();
-        let console = console_model.clone();
         move || {
-            crate::ui::export_base_layer_tiff32_float(
-                ui_handle.clone(),
-                full_exr_cache.clone(),
-                current_file_path.clone(),
-                console.clone()
-            );
+            if let Some(ui) = ui_handle.upgrade() {
+                ui.set_status_text("Export Scene - not implemented yet".into());
+            }
+        }
+    });
+
+    ui.on_export_objects({
+        let ui_handle = ui.as_weak();
+        move || {
+            if let Some(ui) = ui_handle.upgrade() {
+                ui.set_status_text("Export Objects - not implemented yet".into());
+            }
+        }
+    });
+
+    ui.on_export_cryptomatte({
+        let ui_handle = ui.as_weak();
+        move || {
+            if let Some(ui) = ui_handle.upgrade() {
+                ui.set_status_text("Export Cryptomatte - not implemented yet".into());
+            }
+        }
+    });
+
+    ui.on_export_lights({
+        let ui_handle = ui.as_weak();
+        move || {
+            if let Some(ui) = ui_handle.upgrade() {
+                ui.set_status_text("Export Lights - not implemented yet".into());
+            }
         }
     });
 }

@@ -153,13 +153,12 @@ export component AppWindow inherits Window {
     callback navigate-layers(int); // nawigacja warstw: -1 góra, +1 dół
     callback key-pressed-debug(string); // diagnostyka: logowanie nazwy klawisza
      // Export callbacks
-     callback export-convert();
      callback export-beauty();
-     callback export-channels();
-     // New layer export callbacks
-     callback export-base-png16();
-     callback export-base-tiff16();
-     callback export-base-tiff32();
+     callback export-all();
+     callback export-scene();
+     callback export-objects();
+     callback export-cryptomatte();
+     callback export-lights();
      
      
      
@@ -257,7 +256,7 @@ export component AppWindow inherits Window {
         y: 30px;
         x: 4px;
         width: 160px;
-        height: 52px;
+        height: 26px;
         background: Kolory.menu_tlo;
         border-color: Kolory.menu_obramowanie;
         border-width: 1px;
@@ -275,10 +274,6 @@ export component AppWindow inherits Window {
             spacing: 0px;
             
             PozycjaMenu { width: 160px; text: "Open EXR"; clicked => { file-menu-open = false; file-menu-timer-running = false; open-exr(); } }
-            Rectangle { height: 1px; background: Kolory.menu_obramowanie; } // separator
-            PozycjaMenu { width: 160px; text: "Export Base (PNG)"; clicked => { file-menu-open = false; file-menu-timer-running = false; export-base-png16(); } }
-            PozycjaMenu { width: 160px; text: "Export Base (TIFF)"; clicked => { file-menu-open = false; file-menu-timer-running = false; export-base-tiff16(); } }
-            PozycjaMenu { width: 160px; text: "Export Base (Float)"; clicked => { file-menu-open = false; file-menu-timer-running = false; export-base-tiff32(); } }
             Rectangle { height: 1px; background: Kolory.menu_obramowanie; } // separator
             PozycjaMenu { width: 160px; text: "Exit"; clicked => { file-menu-open = false; file-menu-timer-running = false; exit(); } }
         }
@@ -694,8 +689,9 @@ export component AppWindow inherits Window {
                      
                      Text {
                          text: "Export";
-                         x: 0px;
-                         y: 5px;
+                         x: 5px;
+                         y: 3px;
+
                          width: parent.width;
                          height: parent.height;
                          color: Kolory.tekst;
@@ -807,42 +803,42 @@ export component AppWindow inherits Window {
                              text: "Export Beauty";
                              height: 26px;
                              width: parent.width - controls_inset*2;
-                             clicked => { export-convert(); }
+                             clicked => { export-beauty(); }
                          }
                          
                          PrzyciskAkcji {
                              text: "Export All";
                              height: 26px;
                              width: parent.width - controls_inset*2;
-                             clicked => { export-beauty(); }
+                             clicked => { export-all(); }
                          }
                          
                          PrzyciskAkcji {
                              text: "Export Scene";
                              height: 26px;
                              width: parent.width - controls_inset*2;
-                             clicked => { export-channels(); }
+                             clicked => { export-scene(); }
                          }
                          
                          PrzyciskAkcji {
                              text: "Export Objects";
                              height: 26px;
                              width: parent.width - controls_inset*2;
-                             clicked => { export-base-png16(); }
+                             clicked => { export-objects(); }
                          }
                          
                          PrzyciskAkcji {
                              text: "Export Cryptomatte";
                              height: 26px;
                              width: parent.width - controls_inset*2;
-                             clicked => { export-base-tiff16(); }
+                             clicked => { export-cryptomatte(); }
                          }
                          
                          PrzyciskAkcji {
                              text: "Export Lights";
                              height: 26px;
                              width: parent.width - controls_inset*2;
-                             clicked => { export-base-tiff32(); }
+                             clicked => { export-lights(); }
                          }
                      }
                  }
