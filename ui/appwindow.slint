@@ -1033,16 +1033,10 @@ export component AppWindow inherits Window {
                             clicked => {
                                 // Jeżeli widoczne menu – zamknij i nie otwieraj pliku
                                 if (thumbs_panel.ctx_visible) { root.key-pressed-debug("ctx close-before-click"); thumbs_panel.ctx_visible = false; return; }
-                                if (parent.dbl_arm) {
-                                    root.key-pressed-debug("thumb open (double-click): " + t.path);
-                                    root.opened-thumbnail-path = t.path; root.open-thumbnail(t.path);
-                                    parent.dbl_arm = false;
-                                    dbl_timer.running = false;
-                                } else {
-                                    parent.dbl_arm = true;
-                                    dbl_timer.running = true;
-                                    root.key-pressed-debug("thumb single-click arm");
-                                }
+                                // Natychmiastowe otwarcie pliku na pojedyncze kliknięcie
+                                root.key-pressed-debug("thumb open (single-click): " + t.path);
+                                root.opened-thumbnail-path = t.path;
+                                root.open-thumbnail(t.path);
                             }
                             moved => {
                                     if (self.has-hover && (thumbs_panel.tt_owner_path == "" || thumbs_panel.tt_owner_path == t.path)) {
