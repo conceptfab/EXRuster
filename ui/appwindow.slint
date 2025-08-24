@@ -687,141 +687,167 @@ export component AppWindow inherits Window {
                      height: 8px;
                  }
                  
-                 // Export section
-                HorizontalBox {
-                    width: parent.width;
-                    height: 20px;
-                    spacing: 2px;
-                    Text {
-                        text: "Export";
-                        color: Kolory.tekst;
-                        font-size: 13px;
-                        font-family: "Geist";
-                        font-weight: 300;
-                        horizontal-alignment: left;
-                        vertical-alignment: center;
-                    }
-                }
-                
-                // Export checkboxes
-                VerticalBox {
-                    width: parent.width;
-                    spacing: 0px;
-                    alignment: start;
-                    
-                                         HorizontalBox {
-                         width: parent.width;
-                         height: 24px;
-                         spacing: 12px;
-                         alignment: start;
-                         
-                         Rectangle {
-                             width: 14px;
-                             height: 14px;
-                             background: export_apply_corrections ? Kolory.progress_fill : Kolory.suwak_tlo;
-                             border-color: Kolory.suwak_tor;
-                             border-width: 2px;
-                             border-radius: 3px;
-                             
-                             export_apply_corrections_area := TouchArea {
-                                 width: parent.width;
-                                 height: parent.height;
-                                 clicked => { export_apply_corrections = !export_apply_corrections; }
-                             }
-                         }
-                         
-                         Text {
-                             text: "Apply Corrections";
-                             color: Kolory.tekst;
-                             font-size: 12px;
-                             font-family: "Geist";
-                             font-weight: 500;
-                            //  y: 10px;   
-                         }
-                     }
+                 // Export section - rebuilt from scratch
+                 Rectangle {
+                     width: parent.width;
+                     height: 20px;
                      
-                     HorizontalBox {
+                     Text {
+                         text: "Export";
+                         x: 0px;
+                         y: 5px;
                          width: parent.width;
-                         height: 24px;
-                         spacing: 12px;
-            
+                         height: parent.height;
+                         color: Kolory.tekst;
+                         font-size: 13px;
+                         font-family: "Geist";
+                         font-weight: 300;
+                         horizontal-alignment: left;
+                         vertical-alignment: center;
+                     }
+                 }
+                 
+                 // Export options checkboxes
+                 Rectangle {
+                     width: parent.width;
+                     height: 60px;
+                     
+                     VerticalBox {
+                         width: parent.width;
+                         height: parent.height;
+                         spacing: 8px;
                          alignment: start;
                          
+                         // Apply Corrections checkbox
                          Rectangle {
-                             width: 14px;
-                             height: 14px;
-                             background: export_32bit ? Kolory.progress_fill : Kolory.suwak_tlo;
-                             border-color: Kolory.suwak_tor;
-                             border-width: 2px;
-                             border-radius: 3px;
+                             width: parent.width;
+                             height: 24px;
                              
-                             export_32bit_area := TouchArea {
-                                 width: parent.width;
+                             Rectangle {
+                                 x: 0px;
+                                 y: 4px;
+                                 width: 16px;
+                                 height: 16px;
+                                 background: export_apply_corrections ? Kolory.progress_fill : Kolory.suwak_tlo;
+                                 border-color: Kolory.suwak_tor;
+                                 border-width: 1px;
+                                 border-radius: 2px;
+                                 
+                                 TouchArea {
+                                     width: parent.width;
+                                     height: parent.height;
+                                     clicked => { export_apply_corrections = !export_apply_corrections; }
+                                 }
+                             }
+                             
+                             Text {
+                                 text: "Apply Corrections";
+                                 x: 24px;
+                                 y: 0px;
+                                 width: parent.width - 24px;
                                  height: parent.height;
-                                 clicked => { export_32bit = !export_32bit; }
+                                 color: Kolory.tekst;
+                                 font-size: 12px;
+                                 font-family: "Geist";
+                                 horizontal-alignment: left;
+                                 vertical-alignment: center;
                              }
                          }
                          
-                         Text {
-                             text: "32 Bit";
-                             color: Kolory.tekst;
-                             font-size: 12px;
-                             font-family: "Geist";
-                             font-weight: 500;
-                             vertical-alignment: center;
-                            //  y: 5px;
+                         // 32 Bit checkbox
+                         Rectangle {
+                             width: parent.width;
+                             height: 24px;
+                             
+                             Rectangle {
+                                 x: 0px;
+                                 y: 4px;
+                                 width: 16px;
+                                 height: 16px;
+                                 background: export_32bit ? Kolory.progress_fill : Kolory.suwak_tlo;
+                                 border-color: Kolory.suwak_tor;
+                                 border-width: 1px;
+                                 border-radius: 2px;
+                                 
+                                 TouchArea {
+                                     width: parent.width;
+                                     height: parent.height;
+                                     clicked => { export_32bit = !export_32bit; }
+                                 }
+                             }
+                             
+                             Text {
+                                 text: "32 Bit";
+                                 x: 24px;
+                                 y: 0px;
+                                 width: parent.width - 24px;
+                                 height: parent.height;
+                                 color: Kolory.tekst;
+                                 font-size: 12px;
+                                 font-family: "Geist";
+                                 horizontal-alignment: left;
+                                 vertical-alignment: center;
+                             }
                          }
                      }
-                }
+                 }
+                 
+                 // Export buttons
+                 Rectangle {
+                     width: parent.width;
+                     height: 180px;
+                     
+                     VerticalBox {
+                         width: parent.width;
+                         height: parent.height;
+                         spacing: 4px;
+                         alignment: start;
+                         
+                         PrzyciskAkcji {
+                             text: "Export Beauty";
+                             height: 26px;
+                             width: parent.width - controls_inset*2;
+                             clicked => { export-convert(); }
+                         }
+                         
+                         PrzyciskAkcji {
+                             text: "Export All";
+                             height: 26px;
+                             width: parent.width - controls_inset*2;
+                             clicked => { export-beauty(); }
+                         }
+                         
+                         PrzyciskAkcji {
+                             text: "Export Scene";
+                             height: 26px;
+                             width: parent.width - controls_inset*2;
+                             clicked => { export-channels(); }
+                         }
+                         
+                         PrzyciskAkcji {
+                             text: "Export Objects";
+                             height: 26px;
+                             width: parent.width - controls_inset*2;
+                             clicked => { export-base-png16(); }
+                         }
+                         
+                         PrzyciskAkcji {
+                             text: "Export Cryptomatte";
+                             height: 26px;
+                             width: parent.width - controls_inset*2;
+                             clicked => { export-base-tiff16(); }
+                         }
+                         
+                         PrzyciskAkcji {
+                             text: "Export Lights";
+                             height: 26px;
+                             width: parent.width - controls_inset*2;
+                             clicked => { export-base-tiff32(); }
+                         }
+                     }
+                 }
                 
-                // Export buttons
-                VerticalBox {
-                    width: parent.width;
-                    spacing: 6px;
-                    alignment: start;
-                    
-                    PrzyciskAkcji {
-                        text: "Export Beauty";
-                        height: 25px;
-                        width: parent.width - controls_inset*2;
-                        clicked => { export-convert(); }
-                    }
-                    
-                    PrzyciskAkcji {
-                        text: "Export All";
-                        height: 25px;
-                        width: parent.width - controls_inset*2;
-                        clicked => { export-beauty(); }
-                    }
-                    
-                    PrzyciskAkcji {
-                        text: "Export Scene";
-                        height: 25px;
-                        width: parent.width - controls_inset*2;
-                        clicked => { export-channels(); }
-                    }
-                    
-                    PrzyciskAkcji {
-                        text: "Export Objects";
-                        height: 25px;
-                        width: parent.width - controls_inset*2;
-                        clicked => { export-base-png16(); }
-                    }
-                    
-                    PrzyciskAkcji {
-                        text: "Export Cryptomatte";
-                        height: 25px;
-                        width: parent.width - controls_inset*2;
-                        clicked => { export-base-tiff16(); }
-                    }
-                    
-                    PrzyciskAkcji {
-                        text: "Export Lights";
-                        height: 25px;
-                        width: parent.width - controls_inset*2;
-                        clicked => { export-base-tiff32(); }
-                    }
-                }
+                
             }
                 
                 
