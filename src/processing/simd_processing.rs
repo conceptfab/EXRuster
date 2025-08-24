@@ -6,7 +6,7 @@ use crate::processing::image_processing::process_pixel;
 use crate::processing::histogram::LuminanceWeights;
 
 #[cfg(feature = "unified_simd")]
-use crate::processing::tone_mapping::ToneMapMode;
+use crate::processing::tone_mapping::{ToneMapMode, ToneMapModeId};
 
 /// Optimized SIMD processing functions for image processing
 /// Separates SIMD and scalar code paths for better performance
@@ -20,7 +20,7 @@ mod unified_processing {
     pub struct ProcessParams {
         pub exposure: f32,
         pub gamma: f32,
-        pub tonemap_mode: ToneMapMode,
+        pub tonemap_mode: ToneMapModeId,
     }
 
     impl ProcessParams {
@@ -28,7 +28,7 @@ mod unified_processing {
             Self {
                 exposure,
                 gamma,
-                tonemap_mode: ToneMapMode::from(tonemap_mode),
+                tonemap_mode: ToneMapModeId::from(tonemap_mode),
             }
         }
     }

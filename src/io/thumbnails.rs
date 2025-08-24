@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
 use crate::io::image_cache::extract_layers_info;
 use crate::ui::progress::ProgressSink;
+use crate::processing::tone_mapping::ToneMapModeId;
 use std::sync::OnceLock;
 use lru::LruCache;
 use std::sync::Mutex;
@@ -64,7 +65,7 @@ impl TimingStats {
 pub struct ColorConfig {
     gamma: f32,
     exposure: f32,
-    tonemap_mode: i32,
+    tonemap_mode: ToneMapModeId,
 }
 
 impl ColorConfig {
@@ -72,7 +73,7 @@ impl ColorConfig {
         Self {
             gamma,
             exposure,
-            tonemap_mode,
+            tonemap_mode: ToneMapModeId::from(tonemap_mode),
         }
     }
 }
@@ -226,7 +227,7 @@ pub fn generate_single_exr_thumbnail_work_new(
             let (r, g, b) = (r * exposure_mult, g * exposure_mult, b * exposure_mult);
             
             // Tone mapping używając skonsolidowanej funkcji
-            let mode = crate::processing::tone_mapping::ToneMapMode::from(tonemap_mode);
+            let mode = tonemap_mode.inner();
             let (r, g, b) = crate::processing::tone_mapping::apply_tonemap_scalar(r, g, b, mode);
 
             // Gamma correction
@@ -290,7 +291,7 @@ pub fn generate_single_exr_thumbnail_work_new(
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct ThumbPresetKey {
     thumb_h: u32,
-    tonemap_mode: i32,
+    tonemap_mode: ToneMapModeId,
     // Kwantyzujemy ekspozycję i gammę, by nie tworzyć nadmiaru wariantów
     exp_q: i16,
     gam_q: i16,
@@ -322,7 +323,7 @@ fn quantize(v: f32, step: f32, min: f32, max: f32) -> i16 {
 fn make_preset(thumb_h: u32, exposure: f32, gamma: f32, tonemap_mode: i32) -> ThumbPresetKey {
     ThumbPresetKey {
         thumb_h,
-        tonemap_mode,
+        tonemap_mode: ToneMapModeId::from(tonemap_mode),
         exp_q: quantize(exposure, 0.25, -16.0, 16.0),
         gam_q: quantize(gamma, 0.10, 0.5, 4.5),
     }

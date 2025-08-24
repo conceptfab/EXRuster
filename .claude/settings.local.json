@@ -35,7 +35,12 @@
       "Bash(timeout 15s cargo test test_cache_stats -- --nocapture)",
       "Bash(timeout 30s cargo test test_luminance_standards -- --nocapture)",
       "Bash(timeout 30s cargo test test_default_is_rec709 -- --nocapture)",
-      "Bash(timeout 30s cargo test test_histogram_with_different_standards -- --nocapture)"
+      "Bash(timeout 30s cargo test test_histogram_with_different_standards -- --nocapture)",
+      "Bash(timeout 30s cargo test test_tonemap_mode_id_conversion -- --nocapture)",
+      "Bash(timeout 30s cargo test test_safe_api_consistency -- --nocapture)",
+      "Bash(timeout 30s cargo test test_tonemap_mode_id_conversion test_safe_api_consistency -- --nocapture)",
+      "Bash(timeout 30s cargo test tonemap -- --nocapture)",
+      "Bash(timeout 30s cargo test safe_api -- --nocapture)"
     ],
     "deny": [],
     "ask": []

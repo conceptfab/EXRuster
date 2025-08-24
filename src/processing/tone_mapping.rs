@@ -3,7 +3,7 @@ use std::simd::prelude::SimdFloat;
 use std::simd::StdFloat;
 use std::simd::cmp::SimdPartialOrd;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ToneMapMode {
     ACES = 0,
     Reinhard = 1,
@@ -11,6 +11,39 @@ pub enum ToneMapMode {
     Filmic = 3,
     Hable = 4,
     Local = 5,
+}
+
+/// Type-safe wrapper for ToneMapMode to prevent parameter confusion and improve API safety
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ToneMapModeId(ToneMapMode);
+
+#[allow(dead_code)]
+impl ToneMapModeId {
+    pub const ACES: Self = Self(ToneMapMode::ACES);
+    pub const REINHARD: Self = Self(ToneMapMode::Reinhard);
+    pub const LINEAR: Self = Self(ToneMapMode::Linear);
+    pub const FILMIC: Self = Self(ToneMapMode::Filmic);
+    pub const HABLE: Self = Self(ToneMapMode::Hable);
+    pub const LOCAL: Self = Self(ToneMapMode::Local);
+    
+    /// Extract the inner ToneMapMode enum value
+    #[inline]
+    pub fn inner(self) -> ToneMapMode {
+        self.0
+    }
+    
+    /// Convert to i32 for backward compatibility
+    #[inline]
+    pub fn as_i32(self) -> i32 {
+        self.0 as i32
+    }
+}
+
+impl From<ToneMapMode> for ToneMapModeId {
+    #[inline]
+    fn from(mode: ToneMapMode) -> Self {
+        Self(mode)
+    }
 }
 
 impl From<i32> for ToneMapMode {
@@ -24,6 +57,13 @@ impl From<i32> for ToneMapMode {
             5 => Self::Local,
             _ => Self::Linear,  // Default changed from ACES to Linear
         }
+    }
+}
+
+impl From<i32> for ToneMapModeId {
+    #[inline]
+    fn from(value: i32) -> Self {
+        Self(ToneMapMode::from(value))
     }
 }
 
@@ -208,6 +248,21 @@ pub fn apply_tonemap_simd(r: f32x4, g: f32x4, b: f32x4, mode: ToneMapMode) -> (f
 }
 
 /// SIMD: ekspozycja → tone-map → gamma/sRGB dla 4 pikseli naraz
+/// New type-safe API using ToneMapModeId  
+#[allow(dead_code)]
+#[inline]
+pub fn tone_map_and_gamma_simd_safe(
+    r: f32x4,
+    g: f32x4,
+    b: f32x4,
+    exposure: f32,
+    gamma: f32,
+    tonemap_mode: ToneMapModeId,
+) -> (f32x4, f32x4, f32x4) {
+    tone_map_and_gamma_simd(r, g, b, exposure, gamma, tonemap_mode.as_i32())
+}
+
+/// SIMD: ekspozycja → tone-map → gamma/sRGB dla 4 pikseli naraz
 #[inline]
 pub fn tone_map_and_gamma_simd(
     r: f32x4,
@@ -250,6 +305,22 @@ pub fn tone_map_and_gamma_simd(
             apply_gamma_lut_simd(tm_b, gamma_inv),
         )
     }
+}
+
+/// Scalar version: ekspozycja → tone-map → gamma/sRGB  
+/// Zwraca wartości w [0, 1] po korekcji gamma.
+/// New type-safe API using ToneMapModeId
+#[allow(dead_code)]
+#[inline]
+pub fn tone_map_and_gamma_safe(
+    r: f32,
+    g: f32, 
+    b: f32,
+    exposure: f32,
+    gamma: f32,
+    tonemap_mode: ToneMapModeId,
+) -> (f32, f32, f32) {
+    tone_map_and_gamma(r, g, b, exposure, gamma, tonemap_mode.inner())
 }
 
 /// Scalar version: ekspozycja → tone-map → gamma/sRGB
@@ -327,6 +398,44 @@ mod tests {
         let (r, g, b) = apply_tonemap_scalar(2.0, 1.5, 0.5, ToneMapMode::ACES);
         assert!(r <= 1.0 && g <= 1.0 && b <= 1.0);
         assert!(r >= 0.0 && g >= 0.0 && b >= 0.0);
+    }
+
+    #[test]
+    fn test_tonemap_mode_id_conversion() {
+        // Test ToneMapModeId constants
+        assert_eq!(ToneMapModeId::ACES.inner(), ToneMapMode::ACES);
+        assert_eq!(ToneMapModeId::REINHARD.inner(), ToneMapMode::Reinhard);
+        assert_eq!(ToneMapModeId::LINEAR.inner(), ToneMapMode::Linear);
+        assert_eq!(ToneMapModeId::FILMIC.inner(), ToneMapMode::Filmic);
+        assert_eq!(ToneMapModeId::HABLE.inner(), ToneMapMode::Hable);
+        assert_eq!(ToneMapModeId::LOCAL.inner(), ToneMapMode::Local);
+        
+        // Test i32 conversion
+        assert_eq!(ToneMapModeId::from(0).inner(), ToneMapMode::ACES);
+        assert_eq!(ToneMapModeId::from(1).inner(), ToneMapMode::Reinhard);
+        assert_eq!(ToneMapModeId::from(999).inner(), ToneMapMode::Linear); // Default
+        
+        // Test as_i32 conversion
+        assert_eq!(ToneMapModeId::ACES.as_i32(), 0);
+        assert_eq!(ToneMapModeId::REINHARD.as_i32(), 1);
+        assert_eq!(ToneMapModeId::LINEAR.as_i32(), 2);
+    }
+
+    #[test]
+    fn test_safe_api_consistency() {
+        // Test że bezpieczne API daje identyczne wyniki jak unsafe
+        let test_r = 2.0;
+        let test_g = 1.5;
+        let test_b = 0.8;
+        let exposure = 1.0;
+        let gamma = 2.2;
+        
+        let unsafe_result = tone_map_and_gamma(test_r, test_g, test_b, exposure, gamma, ToneMapMode::ACES);
+        let safe_result = tone_map_and_gamma_safe(test_r, test_g, test_b, exposure, gamma, ToneMapModeId::ACES);
+        
+        assert!((unsafe_result.0 - safe_result.0).abs() < 1e-6);
+        assert!((unsafe_result.1 - safe_result.1).abs() < 1e-6);
+        assert!((unsafe_result.2 - safe_result.2).abs() < 1e-6);
     }
 
     #[test]
