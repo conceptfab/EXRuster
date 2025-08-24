@@ -18,14 +18,24 @@ pub fn get_channel_config_path() -> Result<PathBuf> {
     Ok(exe_dir.join("channel_groups.json"))
 }
 
-/// Simplified configuration structure - consolidated from multiple nested structs
+/// Root JSON structure matching channel_groups.json format
 #[derive(Deserialize, Serialize)]
 pub struct ConfigFile {
+    config: ConfigSection,
+    groups: HashMap<String, GroupDefinition>,
+    default_group: String,
+}
+
+#[derive(Deserialize, Serialize)]
+pub struct ConfigSection {
     basic_rgb_channels: Vec<String>,
     group_priority_order: Vec<String>,
     fallback_names: FallbackNames,
-    groups: HashMap<String, GroupDefinition>,
-    default_group: String,
+    paths: PathsConfig,
+}
+
+#[derive(Deserialize, Serialize)]
+pub struct PathsConfig {
     data_folder: String,
 }
 
@@ -115,31 +125,35 @@ fn create_default_config_file() -> ConfigFile {
     });
     
     ConfigFile {
-        basic_rgb_channels: vec!["R".to_string(), "G".to_string(), "B".to_string(), "A".to_string()],
-        group_priority_order: vec![
-            "base".to_string(),
-            "cryptomatte".to_string(), 
-            "light".to_string(), 
-            "scene".to_string(), 
-            "technical".to_string(), 
-            "scene_objects".to_string()
-        ],
-        fallback_names: FallbackNames {
-            basic_rgb: "Basic RGB".to_string(),
-            default: "Other".to_string(),
+        config: ConfigSection {
+            basic_rgb_channels: vec!["R".to_string(), "G".to_string(), "B".to_string(), "A".to_string()],
+            group_priority_order: vec![
+                "base".to_string(),
+                "technical".to_string(),
+                "scene".to_string(),
+                "light".to_string(),
+                "scene_objects".to_string(),
+                "cryptomatte".to_string()
+            ],
+            fallback_names: FallbackNames {
+                basic_rgb: "Basic RGB".to_string(),
+                default: "Other".to_string(),
+            },
+            paths: PathsConfig {
+                data_folder: ".".to_string(),
+            },
         },
         groups,
         default_group: "Other".to_string(),
-        data_folder: ".".to_string(),
     }
 }
 
 /// Konwertuje ConfigFile na ChannelGroupConfig używany przez processing module
 fn convert_to_channel_group_config(config_file: ConfigFile) -> Result<ChannelGroupConfig> {
     Ok(ChannelGroupConfig {
-        basic_rgb_channels: config_file.basic_rgb_channels,
-        group_priority_order: config_file.group_priority_order,
-        fallback_names: config_file.fallback_names,
+        basic_rgb_channels: config_file.config.basic_rgb_channels,
+        group_priority_order: config_file.config.group_priority_order,
+        fallback_names: config_file.config.fallback_names,
         groups: config_file.groups,
     })
 }

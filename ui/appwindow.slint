@@ -129,6 +129,10 @@ export component AppWindow inherits Window {
      // Tonemap mode (0=ACES, 1=Reinhard, 2=Linear)
      in-out property <int> tonemap-mode: 2;
      callback tonemap-mode-changed(int);
+     
+     // Export options
+     in-out property <bool> export_apply_corrections: true;
+     in-out property <bool> export_32bit: false;
 
     // Dolny panel (wariant A: 0px gdy ukryty)
     in-out property <bool> bottom-panel-visible: false;
@@ -252,7 +256,7 @@ export component AppWindow inherits Window {
     if file-menu-open: Rectangle {
         y: 30px;
         x: 4px;
-        width: 100px;
+        width: 160px;
         height: 52px;
         background: Kolory.menu_tlo;
         border-color: Kolory.menu_obramowanie;
@@ -270,13 +274,13 @@ export component AppWindow inherits Window {
             padding: 0px;
             spacing: 0px;
             
-            PozycjaMenu { width: 100px; text: "Open EXR"; clicked => { file-menu-open = false; file-menu-timer-running = false; open-exr(); } }
+            PozycjaMenu { width: 160px; text: "Open EXR"; clicked => { file-menu-open = false; file-menu-timer-running = false; open-exr(); } }
             Rectangle { height: 1px; background: Kolory.menu_obramowanie; } // separator
-            PozycjaMenu { width: 100px; text: "Export Base (PNG)"; clicked => { file-menu-open = false; file-menu-timer-running = false; export-base-png16(); } }
-            PozycjaMenu { width: 100px; text: "Export Base (TIFF)"; clicked => { file-menu-open = false; file-menu-timer-running = false; export-base-tiff16(); } }
-            PozycjaMenu { width: 100px; text: "Export Base (Float)"; clicked => { file-menu-open = false; file-menu-timer-running = false; export-base-tiff32(); } }
+            PozycjaMenu { width: 160px; text: "Export Base (PNG)"; clicked => { file-menu-open = false; file-menu-timer-running = false; export-base-png16(); } }
+            PozycjaMenu { width: 160px; text: "Export Base (TIFF)"; clicked => { file-menu-open = false; file-menu-timer-running = false; export-base-tiff16(); } }
+            PozycjaMenu { width: 160px; text: "Export Base (Float)"; clicked => { file-menu-open = false; file-menu-timer-running = false; export-base-tiff32(); } }
             Rectangle { height: 1px; background: Kolory.menu_obramowanie; } // separator
-            PozycjaMenu { width: 100px; text: "Exit"; clicked => { file-menu-open = false; file-menu-timer-running = false; exit(); } }
+            PozycjaMenu { width: 160px; text: "Exit"; clicked => { file-menu-open = false; file-menu-timer-running = false; exit(); } }
         }
         
         // Auto-close timer for File menu
@@ -542,7 +546,7 @@ export component AppWindow inherits Window {
             // Prawa kolumna: funkcje Exposure na górze
             VerticalBox {
                 padding: 4px;
-                spacing: 4px;
+                spacing: 2px;
                 alignment: start;
                 property <length> controls_inset: 12px;
 
@@ -676,30 +680,18 @@ export component AppWindow inherits Window {
                             gamma-changed(gamma-value);
                         }
                     }
-                }
-                
-                // Spacer
-                Rectangle {
-                    height: 2px;
-                }
-                
-
-
-
-
-
-
-
-
-                // Spacer
-                Rectangle {
-                    height: 2px;
-                }
-                
-                // Export section
+                                 }
+                 
+                 // Spacer
+                 Rectangle {
+                     height: 8px;
+                 }
+                 
+                 // Export section
                 HorizontalBox {
                     width: parent.width;
-                    spacing: 0px;
+                    height: 20px;
+                    spacing: 2px;
                     Text {
                         text: "Export";
                         color: Kolory.tekst;
@@ -710,23 +702,129 @@ export component AppWindow inherits Window {
                         vertical-alignment: center;
                     }
                 }
-
-                // Convert: EXR -> TIFF (32F RGBA)
-                HorizontalBox { width: parent.width; height: 25px; spacing: 0px;
-                    PrzyciskAkcji { text: "Export All16 bit"; height: 25px; width: parent.width - controls_inset*2; clicked => { export-convert(); } }
+                
+                // Export checkboxes
+                VerticalBox {
+                    width: parent.width;
+                    spacing: 0px;
+                    alignment: start;
+                    
+                                         HorizontalBox {
+                         width: parent.width;
+                         height: 24px;
+                         spacing: 12px;
+                         alignment: start;
+                         
+                         Rectangle {
+                             width: 14px;
+                             height: 14px;
+                             background: export_apply_corrections ? Kolory.progress_fill : Kolory.suwak_tlo;
+                             border-color: Kolory.suwak_tor;
+                             border-width: 2px;
+                             border-radius: 3px;
+                             
+                             export_apply_corrections_area := TouchArea {
+                                 width: parent.width;
+                                 height: parent.height;
+                                 clicked => { export_apply_corrections = !export_apply_corrections; }
+                             }
+                         }
+                         
+                         Text {
+                             text: "Apply Corrections";
+                             color: Kolory.tekst;
+                             font-size: 12px;
+                             font-family: "Geist";
+                             font-weight: 500;
+                            //  y: 10px;   
+                         }
+                     }
+                     
+                     HorizontalBox {
+                         width: parent.width;
+                         height: 24px;
+                         spacing: 12px;
+            
+                         alignment: start;
+                         
+                         Rectangle {
+                             width: 14px;
+                             height: 14px;
+                             background: export_32bit ? Kolory.progress_fill : Kolory.suwak_tlo;
+                             border-color: Kolory.suwak_tor;
+                             border-width: 2px;
+                             border-radius: 3px;
+                             
+                             export_32bit_area := TouchArea {
+                                 width: parent.width;
+                                 height: parent.height;
+                                 clicked => { export_32bit = !export_32bit; }
+                             }
+                         }
+                         
+                         Text {
+                             text: "32 Bit";
+                             color: Kolory.tekst;
+                             font-size: 12px;
+                             font-family: "Geist";
+                             font-weight: 500;
+                             vertical-alignment: center;
+                            //  y: 5px;
+                         }
+                     }
                 }
-
-                // Export Beauty: 16-bit PNG (with exposure/gamma)
-                HorizontalBox { width: parent.width; height: 25px; spacing: 0px;
-                    PrzyciskAkcji { text: "Export default"; height: 25px; width: parent.width - controls_inset*2; clicked => { export-beauty(); } }
+                
+                // Export buttons
+                VerticalBox {
+                    width: parent.width;
+                    spacing: 6px;
+                    alignment: start;
+                    
+                    PrzyciskAkcji {
+                        text: "Export Beauty";
+                        height: 25px;
+                        width: parent.width - controls_inset*2;
+                        clicked => { export-convert(); }
+                    }
+                    
+                    PrzyciskAkcji {
+                        text: "Export All";
+                        height: 25px;
+                        width: parent.width - controls_inset*2;
+                        clicked => { export-beauty(); }
+                    }
+                    
+                    PrzyciskAkcji {
+                        text: "Export Scene";
+                        height: 25px;
+                        width: parent.width - controls_inset*2;
+                        clicked => { export-channels(); }
+                    }
+                    
+                    PrzyciskAkcji {
+                        text: "Export Objects";
+                        height: 25px;
+                        width: parent.width - controls_inset*2;
+                        clicked => { export-base-png16(); }
+                    }
+                    
+                    PrzyciskAkcji {
+                        text: "Export Cryptomatte";
+                        height: 25px;
+                        width: parent.width - controls_inset*2;
+                        clicked => { export-base-tiff16(); }
+                    }
+                    
+                    PrzyciskAkcji {
+                        text: "Export Lights";
+                        height: 25px;
+                        width: parent.width - controls_inset*2;
+                        clicked => { export-base-tiff32(); }
+                    }
                 }
-
-                // Export Channels: PNG16 grayscale per channel
-                HorizontalBox { width: parent.width; height: 25px; spacing: 0px;
-                    PrzyciskAkcji { text: "Export prefix"; height: 25px; width: parent.width - controls_inset*2; clicked => { export-channels(); } }
-                }
-
             }
+                
+                
 
             // Nakładka maskująca prawą krawędź, aby uniknąć podwójnego obramowania przy krawędzi okna
             Rectangle {
