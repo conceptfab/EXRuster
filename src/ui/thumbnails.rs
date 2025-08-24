@@ -32,7 +32,7 @@ pub fn load_thumbnails_for_directory(
         // Use constant, optimized values for thumbnails (not from UI!)
         let exposure = 0.0;     // Neutral exposure for thumbnails
         let gamma = 2.2;        // Standard gamma for thumbnails  
-        let tonemap_mode = 0;   // ACES tone mapping for thumbnails
+        let tonemap_mode = 2;   // Linear tone mapping for thumbnails (was ACES=0)
         
     
         

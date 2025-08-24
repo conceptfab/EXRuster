@@ -16,12 +16,13 @@ pub enum ToneMapMode {
 impl From<i32> for ToneMapMode {
     fn from(value: i32) -> Self {
         match value {
+            0 => Self::ACES,
             1 => Self::Reinhard,
             2 => Self::Linear,  
             3 => Self::Filmic,
             4 => Self::Hable,
             5 => Self::Local,
-            _ => Self::ACES,
+            _ => Self::Linear,  // Default changed from ACES to Linear
         }
     }
 }
@@ -85,8 +86,8 @@ pub fn apply_tonemap_scalar(r: f32, g: f32, b: f32, mode: ToneMapMode) -> (f32, 
         ToneMapMode::Filmic => (filmic_tonemap(r), filmic_tonemap(g), filmic_tonemap(b)),
         ToneMapMode::Hable => (hable_tonemap(r), hable_tonemap(g), hable_tonemap(b)),
         ToneMapMode::Local => {
-            // Placeholder dla local adaptation - na razie użyj ACES
-            (aces_tonemap(r), aces_tonemap(g), aces_tonemap(b))
+            // Placeholder dla local adaptation - na razie użyj Linear
+            (linear_tonemap(r), linear_tonemap(g), linear_tonemap(b))
         }
     }
 }
@@ -202,7 +203,7 @@ pub fn apply_tonemap_simd(r: f32x4, g: f32x4, b: f32x4, mode: ToneMapMode) -> (f
         },
         ToneMapMode::Filmic => (filmic_tonemap_simd(r), filmic_tonemap_simd(g), filmic_tonemap_simd(b)),
         ToneMapMode::Hable => (hable_tonemap_simd(r), hable_tonemap_simd(g), hable_tonemap_simd(b)),
-        ToneMapMode::Local => (aces_tonemap_simd(r), aces_tonemap_simd(g), aces_tonemap_simd(b)), // Fallback
+        ToneMapMode::Local => (r.simd_clamp(Simd::splat(0.0), Simd::splat(1.0)), g.simd_clamp(Simd::splat(0.0), Simd::splat(1.0)), b.simd_clamp(Simd::splat(0.0), Simd::splat(1.0))), // Linear fallback
     }
 }
 
@@ -318,7 +319,7 @@ mod tests {
         assert!(matches!(ToneMapMode::from(3), ToneMapMode::Filmic));
         assert!(matches!(ToneMapMode::from(4), ToneMapMode::Hable));
         assert!(matches!(ToneMapMode::from(5), ToneMapMode::Local));
-        assert!(matches!(ToneMapMode::from(999), ToneMapMode::ACES)); // Default
+        assert!(matches!(ToneMapMode::from(999), ToneMapMode::Linear)); // Default
     }
 
     #[test]

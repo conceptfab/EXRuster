@@ -140,9 +140,13 @@ fn create_export_params(ui: &AppWindow, config: &UiExportConfig) -> Result<Expor
 
     let tonemap_mode = ToneMapMode::from(tonemap_mode);
 
+    // IMPORTANT: All exported layers should use gamma 2.2 as default for consistency
+    // This ensures cryptomatte and other layers match the expected appearance
+    let export_gamma = if gamma < 1.1 { 2.2 } else { gamma };
+
     Ok(ExportParams {
         exposure,
-        gamma,
+        gamma: export_gamma,
         tonemap_mode,
     })
 }
@@ -190,7 +194,7 @@ pub fn create_export_config_from_ui(
             use_current_params: apply_corrections,
             exposure: if !apply_corrections { 0.0 } else { ui.get_exposure_value() },
             gamma: if !apply_corrections { 2.2 } else { ui.get_gamma_value() },
-            tonemap_mode: if !apply_corrections { 0 } else { ui.get_tonemap_mode() as i32 },
+            tonemap_mode: if !apply_corrections { 2 } else { ui.get_tonemap_mode() as i32 },
         })
     } else {
         None

@@ -37,7 +37,7 @@ impl Default for ExportParams {
         Self {
             exposure: 0.0,
             gamma: 2.2,
-            tonemap_mode: ToneMapMode::ACES,
+            tonemap_mode: ToneMapMode::Linear,
         }
     }
 }
@@ -200,22 +200,7 @@ impl LayerExporter {
         // Compose RGB from channels
         let rgb_pixels = self.compose_rgb_from_channels(layer_channels);
         
-        // Detect technical layers that should be exported as raw data
-        let layer_name = layer_channels.channel_names.get(0)
-            .map(|name| {
-                if let Some(dot_pos) = name.find('.') {
-                    &name[..dot_pos]
-                } else {
-                    name
-                }
-            })
-            .unwrap_or("");
-        
-        // Use group classification to determine if this is a technical layer
-        let layer_group = determine_channel_group_ultra_fast(layer_name);
-        let is_technical_layer = layer_group == "cryptomatte" || 
-                                layer_group == "scene_objects" ||
-                                layer_group == "technical";
+        // All layers use the same processing pipeline with global default parameters
         
         // Apply tone mapping and gamma correction in parallel
         let has_alpha = layer_channels.channel_names.iter().any(|name| {
@@ -225,19 +210,15 @@ impl LayerExporter {
         
         let channels = if has_alpha { 4 } else { 3 };
         
-        let processed_data = if is_technical_layer {
-            // Technical layers: export raw data without corrections (for compositing workflows)
-            self.process_raw_pixels(&rgb_pixels, pixel_count, has_alpha)?
-        } else {
-            match layer_channels.channel_names.len() {
-                1 => {
-                    // Grayscale channel - expand to RGB
-                    self.process_grayscale_pixels(&rgb_pixels, pixel_count)?
-                }
-                _ => {
-                    // RGB/RGBA channels - full color processing with tone mapping
-                    self.process_color_pixels(&rgb_pixels, pixel_count, has_alpha)?
-                }
+        // ALL layers now use same processing with global default parameters (gamma 2.2, exposure 0.0)
+        let processed_data = match layer_channels.channel_names.len() {
+            1 => {
+                // Grayscale channel - expand to RGB
+                self.process_grayscale_pixels(&rgb_pixels, pixel_count)?
+            }
+            _ => {
+                // RGB/RGBA channels - full color processing with tone mapping
+                self.process_color_pixels(&rgb_pixels, pixel_count, has_alpha)?
             }
         };
         
@@ -408,29 +389,6 @@ impl LayerExporter {
         Ok(processed)
     }
 
-    /// Process raw pixels without any corrections (for technical layers)
-    /// Used for: Cryptomatte, Object IDs, Render stamps - preserves exact values
-    fn process_raw_pixels(&self, pixels: &[f32], pixel_count: usize, has_alpha: bool) -> Result<Vec<u16>> {
-        let output_channels = if has_alpha { 4 } else { 3 };
-        let mut processed = Vec::with_capacity(pixel_count * output_channels);
-        
-        // Convert directly to u16 without any tone mapping, gamma, or exposure correction
-        // This preserves exact encoded values for Cryptomatte IDs and object masks
-        for chunk in pixels.chunks_exact(4) {
-            let r_u16 = (chunk[0].clamp(0.0, 1.0) * 65535.0).round() as u16;
-            let g_u16 = (chunk[1].clamp(0.0, 1.0) * 65535.0).round() as u16;
-            let b_u16 = (chunk[2].clamp(0.0, 1.0) * 65535.0).round() as u16;
-            
-            if has_alpha {
-                let a_u16 = (chunk[3].clamp(0.0, 1.0) * 65535.0).round() as u16;
-                processed.extend_from_slice(&[r_u16, g_u16, b_u16, a_u16]);
-            } else {
-                processed.extend_from_slice(&[r_u16, g_u16, b_u16]);
-            }
-        }
-        
-        Ok(processed)
-    }
 
     /// Process color pixels with tone mapping and color correction (SIMD optimized)
     fn process_color_pixels(&self, pixels: &[f32], pixel_count: usize, has_alpha: bool) -> Result<Vec<u16>> {
