@@ -80,30 +80,21 @@ export component HistogramWindow inherits Rectangle {
                         border-width: root.selected-channel == 0 ? 2px : 1px;
                         border-radius: 3px;
                         
-                        HorizontalBox {
-                            spacing: 8px;
-                            alignment: center;
-                            
-                            Rectangle {
-                                width: 8px;
-                                height: 8px;
-                                background: Kolory.kanal_r;
-                                border-radius: 4px;
-                            }
-                            Text { 
-                                text: "Red"; 
-                                color: #ffffff; 
-                                font-size: 14px; 
-                                font-family: "Geist"; 
-                                horizontal-alignment: center; 
-                                vertical-alignment: center; 
-                            }
-                        }
-                        
                         channel-button-area := TouchArea { 
                             clicked => { 
                                 root.selected-channel = 0;
                             } 
+                        }
+                        
+                        Text { 
+                            text: "Red"; 
+                            color: Kolory.tekst_silny; 
+                            font-size: 14px; 
+                            font-family: "Geist"; 
+                            horizontal-alignment: center; 
+                            vertical-alignment: center;
+                            width: 100%;
+                            height: 100%;
                         }
                     }
                     
@@ -115,30 +106,21 @@ export component HistogramWindow inherits Rectangle {
                         border-width: root.selected-channel == 1 ? 2px : 1px;
                         border-radius: 3px;
                         
-                        HorizontalBox {
-                            spacing: 8px;
-                            alignment: center;
-                            
-                            Rectangle {
-                                width: 8px;
-                                height: 8px;
-                                background: Kolory.kanal_g;
-                                border-radius: 4px;
-                            }
-                            Text { 
-                                text: "Green"; 
-                                color: #ffffff; 
-                                font-size: 14px; 
-                                font-family: "Geist"; 
-                                horizontal-alignment: center; 
-                                vertical-alignment: center; 
-                            }
-                        }
-                        
                         channel-button-area2 := TouchArea { 
                             clicked => { 
                                 root.selected-channel = 1;
                             } 
+                        }
+                        
+                        Text { 
+                            text: "Green"; 
+                            color: Kolory.tekst_silny; 
+                            font-size: 14px; 
+                            font-family: "Geist"; 
+                            horizontal-alignment: center; 
+                            vertical-alignment: center;
+                            width: 100%;
+                            height: 100%;
                         }
                     }
                     
@@ -150,30 +132,21 @@ export component HistogramWindow inherits Rectangle {
                         border-width: root.selected-channel == 2 ? 2px : 1px;
                         border-radius: 3px;
                         
-                        HorizontalBox {
-                            spacing: 8px;
-                            alignment: center;
-                            
-                            Rectangle {
-                                width: 8px;
-                                height: 8px;
-                                background: Kolory.kanal_b;
-                                border-radius: 4px;
-                            }
-                            Text { 
-                                text: "Blue"; 
-                                color: #ffffff; 
-                                font-size: 14px; 
-                                font-family: "Geist"; 
-                                horizontal-alignment: center; 
-                                vertical-alignment: center; 
-                            }
-                        }
-                        
                         channel-button-area3 := TouchArea { 
                             clicked => { 
                                 root.selected-channel = 2;
                             } 
+                        }
+                        
+                        Text { 
+                            text: "Blue"; 
+                            color: Kolory.tekst_silny; 
+                            font-size: 14px; 
+                            font-family: "Geist"; 
+                            horizontal-alignment: center; 
+                            vertical-alignment: center;
+                            width: 100%;
+                            height: 100%;
                         }
                     }
                     
@@ -185,67 +158,49 @@ export component HistogramWindow inherits Rectangle {
                         border-width: root.selected-channel == 3 ? 2px : 1px;
                         border-radius: 3px;
                         
-                        HorizontalBox {
-                            spacing: 8px;
-                            alignment: center;
-                            
-                            Rectangle {
-                                width: 8px;
-                                height: 8px;
-                                background: Kolory.tekst;
-                                border-radius: 4px;
-                            }
-                            Text { 
-                                text: "Luminance"; 
-                                color: #ffffff; 
-                                font-size: 14px; 
-                                font-family: "Geist"; 
-                                horizontal-alignment: center; 
-                                vertical-alignment: center; 
-                            }
+                        channel-button-area4 := TouchArea { 
+                            clicked => { 
+                                root.selected-channel = 3;
+                            } 
                         }
                         
-                                                 channel-button-area4 := TouchArea { 
-                             clicked => { 
-                                 root.selected-channel = 3;
-                             } 
-                         }
-                     }
+                        Text { 
+                            text: "Luminance"; 
+                            color: Kolory.tekst_silny; 
+                            font-size: 14px; 
+                            font-family: "Geist"; 
+                            horizontal-alignment: center; 
+                            vertical-alignment: center;
+                            width: 100%;
+                            height: 100%;
+                        }
+                    }
                      
-                     Rectangle {
-                         width: 120px;
-                         height: 24px;
-                         background: channel-button-area5.has-hover ? Kolory.hover : (root.selected-channel == 4 ? Kolory.obramowanie : #2a2d3a);
-                         border-color: root.selected-channel == 4 ? Kolory.tekst_silny : #404040;
-                         border-width: root.selected-channel == 4 ? 2px : 1px;
-                         border-radius: 3px;
-                         
-                         HorizontalBox {
-                             spacing: 8px;
-                             alignment: center;
-                             
-                             Rectangle {
-                                 width: 8px;
-                                 height: 8px;
-                                 background: Kolory.tekst;
-                                 border-radius: 4px;
-                             }
-                                                                                                                   Text { 
-                                 text: "All"; 
-                                 color: #ffffff; 
-                                 font-size: 14px; 
-                                 font-family: "Geist"; 
-                                 horizontal-alignment: center; 
-                                 vertical-alignment: center; 
-                             }
-                         }
-                         
-                         channel-button-area5 := TouchArea { 
-                             clicked => { 
-                                 root.selected-channel = 4;
-                             } 
-                         }
-                     }
+                    Rectangle {
+                        width: 120px;
+                        height: 24px;
+                        background: channel-button-area5.has-hover ? Kolory.hover : (root.selected-channel == 4 ? Kolory.obramowanie : #2a2d3a);
+                        border-color: root.selected-channel == 4 ? Kolory.tekst_silny : #404040;
+                        border-width: root.selected-channel == 4 ? 2px : 1px;
+                        border-radius: 3px;
+                        
+                        channel-button-area5 := TouchArea { 
+                            clicked => { 
+                                root.selected-channel = 4;
+                            } 
+                        }
+                        
+                        Text { 
+                            text: "All Channels"; 
+                            color: Kolory.tekst_silny; 
+                            font-size: 12px; 
+                            font-family: "Geist"; 
+                            horizontal-alignment: center; 
+                            vertical-alignment: center;
+                            width: 100%;
+                            height: 100%;
+                        }
+                    }
                  }
                 
                 // Obszar histogramu
@@ -264,58 +219,53 @@ export component HistogramWindow inherits Rectangle {
                         y: 8px;
                         
                         property <length> bar-width: root.current-histogram-data.length > 0 ? 
-                            histogram-area.width / root.current-histogram-data.length : 1px;
+                            Math.max(0.5px, (histogram-area.width - 16px) / root.current-histogram-data.length) : 1px;
                         // Simplified max calculation - use a reasonable default for scaling
                         property <int> max-value: root.histogram-total-pixels > 0 ? root.histogram-total-pixels / 50 : 100;
                         
-                                                 // Rysuj słupki dla pojedynczego kanału
-                         for bin-value[i] in root.current-histogram-data: Rectangle {
-                             x: 8px + i * histogram-area.bar-width;
-                             y: histogram-area.height - 8px - (bin-value * (histogram-area.height - 16px)) / histogram-area.max-value;
-                             width: Math.max(1px, histogram-area.bar-width - 1px);
-                             height: (bin-value * (histogram-area.height - 16px)) / histogram-area.max-value;
-                             background: root.selected-channel == 0 ? Kolory.kanal_r :
-                                        root.selected-channel == 1 ? Kolory.kanal_g :
-                                        root.selected-channel == 2 ? Kolory.kanal_b :
-                                        root.selected-channel == 3 ? Kolory.tekst :
-                                        Kolory.kanal_r; // Dla "All Channels" używamy Red jako domyślny
-                             opacity: histogram-bar-touch.has-hover ? 1.0 : 0.8;
-                             border-radius: 1px;
-                            
-                            histogram-bar-touch := TouchArea {
-                                if self.has-hover: Rectangle {
-                                    z: 1000;
-                                    x: parent.width / 2 - self.width / 2;
-                                    y: -32px;
-                                    width: 120px;
-                                    height: 24px;
-                                    background: Kolory.panel_tlo;
-                                    border-color: Kolory.obramowanie;
-                                    border-width: 1px;
-                                    border-radius: 4px;
-                                    
-                                    Text {
-                                        text: "Bin " + i + ": " + bin-value;
-                                        color: Kolory.tekst;
-                                        font-size: 10px;
-                                        font-family: "Geist";
-                                        horizontal-alignment: center;
-                                        vertical-alignment: center;
-                                        width: parent.width;
-                                        height: parent.height;
-                                    }
-                                }
-                            }
-                                                 }
-                         
-                         // Rysuj wszystkie kanały jednocześnie gdy "All Channels" jest wybrane
-
-                         
-
-                         
-
-
-                         
+                        // Red channel histogram
+                        for bin-value[i] in root.histogram-red-data: Rectangle {
+                            x: 8px + Math.min(i * histogram-area.bar-width, histogram-area.width - histogram-area.bar-width);
+                            y: Math.max(8px, histogram-area.height - 8px - (bin-value * (histogram-area.height - 16px)) / histogram-area.max-value);
+                            width: Math.max(0.5px, Math.min(histogram-area.bar-width - 0.5px, histogram-area.width - 8px - i * histogram-area.bar-width));
+                            height: Math.min(histogram-area.height - 16px, Math.max(0px, (bin-value * (histogram-area.height - 16px)) / histogram-area.max-value));
+                            background: Kolory.kanal_r;
+                            opacity: root.selected-channel == 0 ? 0.8 : (root.selected-channel == 4 ? 0.7 : 0);
+                            border-radius: 1px;
+                        }
+                        
+                        // Green channel histogram  
+                        for bin-value[i] in root.histogram-green-data: Rectangle {
+                            x: 8px + Math.min(i * histogram-area.bar-width, histogram-area.width - histogram-area.bar-width);
+                            y: Math.max(8px, histogram-area.height - 8px - (bin-value * (histogram-area.height - 16px)) / histogram-area.max-value);
+                            width: Math.max(0.5px, Math.min(histogram-area.bar-width - 0.5px, histogram-area.width - 8px - i * histogram-area.bar-width));
+                            height: Math.min(histogram-area.height - 16px, Math.max(0px, (bin-value * (histogram-area.height - 16px)) / histogram-area.max-value));
+                            background: Kolory.kanal_g;
+                            opacity: root.selected-channel == 1 ? 0.8 : (root.selected-channel == 4 ? 0.7 : 0);
+                            border-radius: 1px;
+                        }
+                        
+                        // Blue channel histogram
+                        for bin-value[i] in root.histogram-blue-data: Rectangle {
+                            x: 8px + Math.min(i * histogram-area.bar-width, histogram-area.width - histogram-area.bar-width);
+                            y: Math.max(8px, histogram-area.height - 8px - (bin-value * (histogram-area.height - 16px)) / histogram-area.max-value);
+                            width: Math.max(0.5px, Math.min(histogram-area.bar-width - 0.5px, histogram-area.width - 8px - i * histogram-area.bar-width));
+                            height: Math.min(histogram-area.height - 16px, Math.max(0px, (bin-value * (histogram-area.height - 16px)) / histogram-area.max-value));
+                            background: Kolory.kanal_b;
+                            opacity: root.selected-channel == 2 ? 0.8 : (root.selected-channel == 4 ? 0.7 : 0);
+                            border-radius: 1px;
+                        }
+                        
+                        // Luminance channel histogram
+                        for bin-value[i] in root.histogram-luminance-data: Rectangle {
+                            x: 8px + Math.min(i * histogram-area.bar-width, histogram-area.width - histogram-area.bar-width);
+                            y: Math.max(8px, histogram-area.height - 8px - (bin-value * (histogram-area.height - 16px)) / histogram-area.max-value);
+                            width: Math.max(0.5px, Math.min(histogram-area.bar-width - 0.5px, histogram-area.width - 8px - i * histogram-area.bar-width));
+                            height: Math.min(histogram-area.height - 16px, Math.max(0px, (bin-value * (histogram-area.height - 16px)) / histogram-area.max-value));
+                            background: Kolory.tekst;
+                            opacity: root.selected-channel == 3 ? 0.8 : 0;
+                            border-radius: 1px;
+                        }
                          if root.current-histogram-data.length == 0: Text {
                             text: "No histogram data available";
                             color: Kolory.tekst_slabszy;
