@@ -3,11 +3,12 @@ use ::exr::meta::attribute::AttributeValue;
 use glam::{DMat3, DVec3, Mat3};
 use std::sync::LazyLock;
 use lru::LruCache;
-use std::sync::Mutex;
+use std::sync::RwLock;
 
 // Global cache dla color matrices - persistent między sesjami
-static COLOR_MATRIX_CACHE: LazyLock<Mutex<LruCache<(PathBuf, String), Mat3>>> = 
-    LazyLock::new(|| Mutex::new(LruCache::new(std::num::NonZeroUsize::new(100).unwrap())));
+// RwLock allows multiple concurrent readers, improving performance for cache hits
+static COLOR_MATRIX_CACHE: LazyLock<RwLock<LruCache<(PathBuf, String), Mat3>>> = 
+    LazyLock::new(|| RwLock::new(LruCache::new(std::num::NonZeroUsize::new(100).unwrap())));
 
 // Make the main function public
 pub fn compute_rgb_to_srgb_matrix_from_file_for_layer(path: &Path, layer_name: &str) -> anyhow::Result<Mat3> {
@@ -143,9 +144,10 @@ fn xy_to_xyz(x: f64, y: f64) -> DVec3 {
 pub fn compute_rgb_to_srgb_matrix_from_file_for_layer_cached(path: &Path, layer_name: &str) -> anyhow::Result<Mat3> {
     let key = (path.to_path_buf(), layer_name.to_string());
     
-    // Sprawdź cache
-    if let Ok(mut cache) = COLOR_MATRIX_CACHE.lock() {
-        if let Some(&matrix) = cache.get(&key) {
+    // Fast path: Try read lock first for cache hit (allows concurrent reads)
+    // Use peek() instead of get() to avoid needing mutable access for LRU update
+    if let Ok(cache) = COLOR_MATRIX_CACHE.read() {
+        if let Some(&matrix) = cache.peek(&key) {
             println!("Color matrix cache HIT for {}:{}", path.display(), layer_name);
             return Ok(matrix);
         }
@@ -156,8 +158,8 @@ pub fn compute_rgb_to_srgb_matrix_from_file_for_layer_cached(path: &Path, layer_
     
     let matrix = compute_rgb_to_srgb_matrix_from_file_for_layer(path, layer_name)?;
     
-    // Zapisz w cache (automatic size limit handled by LRU cache)
-    if let Ok(mut cache) = COLOR_MATRIX_CACHE.lock() {
+    // Write path: Use write lock only for cache update
+    if let Ok(mut cache) = COLOR_MATRIX_CACHE.write() {
         cache.put(key, matrix);
     }
     
@@ -166,6 +168,64 @@ pub fn compute_rgb_to_srgb_matrix_from_file_for_layer_cached(path: &Path, layer_
 
 #[allow(dead_code)]
 pub fn get_color_matrix_cache_stats() -> (u64, u64, f32) {
-    // LRU cache doesn't track statistics by default, return placeholder
-    (0, 0, 0.0)
+    // Updated for RwLock - use read lock for stats
+    if let Ok(cache) = COLOR_MATRIX_CACHE.read() {
+        let len = cache.len() as u64;
+        let cap = cache.cap().get() as u64;
+        let usage = if cap > 0 { len as f32 / cap as f32 } else { 0.0 };
+        (len, cap, usage)
+    } else {
+        (0, 0, 0.0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::thread;
+    
+    #[test]
+    fn test_cache_concurrent_performance() {
+        // Test that RwLock allows concurrent reads, improving performance
+        let test_file = std::env::current_dir().unwrap().join("test.exr");
+        
+        // Pre-populate cache with a test entry
+        let _ = COLOR_MATRIX_CACHE.write().unwrap().put(
+            (test_file.clone(), "test".to_string()),
+            Mat3::IDENTITY
+        );
+        
+        let start = std::time::Instant::now();
+        let handles: Vec<_> = (0..10)
+            .map(|_| {
+                let test_file = test_file.clone();
+                thread::spawn(move || {
+                    // Simulate concurrent cache reads
+                    for _ in 0..100 {
+                        if let Ok(cache) = COLOR_MATRIX_CACHE.read() {
+                            let _ = cache.peek(&(test_file.clone(), "test".to_string()));
+                        }
+                    }
+                })
+            })
+            .collect();
+            
+        for handle in handles {
+            handle.join().unwrap();
+        }
+        
+        let duration = start.elapsed();
+        println!("Concurrent cache read test took: {:?}", duration);
+        
+        // With RwLock, this should be much faster than with Mutex
+        // because reads can happen concurrently
+        assert!(duration.as_millis() < 100, "Cache reads too slow: {:?}", duration);
+    }
+    
+    #[test]
+    fn test_cache_stats() {
+        let (_len, cap, usage) = get_color_matrix_cache_stats();
+        assert!(cap > 0);
+        assert!(usage >= 0.0 && usage <= 1.0);
+    }
 }

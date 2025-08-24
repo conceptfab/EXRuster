@@ -30,7 +30,12 @@
       "WebSearch",
       "WebFetch(domain:filmicworlds.com)",
       "Bash(timeout 30s cargo test test_all_tonemap_simd_scalar_consistency -- --nocapture)",
-      "Bash(timeout 30s cargo test test_filmic_vs_hable_difference -- --nocapture)"
+      "Bash(timeout 30s cargo test test_filmic_vs_hable_difference -- --nocapture)",
+      "Bash(timeout 30s cargo test test_cache_concurrent_performance -- --nocapture)",
+      "Bash(timeout 15s cargo test test_cache_stats -- --nocapture)",
+      "Bash(timeout 30s cargo test test_luminance_standards -- --nocapture)",
+      "Bash(timeout 30s cargo test test_default_is_rec709 -- --nocapture)",
+      "Bash(timeout 30s cargo test test_histogram_with_different_standards -- --nocapture)"
     ],
     "deny": [],
     "ask": []

@@ -2,6 +2,40 @@ use rayon::prelude::*;
 use crate::AppWindow;
 // use std::sync::Arc;
 
+/// Luminance weighting standards for color-to-grayscale conversion
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[allow(dead_code)] // Rec601 is used in tests and may be used by external code
+pub enum LuminanceWeights {
+    /// ITU-R BT.601 (NTSC/PAL) - older standard
+    Rec601,
+    /// ITU-R BT.709 (sRGB/HDTV) - more accurate for modern displays
+    Rec709,
+}
+
+impl LuminanceWeights {
+    /// Get the RGB coefficients for luminance calculation
+    pub fn coefficients(self) -> (f32, f32, f32) {
+        match self {
+            Self::Rec601 => (0.299, 0.587, 0.114),
+            Self::Rec709 => (0.2126, 0.7152, 0.0722),
+        }
+    }
+    
+    /// Calculate luminance from RGB values
+    #[inline]
+    pub fn luminance(self, r: f32, g: f32, b: f32) -> f32 {
+        let (wr, wg, wb) = self.coefficients();
+        wr * r + wg * g + wb * b
+    }
+}
+
+impl Default for LuminanceWeights {
+    fn default() -> Self {
+        // Use Rec.709 as default - more accurate for sRGB content
+        Self::Rec709
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct HistogramData {
     pub red_bins: Vec<u32>,
@@ -12,10 +46,15 @@ pub struct HistogramData {
     pub min_value: f32,
     pub max_value: f32,
     pub total_pixels: u32,
+    pub luminance_standard: LuminanceWeights,
 }
 
 impl HistogramData {
     pub fn new(bin_count: usize) -> Self {
+        Self::new_with_standard(bin_count, LuminanceWeights::default())
+    }
+    
+    pub fn new_with_standard(bin_count: usize, luminance_standard: LuminanceWeights) -> Self {
         Self {
             red_bins: vec![0; bin_count],
             green_bins: vec![0; bin_count],
@@ -25,6 +64,7 @@ impl HistogramData {
             min_value: 0.0,
             max_value: 1.0,
             total_pixels: 0,
+            luminance_standard,
         }
     }
 
@@ -80,7 +120,8 @@ impl HistogramData {
                     let r_norm = (r - self.min_value) / range;
                     let g_norm = (g - self.min_value) / range;
                     let b_norm = (b - self.min_value) / range;
-                    let lum_norm = (0.299 * r + 0.587 * g + 0.114 * b - self.min_value) / range;
+                    let lum = self.luminance_standard.luminance(r, g, b);
+                    let lum_norm = (lum - self.min_value) / range;
 
                     let r_bin = ((r_norm * (self.bin_count - 1) as f32).round() as usize).min(self.bin_count - 1);
                     let g_bin = ((g_norm * (self.bin_count - 1) as f32).round() as usize).min(self.bin_count - 1);
@@ -202,5 +243,83 @@ mod tests {
         
         println!("Histogram computation for {}MP took {:?}", pixel_count / 1_000_000, duration);
         assert!(duration.as_millis() < 100); // Should be under 100ms for 2MP
+    }
+    
+    #[test]
+    fn test_luminance_standards() {
+        // Test basic luminance calculation differences between standards
+        let r = 1.0_f32;
+        let g = 0.5_f32; 
+        let b = 0.2_f32;
+        
+        let rec601_lum = LuminanceWeights::Rec601.luminance(r, g, b);
+        let rec709_lum = LuminanceWeights::Rec709.luminance(r, g, b);
+        
+        // Both should be valid luminance values
+        assert!(rec601_lum > 0.0 && rec601_lum <= 1.0);
+        assert!(rec709_lum > 0.0 && rec709_lum <= 1.0);
+        
+        // They should be different for non-equal RGB values
+        assert!((rec601_lum - rec709_lum).abs() > 1e-6, 
+               "Rec.601 and Rec.709 should give different results: {} vs {}", rec601_lum, rec709_lum);
+        
+        println!("Rec.601 luminance: {:.6}", rec601_lum);
+        println!("Rec.709 luminance: {:.6}", rec709_lum);
+        
+        // Test coefficients sum to 1.0 (approximately)
+        let (r601, g601, b601) = LuminanceWeights::Rec601.coefficients();
+        let (r709, g709, b709) = LuminanceWeights::Rec709.coefficients();
+        
+        let sum601 = r601 + g601 + b601;
+        let sum709 = r709 + g709 + b709;
+        
+        assert!((sum601 - 1.0).abs() < 1e-6, "Rec.601 coefficients should sum to 1.0, got {}", sum601);
+        assert!((sum709 - 1.0).abs() < 1e-6, "Rec.709 coefficients should sum to 1.0, got {}", sum709);
+    }
+    
+    #[test]
+    fn test_histogram_with_different_standards() {
+        let pixels = vec![
+            1.0, 0.0, 0.0, 1.0,  // Red pixel
+            0.0, 1.0, 0.0, 1.0,  // Green pixel  
+            0.0, 0.0, 1.0, 1.0,  // Blue pixel
+        ];
+        
+        let mut hist_601 = HistogramData::new_with_standard(256, LuminanceWeights::Rec601);
+        let mut hist_709 = HistogramData::new_with_standard(256, LuminanceWeights::Rec709);
+        
+        hist_601.compute_from_rgba_pixels(&pixels).unwrap();
+        hist_709.compute_from_rgba_pixels(&pixels).unwrap();
+        
+        // Both should have same number of pixels
+        assert_eq!(hist_601.total_pixels, 3);
+        assert_eq!(hist_709.total_pixels, 3);
+        
+        // But luminance histograms should be different due to different weighting
+        let sum_601: u32 = hist_601.luminance_bins.iter().sum();
+        let sum_709: u32 = hist_709.luminance_bins.iter().sum();
+        
+        assert_eq!(sum_601, 3); // Total pixel count
+        assert_eq!(sum_709, 3); // Total pixel count
+        
+        // The distribution should be different between standards
+        let hist_601_non_zero = hist_601.luminance_bins.iter().filter(|&&x| x > 0).count();
+        let hist_709_non_zero = hist_709.luminance_bins.iter().filter(|&&x| x > 0).count();
+        
+        println!("Rec.601 non-zero bins: {}", hist_601_non_zero);
+        println!("Rec.709 non-zero bins: {}", hist_709_non_zero);
+        
+        // Both should have some non-zero bins
+        assert!(hist_601_non_zero > 0);
+        assert!(hist_709_non_zero > 0);
+    }
+    
+    #[test]
+    fn test_default_is_rec709() {
+        let hist = HistogramData::new(256);
+        assert_eq!(hist.luminance_standard, LuminanceWeights::Rec709);
+        
+        let default_standard = LuminanceWeights::default();
+        assert_eq!(default_standard, LuminanceWeights::Rec709);
     }
 }

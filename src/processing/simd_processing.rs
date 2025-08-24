@@ -3,6 +3,7 @@ use std::simd::prelude::SimdFloat;
 use slint::Rgba8Pixel;
 use glam::{Mat3, Vec3};
 use crate::processing::image_processing::process_pixel;
+use crate::processing::histogram::LuminanceWeights;
 
 #[cfg(feature = "unified_simd")]
 use crate::processing::tone_mapping::ToneMapMode;
@@ -184,8 +185,10 @@ pub fn process_simd_chunk_grayscale(
 
     let (r_tm, g_tm, b_tm) = crate::processing::tone_mapping::tone_map_and_gamma_simd(r, g, b, exposure, gamma, tonemap_mode);
     
-    // Convert to grayscale using max(R, G, B)
-    let gray = r_tm.simd_max(g_tm).simd_max(b_tm).simd_clamp(Simd::splat(0.0), Simd::splat(1.0));
+    // Convert to grayscale using Rec.709 luminance weights
+    let (wr, wg, wb) = LuminanceWeights::default().coefficients();
+    let gray = (Simd::splat(wr) * r_tm + Simd::splat(wg) * g_tm + Simd::splat(wb) * b_tm)
+        .simd_clamp(Simd::splat(0.0), Simd::splat(1.0));
     let a8 = a.simd_clamp(Simd::splat(0.0), Simd::splat(1.0));
 
     store_grayscale_simd(gray, a8, output);
@@ -288,7 +291,7 @@ pub fn process_scalar_pixels(
             let (final_r, final_g, final_b, final_a) = process_pixel_unified(&processor, r, g, b, a, &params);
             
             if grayscale {
-                let gray = 0.299 * final_r + 0.587 * final_g + 0.114 * final_b;
+                let gray = LuminanceWeights::default().luminance(final_r, final_g, final_b);
                 output[i] = Rgba8Pixel {
                     r: (gray * 255.0) as u8,
                     g: (gray * 255.0) as u8,
