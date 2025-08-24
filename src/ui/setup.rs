@@ -104,58 +104,94 @@ pub fn setup_menu_callbacks(
         });
     }
 
-    // Export callbacks - placeholder implementations
+    // Export callbacks - full implementations
     ui.on_export_beauty({
         let ui_handle = ui.as_weak();
+        let full_cache = full_exr_cache.clone();
+        let current_file_path = current_file_path.clone();
+        let console = console_model.clone();
         move || {
-            if let Some(ui) = ui_handle.upgrade() {
-                ui.set_status_text("Export Beauty - not implemented yet".into());
-            }
+            crate::ui::export_handlers::export_beauty(
+                ui_handle.clone(),
+                full_cache.clone(),
+                current_file_path.clone(),
+                console.clone(),
+            );
         }
     });
 
     ui.on_export_all({
         let ui_handle = ui.as_weak();
+        let full_cache = full_exr_cache.clone();
+        let current_file_path = current_file_path.clone();
+        let console = console_model.clone();
         move || {
-            if let Some(ui) = ui_handle.upgrade() {
-                ui.set_status_text("Export All - not implemented yet".into());
-            }
+            crate::ui::export_handlers::export_all(
+                ui_handle.clone(),
+                full_cache.clone(),
+                current_file_path.clone(),
+                console.clone(),
+            );
         }
     });
 
     ui.on_export_scene({
         let ui_handle = ui.as_weak();
+        let full_cache = full_exr_cache.clone();
+        let current_file_path = current_file_path.clone();
+        let console = console_model.clone();
         move || {
-            if let Some(ui) = ui_handle.upgrade() {
-                ui.set_status_text("Export Scene - not implemented yet".into());
-            }
+            crate::ui::export_handlers::export_scene(
+                ui_handle.clone(),
+                full_cache.clone(),
+                current_file_path.clone(),
+                console.clone(),
+            );
         }
     });
 
     ui.on_export_objects({
         let ui_handle = ui.as_weak();
+        let full_cache = full_exr_cache.clone();
+        let current_file_path = current_file_path.clone();
+        let console = console_model.clone();
         move || {
-            if let Some(ui) = ui_handle.upgrade() {
-                ui.set_status_text("Export Objects - not implemented yet".into());
-            }
+            crate::ui::export_handlers::export_objects(
+                ui_handle.clone(),
+                full_cache.clone(),
+                current_file_path.clone(),
+                console.clone(),
+            );
         }
     });
 
     ui.on_export_cryptomatte({
         let ui_handle = ui.as_weak();
+        let full_cache = full_exr_cache.clone();
+        let current_file_path = current_file_path.clone();
+        let console = console_model.clone();
         move || {
-            if let Some(ui) = ui_handle.upgrade() {
-                ui.set_status_text("Export Cryptomatte - not implemented yet".into());
-            }
+            crate::ui::export_handlers::export_cryptomatte(
+                ui_handle.clone(),
+                full_cache.clone(),
+                current_file_path.clone(),
+                console.clone(),
+            );
         }
     });
 
     ui.on_export_lights({
         let ui_handle = ui.as_weak();
+        let full_cache = full_exr_cache.clone();
+        let current_file_path = current_file_path.clone();
+        let console = console_model.clone();
         move || {
-            if let Some(ui) = ui_handle.upgrade() {
-                ui.set_status_text("Export Lights - not implemented yet".into());
-            }
+            crate::ui::export_handlers::export_lights(
+                ui_handle.clone(),
+                full_cache.clone(),
+                current_file_path.clone(),
+                console.clone(),
+            );
         }
     });
 }

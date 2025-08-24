@@ -19,30 +19,70 @@ pub struct UiExportConfig {
     pub tonemap_mode: i32,
 }
 
-/// Handle base layer export
-pub fn handle_export_base_layer(
+/// Export type enumeration
+#[derive(Clone, Debug)]
+pub enum ExportType {
+    Beauty,
+    All,
+    Scene,
+    Objects,
+    Cryptomatte,
+    Lights,
+}
+
+// Convenience functions for each export type
+pub fn export_beauty(
     ui_handle: Weak<AppWindow>,
     full_cache: FullExrCache,
     current_file_path: CurrentFilePathType,
     console: ConsoleModel,
-    export_config: UiExportConfig,
 ) {
-    if let Some(ui) = ui_handle.upgrade() {
-        let _prog = patterns::processing(ui.as_weak(), "Exporting base layer");
+    handle_export(ExportType::Beauty, ui_handle, full_cache, current_file_path, console);
+}
 
-        match export_base_layer_impl(&ui, &full_cache, &current_file_path, export_config) {
-            Ok(output_path) => {
-                let msg = format!("[export] Base layer saved to: {}", output_path.display());
-                push_console(&ui, &console, msg);
-                ui.set_status_text("Base layer export completed".into());
-            }
-            Err(e) => {
-                let msg = format!("[export] Failed to export base layer: {}", e);
-                push_console(&ui, &console, msg);
-                ui.set_status_text("Base layer export failed".into());
-            }
-        }
-    }
+pub fn export_all(
+    ui_handle: Weak<AppWindow>,
+    full_cache: FullExrCache,
+    current_file_path: CurrentFilePathType,
+    console: ConsoleModel,
+) {
+    handle_export(ExportType::All, ui_handle, full_cache, current_file_path, console);
+}
+
+pub fn export_scene(
+    ui_handle: Weak<AppWindow>,
+    full_cache: FullExrCache,
+    current_file_path: CurrentFilePathType,
+    console: ConsoleModel,
+) {
+    handle_export(ExportType::Scene, ui_handle, full_cache, current_file_path, console);
+}
+
+pub fn export_objects(
+    ui_handle: Weak<AppWindow>,
+    full_cache: FullExrCache,
+    current_file_path: CurrentFilePathType,
+    console: ConsoleModel,
+) {
+    handle_export(ExportType::Objects, ui_handle, full_cache, current_file_path, console);
+}
+
+pub fn export_cryptomatte(
+    ui_handle: Weak<AppWindow>,
+    full_cache: FullExrCache,
+    current_file_path: CurrentFilePathType,
+    console: ConsoleModel,
+) {
+    handle_export(ExportType::Cryptomatte, ui_handle, full_cache, current_file_path, console);
+}
+
+pub fn export_lights(
+    ui_handle: Weak<AppWindow>,
+    full_cache: FullExrCache,
+    current_file_path: CurrentFilePathType,
+    console: ConsoleModel,
+) {
+    handle_export(ExportType::Lights, ui_handle, full_cache, current_file_path, console);
 }
 
 
@@ -107,16 +147,13 @@ fn create_export_params(ui: &AppWindow, config: &UiExportConfig) -> Result<Expor
     })
 }
 
-/// Helper function to show export dialog and get configuration
-pub fn show_export_dialog(
+/// Helper function to create export configuration from UI state
+pub fn create_export_config_from_ui(
     ui_handle: Weak<AppWindow>,
     current_file_path: &CurrentFilePathType,
     console: ConsoleModel,
 ) -> Option<UiExportConfig> {
     if let Some(ui) = ui_handle.upgrade() {
-        // For now, use a simple implementation that exports to the same directory as the source file
-        // In a full implementation, this would show a proper file dialog
-
         // Get current file path for default output directory
         let file_path = {
             let guard = lock_or_recover(current_file_path);
@@ -135,67 +172,162 @@ pub fn show_export_dialog(
             .unwrap_or("exported")
             .to_string();
 
+        // Read checkbox states from UI
+        let apply_corrections = ui.get_export_apply_corrections();
+        let use_32bit = ui.get_export_32bit();
+        
+        // Determine format based on 32-bit checkbox
+        let format = if use_32bit {
+            ExportFormat::Tiff32Float
+        } else {
+            ExportFormat::Png16
+        };
+
         Some(UiExportConfig {
-            format: ExportFormat::Png16,
+            format,
             output_directory: output_dir,
             base_filename,
-            use_current_params: true,
-            exposure: 0.0,
-            gamma: 2.2,
-            tonemap_mode: 0,
+            use_current_params: apply_corrections,
+            exposure: if !apply_corrections { 0.0 } else { ui.get_exposure_value() },
+            gamma: if !apply_corrections { 2.2 } else { ui.get_gamma_value() },
+            tonemap_mode: if !apply_corrections { 0 } else { ui.get_tonemap_mode() as i32 },
         })
     } else {
         None
     }
 }
 
-/// Export base layer with PNG 16-bit format (convenience function)
-pub fn export_base_layer_png16(
+/// Generic export handler for all export types
+pub fn handle_export(
+    export_type: ExportType,
     ui_handle: Weak<AppWindow>,
     full_cache: FullExrCache,
     current_file_path: CurrentFilePathType,
     console: ConsoleModel,
 ) {
-    if let Some(config) = show_export_dialog(ui_handle.clone(), &current_file_path, console.clone()) {
-        let export_config = UiExportConfig {
-            format: ExportFormat::Png16,
-            ..config
+    if let Some(ui) = ui_handle.upgrade() {
+        let export_config = match create_export_config_from_ui(ui_handle.clone(), &current_file_path, console.clone()) {
+            Some(config) => config,
+            None => return,
         };
-        
-        handle_export_base_layer(ui_handle, full_cache, current_file_path, console, export_config);
+
+        let export_name = match export_type {
+            ExportType::Beauty => "beauty",
+            ExportType::All => "all layers",
+            ExportType::Scene => "scene layers",
+            ExportType::Objects => "object layers",
+            ExportType::Cryptomatte => "cryptomatte layers",
+            ExportType::Lights => "light layers",
+        };
+
+        let _prog = patterns::processing(ui.as_weak(), &format!("Exporting {}", export_name));
+
+        match export_type {
+            ExportType::Beauty => {
+                match export_base_layer_impl(&ui, &full_cache, &current_file_path, export_config) {
+                    Ok(output_path) => {
+                        let msg = format!("[export] {} exported to: {}", export_name, output_path.display());
+                        push_console(&ui, &console, msg);
+                        ui.set_status_text(format!("{} export completed", export_name).into());
+                    }
+                    Err(e) => {
+                        let msg = format!("[export] Failed to export {}: {}", export_name, e);
+                        push_console(&ui, &console, msg);
+                        ui.set_status_text(format!("{} export failed", export_name).into());
+                    }
+                }
+            }
+            _ => {
+                match export_layer_group_impl(&ui, &full_cache, &current_file_path, export_config, export_type) {
+                    Ok(output_paths) => {
+                        let msg = format!("[export] {} exported {} layers", export_name, output_paths.len());
+                        push_console(&ui, &console, msg);
+                        for path in output_paths {
+                            push_console(&ui, &console, format!("  -> {}", path.display()));
+                        }
+                        ui.set_status_text(format!("{} export completed", export_name).into());
+                    }
+                    Err(e) => {
+                        let msg = format!("[export] Failed to export {}: {}", export_name, e);
+                        push_console(&ui, &console, msg);
+                        ui.set_status_text(format!("{} export failed", export_name).into());
+                    }
+                }
+            }
+        }
     }
 }
 
-/// Export base layer with TIFF 16-bit format (convenience function)
-pub fn export_base_layer_tiff16(
-    ui_handle: Weak<AppWindow>,
-    full_cache: FullExrCache,
-    current_file_path: CurrentFilePathType,
-    console: ConsoleModel,
-) {
-    if let Some(config) = show_export_dialog(ui_handle.clone(), &current_file_path, console.clone()) {
-        let export_config = UiExportConfig {
-            format: ExportFormat::Tiff16,
-            ..config
-        };
-        
-        handle_export_base_layer(ui_handle, full_cache, current_file_path, console, export_config);
-    }
-}
+/// Implementation for layer group export
+fn export_layer_group_impl(
+    ui: &AppWindow,
+    full_cache: &FullExrCache,
+    current_file_path: &CurrentFilePathType,
+    export_config: UiExportConfig,
+    export_type: ExportType,
+) -> Result<Vec<PathBuf>> {
+    // Get current file path
+    let file_path = {
+        let guard = lock_or_recover(current_file_path);
+        guard.clone().ok_or_else(|| anyhow::anyhow!("No file loaded"))?
+    };
 
-/// Export base layer with TIFF 32-bit float format (convenience function)
-pub fn export_base_layer_tiff32_float(
-    ui_handle: Weak<AppWindow>,
-    full_cache: FullExrCache,
-    current_file_path: CurrentFilePathType,
-    console: ConsoleModel,
-) {
-    if let Some(config) = show_export_dialog(ui_handle.clone(), &current_file_path, console.clone()) {
-        let export_config = UiExportConfig {
-            format: ExportFormat::Tiff32Float,
-            ..config
-        };
-        
-        handle_export_base_layer(ui_handle, full_cache, current_file_path, console, export_config);
+    // Get full cache data
+    let cache_data = {
+        let guard = lock_or_recover(full_cache);
+        guard.clone().ok_or_else(|| anyhow::anyhow!("No EXR cache available"))?
+    };
+
+    // Extract layers info
+    let layers_info = crate::io::image_cache::extract_layers_info(&file_path)?;
+
+    // Create export parameters
+    let export_params = create_export_params(ui, &export_config)?;
+
+    // Create exporter
+    let exporter = LayerExporter::new(cache_data, layers_info)
+        .with_params(export_params);
+
+    match export_type {
+        ExportType::All => {
+            exporter.export_all_layers(
+                export_config.format,
+                &export_config.output_directory,
+                &export_config.base_filename,
+            )
+        }
+        ExportType::Scene => {
+            exporter.export_layer_group(
+                "scene",
+                export_config.format,
+                &export_config.output_directory,
+                &export_config.base_filename,
+            )
+        }
+        ExportType::Objects => {
+            exporter.export_layer_group(
+                "objects",
+                export_config.format,
+                &export_config.output_directory,
+                &export_config.base_filename,
+            )
+        }
+        ExportType::Cryptomatte => {
+            exporter.export_layer_group(
+                "cryptomatte",
+                export_config.format,
+                &export_config.output_directory,
+                &export_config.base_filename,
+            )
+        }
+        ExportType::Lights => {
+            exporter.export_layer_group(
+                "lights",
+                export_config.format,
+                &export_config.output_directory,
+                &export_config.base_filename,
+            )
+        }
+        ExportType::Beauty => unreachable!("Beauty export should use base layer function"),
     }
 }

@@ -5,6 +5,7 @@ use rayon::prelude::*;
 use crate::io::image_cache::{LayerInfo, LayerChannels};
 use crate::io::full_exr_cache::FullExrCacheData;
 use crate::processing::tone_mapping::{tone_map_and_gamma, ToneMapMode};
+use crate::processing::channel_classification::determine_channel_group_ultra_fast;
 
 /// Layer export configuration types
 #[derive(Clone, Debug)]
@@ -19,8 +20,6 @@ pub enum LayerExportConfig {
 pub enum ExportFormat {
     /// PNG 16-bit per channel
     Png16,
-    /// TIFF 16-bit per channel
-    Tiff16,
     /// TIFF 32-bit float per channel
     Tiff32Float,
 }
@@ -79,6 +78,42 @@ impl LayerExporter {
         self.export_single_layer(&base_layer, &format, output_dir, base_filename)
     }
 
+    /// Export all layers in a specific group
+    pub fn export_layer_group(
+        &self,
+        group_name: &str,
+        format: ExportFormat,
+        output_dir: &PathBuf,
+        base_filename: &str,
+    ) -> Result<Vec<PathBuf>> {
+        let group_layers = self.find_layers_in_group(group_name)?;
+        let mut exported_paths = Vec::new();
+        
+        for layer in group_layers {
+            let path = self.export_single_layer(&layer, &format, output_dir, base_filename)?;
+            exported_paths.push(path);
+        }
+        
+        Ok(exported_paths)
+    }
+
+    /// Export all layers from all groups
+    pub fn export_all_layers(
+        &self,
+        format: ExportFormat,
+        output_dir: &PathBuf,
+        base_filename: &str,
+    ) -> Result<Vec<PathBuf>> {
+        let mut exported_paths = Vec::new();
+        
+        for layer in &self.layers_info {
+            let path = self.export_single_layer(layer, &format, output_dir, base_filename)?;
+            exported_paths.push(path);
+        }
+        
+        Ok(exported_paths)
+    }
+
 
     /// Find the base/beauty layer
     fn find_base_layer(&self) -> Result<LayerInfo> {
@@ -90,6 +125,34 @@ impl LayerExporter {
             .find(|layer| layer.name == base_layer_name)
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("Base layer not found: {}", base_layer_name))
+    }
+
+    /// Find all layers belonging to a specific group
+    fn find_layers_in_group(&self, group_name: &str) -> Result<Vec<LayerInfo>> {
+        // Convert group name to internal format
+        let group_key = match group_name {
+            "beauty" => "base",
+            "scene" => "scene", 
+            "objects" => "scene_objects",
+            "cryptomatte" => "cryptomatte",
+            "lights" => "light",
+            _ => return Err(anyhow::anyhow!("Unknown group: {}", group_name))
+        };
+        
+        let mut group_layers = Vec::new();
+        
+        for layer in &self.layers_info {
+            let layer_group = determine_channel_group_ultra_fast(&layer.name);
+            if layer_group == group_key {
+                group_layers.push(layer.clone());
+            }
+        }
+        
+        if group_layers.is_empty() {
+            return Err(anyhow::anyhow!("No layers found in group: {}", group_name));
+        }
+        
+        Ok(group_layers)
     }
 
 
@@ -137,6 +200,23 @@ impl LayerExporter {
         // Compose RGB from channels
         let rgb_pixels = self.compose_rgb_from_channels(layer_channels);
         
+        // Detect technical layers that should be exported as raw data
+        let layer_name = layer_channels.channel_names.get(0)
+            .map(|name| {
+                if let Some(dot_pos) = name.find('.') {
+                    &name[..dot_pos]
+                } else {
+                    name
+                }
+            })
+            .unwrap_or("");
+        
+        // Use group classification to determine if this is a technical layer
+        let layer_group = determine_channel_group_ultra_fast(layer_name);
+        let is_technical_layer = layer_group == "cryptomatte" || 
+                                layer_group == "scene_objects" ||
+                                layer_group == "technical";
+        
         // Apply tone mapping and gamma correction in parallel
         let has_alpha = layer_channels.channel_names.iter().any(|name| {
             let n = name.to_ascii_uppercase();
@@ -145,14 +225,19 @@ impl LayerExporter {
         
         let channels = if has_alpha { 4 } else { 3 };
         
-        let processed_data = match layer_channels.channel_names.len() {
-            1 => {
-                // Grayscale channel - expand to RGB
-                self.process_grayscale_pixels(&rgb_pixels, pixel_count)?
-            }
-            _ => {
-                // RGB/RGBA channels - full color processing
-                self.process_color_pixels(&rgb_pixels, pixel_count, has_alpha)?
+        let processed_data = if is_technical_layer {
+            // Technical layers: export raw data without corrections (for compositing workflows)
+            self.process_raw_pixels(&rgb_pixels, pixel_count, has_alpha)?
+        } else {
+            match layer_channels.channel_names.len() {
+                1 => {
+                    // Grayscale channel - expand to RGB
+                    self.process_grayscale_pixels(&rgb_pixels, pixel_count)?
+                }
+                _ => {
+                    // RGB/RGBA channels - full color processing with tone mapping
+                    self.process_color_pixels(&rgb_pixels, pixel_count, has_alpha)?
+                }
             }
         };
         
@@ -172,19 +257,38 @@ impl LayerExporter {
         let buffer_size = pixel_count * 4;
         let mut rgb_pixels = Vec::with_capacity(buffer_size);
 
-        // Find RGB and Alpha channels with optimized lookup
-        let find_channel = |name: &str| -> Option<usize> {
-            let name_upper = name.to_ascii_uppercase();
-            layer_channels.channel_names.iter().position(|n| {
-                let n_upper = n.to_ascii_uppercase();
-                n_upper == name_upper || n_upper.starts_with(&name_upper)
-            })
+        // Use same logic as image_cache.rs compose_composite_from_channels()
+        let pick_exact_index = |name: &str| -> Option<usize> { 
+            layer_channels.channel_names.iter().position(|n| n == name) 
+        };
+        let pick_prefix_index = |prefix: char| -> Option<usize> {
+            let prefix = prefix.to_ascii_uppercase();
+            layer_channels.channel_names.iter().position(|n| n.to_ascii_uppercase().starts_with(prefix))
         };
 
-        let r_idx = find_channel("R").unwrap_or(0);
-        let g_idx = find_channel("G").unwrap_or(r_idx);
-        let b_idx = find_channel("B").unwrap_or(g_idx);
-        let a_idx = find_channel("A");
+        // Check if layer has RGB channels - if not, use first 3 available channels
+        let r_idx_opt = pick_exact_index("R").or_else(|| pick_prefix_index('R'));
+        let g_idx_opt = pick_exact_index("G").or_else(|| pick_prefix_index('G'));
+        let b_idx_opt = pick_exact_index("B").or_else(|| pick_prefix_index('B'));
+
+        let has_any_rgb = r_idx_opt.is_some() || g_idx_opt.is_some() || b_idx_opt.is_some();
+
+        let (r_idx, g_idx, b_idx) = if has_any_rgb {
+            // We have at least one of R, G, B channels
+            let r_idx = r_idx_opt.unwrap_or_else(|| g_idx_opt.or(b_idx_opt).unwrap_or(0));
+            let g_idx = g_idx_opt.unwrap_or(r_idx);
+            let b_idx = b_idx_opt.unwrap_or(g_idx);
+            (r_idx, g_idx, b_idx)
+        } else {
+            // For layers without RGB (e.g. cryptomatte) - use first 3 channels
+            let num_channels = layer_channels.channel_names.len();
+            let r_idx = 0;
+            let g_idx = if num_channels > 1 { 1 } else { 0 };
+            let b_idx = if num_channels > 2 { 2 } else { g_idx };
+            (r_idx, g_idx, b_idx)
+        };
+
+        let a_idx = pick_exact_index("A").or_else(|| pick_prefix_index('A'));
 
         // Extract channel slices with bounds checking
         let channel_data = &layer_channels.channel_data;
@@ -304,6 +408,30 @@ impl LayerExporter {
         Ok(processed)
     }
 
+    /// Process raw pixels without any corrections (for technical layers)
+    /// Used for: Cryptomatte, Object IDs, Render stamps - preserves exact values
+    fn process_raw_pixels(&self, pixels: &[f32], pixel_count: usize, has_alpha: bool) -> Result<Vec<u16>> {
+        let output_channels = if has_alpha { 4 } else { 3 };
+        let mut processed = Vec::with_capacity(pixel_count * output_channels);
+        
+        // Convert directly to u16 without any tone mapping, gamma, or exposure correction
+        // This preserves exact encoded values for Cryptomatte IDs and object masks
+        for chunk in pixels.chunks_exact(4) {
+            let r_u16 = (chunk[0].clamp(0.0, 1.0) * 65535.0).round() as u16;
+            let g_u16 = (chunk[1].clamp(0.0, 1.0) * 65535.0).round() as u16;
+            let b_u16 = (chunk[2].clamp(0.0, 1.0) * 65535.0).round() as u16;
+            
+            if has_alpha {
+                let a_u16 = (chunk[3].clamp(0.0, 1.0) * 65535.0).round() as u16;
+                processed.extend_from_slice(&[r_u16, g_u16, b_u16, a_u16]);
+            } else {
+                processed.extend_from_slice(&[r_u16, g_u16, b_u16]);
+            }
+        }
+        
+        Ok(processed)
+    }
+
     /// Process color pixels with tone mapping and color correction (SIMD optimized)
     fn process_color_pixels(&self, pixels: &[f32], pixel_count: usize, has_alpha: bool) -> Result<Vec<u16>> {
         let output_channels = if has_alpha { 4 } else { 3 };
@@ -412,7 +540,7 @@ impl LayerExporter {
     ) -> Result<PathBuf> {
         let extension = match format {
             ExportFormat::Png16 => "png",
-            ExportFormat::Tiff16 | ExportFormat::Tiff32Float => "tiff",
+            ExportFormat::Tiff32Float => "tiff",
         };
 
         let sanitized_layer_name = layer_name.replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_");
@@ -439,9 +567,6 @@ impl LayerExporter {
             ExportFormat::Png16 => {
                 self.save_png16(pixels, output_path)?;
             }
-            ExportFormat::Tiff16 => {
-                self.save_tiff16(pixels, output_path)?;
-            }
             ExportFormat::Tiff32Float => {
                 self.save_tiff32_float(pixels, output_path)?;
             }
@@ -464,31 +589,6 @@ impl LayerExporter {
             img_buffer.save(output_path)?;
         } else {
             let img_buffer = ImageBuffer::<image::Rgb<u16>, _>::from_raw(
-                pixels.width,
-                pixels.height,
-                pixels.data.clone(),
-            ).ok_or_else(|| anyhow::anyhow!("Failed to create RGB image buffer"))?;
-
-            img_buffer.save(output_path)?;
-        }
-
-        Ok(())
-    }
-
-    /// Save as TIFF 16-bit
-    fn save_tiff16(&self, pixels: &ProcessedPixels, output_path: &PathBuf) -> Result<()> {
-        use image::{ImageBuffer, Rgb, Rgba};
-
-        if pixels.channels == 4 {
-            let img_buffer = ImageBuffer::<Rgba<u16>, _>::from_raw(
-                pixels.width,
-                pixels.height,
-                pixels.data.clone(),
-            ).ok_or_else(|| anyhow::anyhow!("Failed to create RGBA image buffer"))?;
-
-            img_buffer.save(output_path)?;
-        } else {
-            let img_buffer = ImageBuffer::<Rgb<u16>, _>::from_raw(
                 pixels.width,
                 pixels.height,
                 pixels.data.clone(),

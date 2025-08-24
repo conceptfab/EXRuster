@@ -14,9 +14,8 @@ pub use ui_handlers::{
     handle_parameter_changed_throttled, load_thumbnails_for_directory,
     update_preview_image, ImageCacheType, CurrentFilePathType, FullExrCache, ThrottledUpdate
 };
-pub use export_handlers::{
-    export_base_layer_png16, export_base_layer_tiff16, export_base_layer_tiff32_float
-};
+// Export handlers are called directly from setup.rs, not re-exported
+// pub use export_handlers::{};
 pub use layers::{handle_layer_tree_click, toggle_all_layer_groups};
 pub use state::{SharedUiState, create_shared_state};
 pub use setup::{setup_ui_callbacks};
