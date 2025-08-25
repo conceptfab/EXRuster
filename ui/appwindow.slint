@@ -1231,6 +1231,28 @@ export component AppWindow inherits Window {
                 }
             }
         }
+
+        // Top-right drag handle for resizing thumbnail panel  
+        Rectangle {
+            x: parent.width - 4px;
+            y: 0px; 
+            width: 4px;
+            height: parent.height;
+            background: Kolory.przezroczysty;
+            
+            TouchArea {
+                width: parent.width;
+                height: parent.height; 
+                mouse-cursor: ns-resize;
+                
+                moved => {
+                    if (self.pressed) {
+                        root.bottom-panel-expanded-height = max(80px, min(400px,
+                            root.bottom-panel-expanded-height - (self.mouse-y - self.pressed-y)));
+                    }
+                }
+            }
+        }
      }
      
      // Przyciski między panelem z miniaturkami a status barem

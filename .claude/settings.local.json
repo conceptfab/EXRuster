@@ -40,7 +40,8 @@
       "Bash(timeout 30s cargo test test_safe_api_consistency -- --nocapture)",
       "Bash(timeout 30s cargo test test_tonemap_mode_id_conversion test_safe_api_consistency -- --nocapture)",
       "Bash(timeout 30s cargo test tonemap -- --nocapture)",
-      "Bash(timeout 30s cargo test safe_api -- --nocapture)"
+      "Bash(timeout 30s cargo test safe_api -- --nocapture)",
+      "WebFetch(domain:docs.slint.dev)"
     ],
     "deny": [],
     "ask": []
