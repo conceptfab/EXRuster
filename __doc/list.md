@@ -1,6 +1,6 @@
 @src, @ui przenalizuj ten kod pod kątem optymalizacji, zduplikowanego kodu, nieużywanego kodu - zweryfikuj to. Pomin przyciski exportu. Przygotuj zwarty, precyzyjny raport z numerowanymu punktami co model AI ma zrobić by poprawić kod. Dokument ma zawierać precyzyjne przykłady kodu do implementacji. Chce uniknąć over-engineeringu. Pokaż tylko pliki które potrzebuja poprawek. Raport ma być w formacie markdown, podzielony na logiczne etapy. zapisz go w folderze projektu.
 
-@src, @ui Ten kod działa poprawnie, ale chce go maksymalnie zoptymalizować/oczyścić. Przeanalizuj go pod tym kątem i przygotuj zwarty raport z numerowanymu punktami co model AI ma zrobić by poprawić kod. Chce uniknąć over-engineeringu. Pokaż tylko pliki które potrzebuja poprawek. Raport ma być w formacie markdown, podzielony na logiczne etapy. zapisz go w folderze projektu.
+@src, @ui Ten kod działa poprawnie, ale chce go zoptymalizować/oczyścić. Przeanalizuj go pod tym kątem i przygotuj zwarty raport z numerowanymu punktami co model AI ma zrobić by poprawić kod. Chce uniknąć over-engineeringu. Pokaż tylko pliki które potrzebuja poprawek. Raport ma być w formacie markdown, podzielony na logiczne etapy. zapisz go w folderze projektu. Uzyj ultrathink.
 
 
 
