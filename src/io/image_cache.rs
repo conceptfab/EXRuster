@@ -389,7 +389,7 @@ pub(crate) fn load_all_channels_for_layer(
                 let mut buffer = pool.get_f32_buffer(channel_data_size);
                 buffer.clear();
                 buffer.reserve(channel_data_size);
-                buffer
+                buffer.into_inner() // Take ownership of inner Vec
             } else {
                 Vec::with_capacity(channel_data_size)
             };
@@ -427,7 +427,7 @@ fn compose_composite_from_channels(layer_channels: &LayerChannels) -> Vec<f32> {
         let mut buffer = pool.get_f32_buffer(buffer_size);
         buffer.clear();
         buffer.reserve(buffer_size);
-        buffer
+        buffer.into_inner() // Take ownership of inner Vec
     } else {
         Vec::with_capacity(buffer_size)
     };
@@ -549,7 +549,7 @@ impl ImageCache {
             let mut buffer = pool.get_f32_buffer(buffer_size);
             buffer.clear();
             buffer.reserve(buffer_size);
-            buffer
+            buffer.into_inner() // Take ownership of inner Vec
         } else {
             Vec::with_capacity(buffer_size)
         };
