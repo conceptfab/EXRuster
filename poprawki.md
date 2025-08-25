@@ -1,2 +1,0 @@
-Przygotuj funkcje exportu dla 6 przycisków w UI. Przygotuj plan prac w pliku Export.md
-Pryrzyciski maja eksporowac warstwy wg swojego opisu. Jeśli nie jest zaznaczone checkbox 32bity to formatem exportu jest PNG 16 bitów, jeśli zaznaczony jest 32 bity to format exportu to TIFF 32 bity. Jeśli zaznaczony jest checkbox Apply Corrections - to dla eksportowanych warstw nalezy zastosować korektyw wprowadzone przez uzytkownika: Exposure, Gamma,Tonemap. Usun polecenia exportu z menu File.
