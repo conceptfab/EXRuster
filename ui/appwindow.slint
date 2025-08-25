@@ -871,7 +871,6 @@ export component AppWindow inherits Window {
 
          animate height { duration: 300ms; easing: ease-in-out; }
          
-         // USUŃ scroll-event handler - może nie działa w tej wersji Slint
          
          // Loading overlay
          if root.is-loading: Rectangle {
@@ -974,6 +973,7 @@ export component AppWindow inherits Window {
                 viewport-width: thumbs_content.preferred-width;
                 viewport-height: parent.height;
 
+
                 thumbs_content := HorizontalLayout {
                     width: self.preferred-width; // Pozwól na rozszerzanie
                     height: parent.height;
@@ -1016,7 +1016,7 @@ export component AppWindow inherits Window {
                                     vertical-alignment: center;
                                 }
                                 
-                                // TouchArea jak w panelu warstw - nie blokuje scroll
+                                // TouchArea z dwoma funkcjami: klik + scroll wheel
                                 click_area := TouchArea {
                                     width: parent.width;
                                     height: parent.height;
@@ -1025,6 +1025,13 @@ export component AppWindow inherits Window {
                                         root.key-pressed-debug("thumb open: " + t.path);
                                         root.opened-thumbnail-path = t.path;
                                         root.open-thumbnail(t.path);
+                                    }
+                                    scroll-event(event) => {
+                                        root.key-pressed-debug("Mouse wheel on thumbnail!");
+                                        // Przekaż do ScrollView przez viewport-x
+                                        scroll_view.viewport-x = max(0px, min(scroll_view.viewport-x + (event.delta-y / 1px) * 50px, 
+                                            max(0px, thumbs_content.width - scroll_view.viewport-width)));
+                                        return EventResult.accept;
                                     }
                                 }
                             }
@@ -1191,6 +1198,7 @@ export component AppWindow inherits Window {
                 }
             }
         }
+
      }
      
      // Przyciski między panelem z miniaturkami a status barem
