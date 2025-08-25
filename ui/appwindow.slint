@@ -871,6 +871,8 @@ export component AppWindow inherits Window {
 
          animate height { duration: 300ms; easing: ease-in-out; }
          
+         // USUŃ scroll-event handler - może nie działa w tej wersji Slint
+         
          // Loading overlay
          if root.is-loading: Rectangle {
              x: 0px;
@@ -968,8 +970,13 @@ export component AppWindow inherits Window {
             scroll_view := ScrollView {
                 width: parent.width;
                 height: parent.height;
+                // Włącz poziomy scroll, wyłącz pionowy
+                viewport-width: thumbs_content.preferred-width;
+                viewport-height: parent.height;
 
                 thumbs_content := HorizontalLayout {
+                    width: self.preferred-width; // Pozwól na rozszerzanie
+                    height: parent.height;
                     spacing: 24px;
 
                     for t[index] in root.thumbnails: Rectangle {
@@ -996,7 +1003,7 @@ export component AppWindow inherits Window {
                                 width: parent.width;
                                 height: max(0px, viewport.height - 12px - desc.height - 1.6px);
                                 background: Kolory.przezroczysty;
-                                border-width: (root.opened-thumbnail-path == t.path) ? 2px : (tile_area.has-hover ? 2px : 0px);
+                                border-width: (root.opened-thumbnail-path == t.path) ? 2px : (click_area.has-hover ? 2px : 0px);
                                 border-color: (root.opened-thumbnail-path == t.path) ? #ffffff : root.hover;
                                 clip: true;
 
@@ -1007,6 +1014,18 @@ export component AppWindow inherits Window {
                                     image-fit: contain;
                                     horizontal-alignment: center;
                                     vertical-alignment: center;
+                                }
+                                
+                                // TouchArea jak w panelu warstw - nie blokuje scroll
+                                click_area := TouchArea {
+                                    width: parent.width;
+                                    height: parent.height;
+                                    mouse-cursor: pointer;
+                                    clicked => {
+                                        root.key-pressed-debug("thumb open: " + t.path);
+                                        root.opened-thumbnail-path = t.path;
+                                        root.open-thumbnail(t.path);
+                                    }
                                 }
                             }
 
@@ -1026,89 +1045,8 @@ export component AppWindow inherits Window {
                             }
                         }
                         
-                        tile_area := TouchArea {
-                            width: parent.width;
-                            height: parent.height;
-                            mouse-cursor: MouseCursor.pointer;
-                            clicked => {
-                                // Jeżeli widoczne menu – zamknij i nie otwieraj pliku
-                                if (thumbs_panel.ctx_visible) { root.key-pressed-debug("ctx close-before-click"); thumbs_panel.ctx_visible = false; return; }
-                                // Natychmiastowe otwarcie pliku na pojedyncze kliknięcie
-                                root.key-pressed-debug("thumb open (single-click): " + t.path);
-                                root.opened-thumbnail-path = t.path;
-                                root.open-thumbnail(t.path);
-                            }
-                            moved => {
-                                    if (self.has-hover && (thumbs_panel.tt_owner_path == "" || thumbs_panel.tt_owner_path == t.path)) {
-                                        thumbs_panel.tt_x = viewport.x + parent.x - scroll_view.viewport-x + self.mouse-x + 12px;
-                                        thumbs_panel.tt_y = viewport.y + parent.y + self.mouse-y + 12px;
-                                    }
-                            }
-                            // Obsługa prawego przycisku (najnowsze Slint) – jeśli dostępna
-                            pointer-event(ev) => {
-                                // Prawy klik (jeśli dostępny w tej wersji Slint)
-                                if (ev.kind == PointerEventKind.down && ev.button == PointerEventButton.right) {
-                                    root.key-pressed-debug("ctx right-click: " + t.path);
-                                    thumbs_panel.ctx_visible = true;
-                                    thumbs_panel.ctx_path = t.path;
-                                    // Fallback: brak pozycji w ev → użyj pozycji myszy z TouchArea
-                                    thumbs_panel.ctx_x = viewport.x + parent.x - scroll_view.viewport-x + self.mouse-x;
-                                    thumbs_panel.ctx_y = viewport.y + parent.y + self.mouse-y;
-                                    auto_hide_timer.running = false; auto_hide_timer.running = true;
-                                }
-                            }
-                        }
-                        Timer {
-                            interval: 80ms;
-                            running: true;
-                            triggered => {
-                                if (tile_area.has-hover) {
-                                    // Jeśli nikt nie posiada tooltipa lub właścicielem jest ten kafelek, licz odliczanie
-                                    if (thumbs_panel.tt_owner_path == "" || thumbs_panel.tt_owner_path == t.path) {
-                                        parent.hover_ticks = Math.min(100000, parent.hover_ticks + 1);
-                                        if (parent.hover_ticks >= thumbs_panel.tt_delay_ticks) {
-                                            thumbs_panel.tt_visible = true;
-                                            // Pokaż tylko nazwę pliku
-                                            thumbs_panel.tt_text = t.name;
-                                            thumbs_panel.tt_owner_path = t.path;
-                                            // aktualna pozycja kursora
-                                            thumbs_panel.tt_x = viewport.x + parent.x - scroll_view.viewport-x + tile_area.mouse-x + 12px;
-                                            thumbs_panel.tt_y = viewport.y + parent.y + tile_area.mouse-y + 12px;
-                                        }
-                                    } else {
-                                        // inny kafelek jest właścicielem – reset lokalnego licznika
-                                        parent.hover_ticks = 0;
-                                    }
-
-                                    // Long-press do menu kontekstowego
-                                    if (tile_area.pressed) {
-                                        if (parent.press_ticks == 0) { root.key-pressed-debug("ctx press-start: " + t.path); }
-                                        parent.press_ticks = Math.min(100000, parent.press_ticks + 1);
-                                        if (parent.press_ticks >= thumbs_panel.ctx_longpress_ticks && !thumbs_panel.ctx_visible) {
-                                            root.key-pressed-debug("ctx open: " + t.path);
-                                            thumbs_panel.ctx_visible = true;
-                                            thumbs_panel.ctx_path = t.path;
-                                            thumbs_panel.ctx_x = viewport.x + parent.x - scroll_view.viewport-x + tile_area.mouse-x;
-                                            thumbs_panel.ctx_y = viewport.y + parent.y + tile_area.mouse-y;
-                                            auto_hide_timer.running = false; auto_hide_timer.running = true;
-                                        }
-                                    } else {
-                                        parent.press_ticks = 0;
-                                    }
-                                    // brak obsługi ticków dla dwukliku — używamy jednorazowego timera per-kafelek
-                                } else {
-                                    // zakończenie hovera – jeśli to był właściciel, schowaj i zwolnij
-                                    if (thumbs_panel.tt_owner_path == t.path) {
-                                        thumbs_panel.tt_visible = false;
-                                        thumbs_panel.tt_owner_path = "";
-                                    }
-                                    parent.hover_ticks = 0;
-                                    parent.press_ticks = 0;
-                                    parent.dbl_arm = false;
-                                }
-                                self.running = true;
-                            }
-                        }
+                        // USUNIĘTO TouchArea - blokuje scroll wheel!
+                        // USUNIĘTO Timer - był powiązany z TouchArea
                     }
                 }
             }
@@ -1534,38 +1472,38 @@ export component AppWindow inherits Window {
              // Diagnostyka: loguj nazwę klawisza (może być pusta dla strzałek na niektórych platformach)
              key-pressed-debug(event.text);
              if (event.text == "l" || event.text == "L") {
-                 root.show-left-panel = !root.show-left-panel; return accept;
+                 root.show-left-panel = !root.show-left-panel; return EventResult.accept;
              } else if (event.text == "c" || event.text == "C") {
-                 root.show-right-panel = !root.show-right-panel; return accept;
+                 root.show-right-panel = !root.show-right-panel; return EventResult.accept;
              } else if (event.text == "m" || event.text == "M") {
-                 root.internal-meta-visible = !root.internal-meta-visible; return accept;
+                 root.internal-meta-visible = !root.internal-meta-visible; return EventResult.accept;
               } else if (event.text == "x" || event.text == "X") {
                   // Pokaż/ukryj wszystkie panele (lewy, prawy, dolny)
                   if (root.show-left-panel || root.show-right-panel || root.bottom-panel-visible) {
                       root.show-left-panel = false;
                       root.show-right-panel = false;
-                      root.bottom-panel-visible = false; return accept;
+                      root.bottom-panel-visible = false; return EventResult.accept;
                   } else {
                       root.show-left-panel = true;
                       root.show-right-panel = true;
-                      root.bottom-panel-visible = true; return accept;
+                      root.bottom-panel-visible = true; return EventResult.accept;
                   }
              } else if (event.text == " ") {
-                 root.bottom-panel-visible = !root.bottom-panel-visible; return accept;
+                 root.bottom-panel-visible = !root.bottom-panel-visible; return EventResult.accept;
              } else if (event.text == "~" || event.text == "`") {
-                 root.internal-console-visible = !root.internal-console-visible; return accept;
+                 root.internal-console-visible = !root.internal-console-visible; return EventResult.accept;
              } else if (event.text == "h" || event.text == "H") {
-                 root.internal-histogram-visible = !root.internal-histogram-visible; return accept;
+                 root.internal-histogram-visible = !root.internal-histogram-visible; return EventResult.accept;
              } else if (event.text == "Up" || event.text == "ArrowUp" || event.text == "") {
-                 root.navigate-layers(-1); return accept;
+                 root.navigate-layers(-1); return EventResult.accept;
              } else if (event.text == "Down" || event.text == "ArrowDown" || event.text == "") {
-                 root.navigate-layers(1); return accept;
+                 root.navigate-layers(1); return EventResult.accept;
              } else if (event.text == "Left" || event.text == "ArrowLeft" || event.text == "") {
-                 root.navigate-thumbnails(-1); return accept;
+                 root.navigate-thumbnails(-1); return EventResult.accept;
              } else if (event.text == "Right" || event.text == "ArrowRight" || event.text == "") {
-                 root.navigate-thumbnails(1); return accept;
+                 root.navigate-thumbnails(1); return EventResult.accept;
              }
-             return reject;
+             return EventResult.reject;
          }
      }
 
