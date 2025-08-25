@@ -1022,15 +1022,16 @@ export component AppWindow inherits Window {
                                     height: parent.height;
                                     mouse-cursor: pointer;
                                     clicked => {
-                                        root.key-pressed-debug("thumb open: " + t.path);
                                         root.opened-thumbnail-path = t.path;
                                         root.open-thumbnail(t.path);
                                     }
                                     scroll-event(event) => {
-                                        root.key-pressed-debug("Mouse wheel on thumbnail!");
-                                        // Przekaż do ScrollView przez viewport-x
-                                        scroll_view.viewport-x = max(0px, min(scroll_view.viewport-x + (event.delta-y / 1px) * 50px, 
-                                            max(0px, thumbs_content.width - scroll_view.viewport-width)));
+                                        // Poprawiona obsługa przewijania kółkiem myszki z naturalnym mapowaniem
+                                        // Adaptacyjna prędkość: 15% szerokości viewport, minimum 30px
+                                        scroll_view.viewport-x = max(0px, min(
+                                            scroll_view.viewport-x + event.delta-y / 1px * max(30px, scroll_view.viewport-width * 0.15),
+                                            max(0px, thumbs_content.width - scroll_view.viewport-width)
+                                        ));
                                         return EventResult.accept;
                                     }
                                 }
@@ -1107,7 +1108,6 @@ export component AppWindow inherits Window {
                     text: "Delete file";
                     clicked => {
                         thumbs_panel.ctx_visible = false;
-                        root.key-pressed-debug("ctx delete: " + thumbs_panel.ctx_path);
                         root.delete-thumbnail(thumbs_panel.ctx_path);
                     }
                 }
@@ -1119,7 +1119,7 @@ export component AppWindow inherits Window {
             visible: thumbs_panel.ctx_visible;
             width: parent.width;
             height: parent.height;
-            clicked => { root.key-pressed-debug("ctx dismiss"); thumbs_panel.ctx_visible = false; }
+            clicked => { thumbs_panel.ctx_visible = false; }
             z: 1500;
         }
 
@@ -1477,8 +1477,6 @@ export component AppWindow inherits Window {
          x: 0px; y: 0px;
          width: root.width; height: root.height;
          key-pressed(event) => {
-             // Diagnostyka: loguj nazwę klawisza (może być pusta dla strzałek na niektórych platformach)
-             key-pressed-debug(event.text);
              if (event.text == "l" || event.text == "L") {
                  root.show-left-panel = !root.show-left-panel; return EventResult.accept;
              } else if (event.text == "c" || event.text == "C") {
