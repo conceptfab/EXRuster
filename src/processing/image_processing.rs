@@ -23,7 +23,11 @@ pub fn process_pixel(
     let (corrected_r, corrected_g, corrected_b) =
         tone_map_and_gamma(r, g, b, exposure, gamma, tonemap_mode);
 
-    let safe_a = if a.is_finite() { a.clamp(0.0, 1.0) } else { 1.0 };
+    let safe_a = if a.is_finite() {
+        a.clamp(0.0, 1.0)
+    } else {
+        1.0
+    };
 
     Rgba8Pixel {
         r: (corrected_r * 255.0).round().clamp(0.0, 255.0) as u8,
@@ -34,8 +38,6 @@ pub fn process_pixel(
 }
 
 // Usunięte duplikaty tone mapping - przeniesione do tone_mapping.rs
-
-
 
 // Funkcja srgb_oetf została przeniesiona do tone_mapping.rs
 // aby uniknąć duplikacji kodu
@@ -76,4 +78,3 @@ pub fn tone_map_and_gamma(
 
 // Funkcja tone_map_and_gamma_simd została przeniesiona do tone_mapping.rs
 // aby uniknąć duplikacji kodu
-

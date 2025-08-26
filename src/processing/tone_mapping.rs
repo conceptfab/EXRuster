@@ -1,7 +1,7 @@
 use core::simd::{f32x4, Simd};
+use std::simd::cmp::SimdPartialOrd;
 use std::simd::prelude::SimdFloat;
 use std::simd::StdFloat;
-use std::simd::cmp::SimdPartialOrd;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ToneMapMode {
@@ -25,13 +25,13 @@ impl ToneMapModeId {
     pub const FILMIC: Self = Self(ToneMapMode::Filmic);
     pub const HABLE: Self = Self(ToneMapMode::Hable);
     pub const LOCAL: Self = Self(ToneMapMode::Local);
-    
+
     /// Extract the inner ToneMapMode enum value
     #[inline]
     pub fn inner(self) -> ToneMapMode {
         self.0
     }
-    
+
     /// Convert to i32 for backward compatibility
     #[inline]
     pub fn as_i32(self) -> i32 {
@@ -51,11 +51,11 @@ impl From<i32> for ToneMapMode {
         match value {
             0 => Self::ACES,
             1 => Self::Reinhard,
-            2 => Self::Linear,  
+            2 => Self::Linear,
             3 => Self::Filmic,
             4 => Self::Hable,
             5 => Self::Local,
-            _ => Self::Linear,  // Default changed from ACES to Linear
+            _ => Self::Linear, // Default changed from ACES to Linear
         }
     }
 }
@@ -96,7 +96,7 @@ pub fn filmic_tonemap(x: f32) -> f32 {
     let d = 0.20;
     let e = 0.02;
     let f = 0.30;
-    
+
     let result = ((x * (a * x + c * b) + d * e) / (x * (a * x + b) + d * f)) - e / f;
     result.clamp(0.0, 1.0)
 }
@@ -111,17 +111,21 @@ pub fn hable_tonemap(x: f32) -> f32 {
     let e = 0.02;
     let f = 0.30;
     let w = 11.2;
-    
+
     let curr = ((x * (a * x + c * b) + d * e) / (x * (a * x + b) + d * f)) - e / f;
     let white_scale = 1.0 / (((w * (a * w + c * b) + d * e) / (w * (a * w + b) + d * f)) - e / f);
-    
+
     (curr * white_scale).clamp(0.0, 1.0)
 }
 
 pub fn apply_tonemap_scalar(r: f32, g: f32, b: f32, mode: ToneMapMode) -> (f32, f32, f32) {
     match mode {
         ToneMapMode::ACES => (aces_tonemap(r), aces_tonemap(g), aces_tonemap(b)),
-        ToneMapMode::Reinhard => (reinhard_tonemap(r), reinhard_tonemap(g), reinhard_tonemap(b)),
+        ToneMapMode::Reinhard => (
+            reinhard_tonemap(r),
+            reinhard_tonemap(g),
+            reinhard_tonemap(b),
+        ),
         ToneMapMode::Linear => (linear_tonemap(r), linear_tonemap(g), linear_tonemap(b)),
         ToneMapMode::Filmic => (filmic_tonemap(r), filmic_tonemap(g), filmic_tonemap(b)),
         ToneMapMode::Hable => (hable_tonemap(r), hable_tonemap(g), hable_tonemap(b)),
@@ -161,8 +165,9 @@ fn filmic_tonemap_simd(x: f32x4) -> f32x4 {
     let d = Simd::splat(0.20f32);
     let e = Simd::splat(0.02f32);
     let f = Simd::splat(0.30f32);
-    
-    let result: f32x4 = ((x_safe * (a * x_safe + c * b) + d * e) / (x_safe * (a * x_safe + b) + d * f)) - e / f;
+
+    let result: f32x4 =
+        ((x_safe * (a * x_safe + c * b) + d * e) / (x_safe * (a * x_safe + b) + d * f)) - e / f;
     result.simd_clamp(Simd::splat(0.0), Simd::splat(1.0))
 }
 
@@ -177,10 +182,12 @@ fn hable_tonemap_simd(x: f32x4) -> f32x4 {
     let e: f32x4 = Simd::splat(0.02_f32);
     let f: f32x4 = Simd::splat(0.30_f32);
     let w: f32x4 = Simd::splat(11.2_f32);
-    
-    let curr: f32x4 = ((x_safe * (a * x_safe + c * b) + d * e) / (x_safe * (a * x_safe + b) + d * f)) - e / f;
-    let white_scale: f32x4 = Simd::splat(1.0) / (((w * (a * w + c * b) + d * e) / (w * (a * w + b) + d * f)) - e / f);
-    
+
+    let curr: f32x4 =
+        ((x_safe * (a * x_safe + c * b) + d * e) / (x_safe * (a * x_safe + b) + d * f)) - e / f;
+    let white_scale: f32x4 =
+        Simd::splat(1.0) / (((w * (a * w + c * b) + d * e) / (w * (a * w + b) + d * f)) - e / f);
+
     (curr * white_scale).simd_clamp(Simd::splat(0.0), Simd::splat(1.0))
 }
 
@@ -213,37 +220,66 @@ pub fn apply_gamma_lut(value: f32, gamma_inv: f32) -> f32 {
 #[inline]
 fn apply_gamma_lut_simd(values: f32x4, gamma_inv: f32) -> f32x4 {
     // Optimized SIMD implementation - direct power operation on all lanes
-    
+
     // Clamp values to positive range to avoid issues with powf
     let safe_values = values.simd_max(f32x4::splat(0.0));
-    
+
     // Use SIMD-optimized power function
     // Note: powf is vectorized by LLVM for f32x4 on most modern targets
     let mut result = [0.0f32; 4];
     let input: [f32; 4] = safe_values.into();
     let gamma_inv_scalar = gamma_inv;
-    
+
     // Unrolled loop for better optimization
     result[0] = input[0].powf(gamma_inv_scalar);
     result[1] = input[1].powf(gamma_inv_scalar);
     result[2] = input[2].powf(gamma_inv_scalar);
     result[3] = input[3].powf(gamma_inv_scalar);
-    
+
     f32x4::from_array(result)
 }
 
-pub fn apply_tonemap_simd(r: f32x4, g: f32x4, b: f32x4, mode: ToneMapMode) -> (f32x4, f32x4, f32x4) {
+pub fn apply_tonemap_simd(
+    r: f32x4,
+    g: f32x4,
+    b: f32x4,
+    mode: ToneMapMode,
+) -> (f32x4, f32x4, f32x4) {
     match mode {
-        ToneMapMode::ACES => (aces_tonemap_simd(r), aces_tonemap_simd(g), aces_tonemap_simd(b)),
-        ToneMapMode::Reinhard => (reinhard_tonemap_simd(r), reinhard_tonemap_simd(g), reinhard_tonemap_simd(b)),
+        ToneMapMode::ACES => (
+            aces_tonemap_simd(r),
+            aces_tonemap_simd(g),
+            aces_tonemap_simd(b),
+        ),
+        ToneMapMode::Reinhard => (
+            reinhard_tonemap_simd(r),
+            reinhard_tonemap_simd(g),
+            reinhard_tonemap_simd(b),
+        ),
         ToneMapMode::Linear => {
             let zero = Simd::splat(0.0);
             let one = Simd::splat(1.0);
-            (r.simd_clamp(zero, one), g.simd_clamp(zero, one), b.simd_clamp(zero, one))
-        },
-        ToneMapMode::Filmic => (filmic_tonemap_simd(r), filmic_tonemap_simd(g), filmic_tonemap_simd(b)),
-        ToneMapMode::Hable => (hable_tonemap_simd(r), hable_tonemap_simd(g), hable_tonemap_simd(b)),
-        ToneMapMode::Local => (r.simd_clamp(Simd::splat(0.0), Simd::splat(1.0)), g.simd_clamp(Simd::splat(0.0), Simd::splat(1.0)), b.simd_clamp(Simd::splat(0.0), Simd::splat(1.0))), // Linear fallback
+            (
+                r.simd_clamp(zero, one),
+                g.simd_clamp(zero, one),
+                b.simd_clamp(zero, one),
+            )
+        }
+        ToneMapMode::Filmic => (
+            filmic_tonemap_simd(r),
+            filmic_tonemap_simd(g),
+            filmic_tonemap_simd(b),
+        ),
+        ToneMapMode::Hable => (
+            hable_tonemap_simd(r),
+            hable_tonemap_simd(g),
+            hable_tonemap_simd(b),
+        ),
+        ToneMapMode::Local => (
+            r.simd_clamp(Simd::splat(0.0), Simd::splat(1.0)),
+            g.simd_clamp(Simd::splat(0.0), Simd::splat(1.0)),
+            b.simd_clamp(Simd::splat(0.0), Simd::splat(1.0)),
+        ), // Linear fallback
     }
 }
 
@@ -314,7 +350,7 @@ pub fn tone_map_and_gamma_simd(
 #[inline]
 pub fn tone_map_and_gamma_safe(
     r: f32,
-    g: f32, 
+    g: f32,
     b: f32,
     exposure: f32,
     gamma: f32,
@@ -328,7 +364,7 @@ pub fn tone_map_and_gamma_safe(
 #[inline]
 pub fn tone_map_and_gamma(
     r: f32,
-    g: f32, 
+    g: f32,
     b: f32,
     exposure: f32,
     gamma: f32,
@@ -352,11 +388,7 @@ pub fn tone_map_and_gamma(
     // Korekcja wyjściowa: preferuj prawdziwą krzywą sRGB (OETF) dla gamma ~2.2/2.4
     let use_srgb = (gamma - 2.2).abs() < 0.2 || (gamma - 2.4).abs() < 0.2;
     if use_srgb {
-        (
-            srgb_oetf(tm_r),
-            srgb_oetf(tm_g), 
-            srgb_oetf(tm_b),
-        )
+        (srgb_oetf(tm_r), srgb_oetf(tm_g), srgb_oetf(tm_b))
     } else {
         let gamma_inv = 1.0 / gamma.max(1e-4);
         (
@@ -374,7 +406,7 @@ mod tests {
     #[test]
     fn test_tonemap_modes() {
         let test_value = 2.0;
-        
+
         assert!(aces_tonemap(test_value) <= 1.0);
         assert!(reinhard_tonemap(test_value) <= 1.0);
         assert!(linear_tonemap(test_value) <= 1.0);
@@ -409,12 +441,12 @@ mod tests {
         assert_eq!(ToneMapModeId::FILMIC.inner(), ToneMapMode::Filmic);
         assert_eq!(ToneMapModeId::HABLE.inner(), ToneMapMode::Hable);
         assert_eq!(ToneMapModeId::LOCAL.inner(), ToneMapMode::Local);
-        
+
         // Test i32 conversion
         assert_eq!(ToneMapModeId::from(0).inner(), ToneMapMode::ACES);
         assert_eq!(ToneMapModeId::from(1).inner(), ToneMapMode::Reinhard);
         assert_eq!(ToneMapModeId::from(999).inner(), ToneMapMode::Linear); // Default
-        
+
         // Test as_i32 conversion
         assert_eq!(ToneMapModeId::ACES.as_i32(), 0);
         assert_eq!(ToneMapModeId::REINHARD.as_i32(), 1);
@@ -429,10 +461,12 @@ mod tests {
         let test_b = 0.8;
         let exposure = 1.0;
         let gamma = 2.2;
-        
-        let unsafe_result = tone_map_and_gamma(test_r, test_g, test_b, exposure, gamma, ToneMapMode::ACES);
-        let safe_result = tone_map_and_gamma_safe(test_r, test_g, test_b, exposure, gamma, ToneMapModeId::ACES);
-        
+
+        let unsafe_result =
+            tone_map_and_gamma(test_r, test_g, test_b, exposure, gamma, ToneMapMode::ACES);
+        let safe_result =
+            tone_map_and_gamma_safe(test_r, test_g, test_b, exposure, gamma, ToneMapModeId::ACES);
+
         assert!((unsafe_result.0 - safe_result.0).abs() < 1e-6);
         assert!((unsafe_result.1 - safe_result.1).abs() < 1e-6);
         assert!((unsafe_result.2 - safe_result.2).abs() < 1e-6);
@@ -443,16 +477,21 @@ mod tests {
         // Test that SIMD version produces same results as scalar
         let test_values = f32x4::from_array([0.0, 0.5, 1.0, 2.0]);
         let gamma_inv = 1.0 / 2.2;
-        
+
         let simd_result = apply_gamma_lut_simd(test_values, gamma_inv);
         let simd_array: [f32; 4] = simd_result.into();
-        
+
         // Compare with scalar version
         for i in 0..4 {
             let input = [0.0, 0.5, 1.0, 2.0][i];
             let scalar_result = apply_gamma_lut(input, gamma_inv);
             let diff = (simd_array[i] - scalar_result).abs();
-            assert!(diff < 1e-6, "SIMD and scalar results differ: {} vs {}", simd_array[i], scalar_result);
+            assert!(
+                diff < 1e-6,
+                "SIMD and scalar results differ: {} vs {}",
+                simd_array[i],
+                scalar_result
+            );
         }
     }
 
@@ -460,15 +499,21 @@ mod tests {
     fn test_filmic_vs_hable_difference() {
         // Test że Filmic i Hable dają różne wyniki (Hable ma normalizację białej)
         let test_values = [0.5, 1.0, 2.0, 5.0];
-        
+
         for &val in &test_values {
             let filmic_result = filmic_tonemap(val);
             let hable_result = hable_tonemap(val);
-            
+
             // Dla wartości > 0.5 powinny być różne (normalizacja białej w Hable)
             if val > 0.5 {
                 let diff = (filmic_result - hable_result).abs();
-                assert!(diff > 1e-6, "Filmic and Hable should differ for input {} but got {} vs {}", val, filmic_result, hable_result);
+                assert!(
+                    diff > 1e-6,
+                    "Filmic and Hable should differ for input {} but got {} vs {}",
+                    val,
+                    filmic_result,
+                    hable_result
+                );
             }
         }
     }
@@ -477,40 +522,67 @@ mod tests {
     fn test_all_tonemap_simd_scalar_consistency() {
         // Test że wszystkie implementacje SIMD i skalarne dają identyczne wyniki
         let test_values = [0.0, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0];
-        
+
         for &val in &test_values {
             // Test ACES
             let aces_scalar = aces_tonemap(val);
             let aces_simd = aces_tonemap_simd(f32x4::from_array([val, 0.0, 0.0, 0.0]));
             let aces_simd_array: [f32; 4] = aces_simd.into();
             let aces_diff = (aces_scalar - aces_simd_array[0]).abs();
-            assert!(aces_diff < 1e-6, "ACES SIMD and scalar differ for input {}: {} vs {}", val, aces_simd_array[0], aces_scalar);
-            
+            assert!(
+                aces_diff < 1e-6,
+                "ACES SIMD and scalar differ for input {}: {} vs {}",
+                val,
+                aces_simd_array[0],
+                aces_scalar
+            );
+
             // Test Reinhard
             let reinhard_scalar = reinhard_tonemap(val);
             let reinhard_simd = reinhard_tonemap_simd(f32x4::from_array([val, 0.0, 0.0, 0.0]));
             let reinhard_simd_array: [f32; 4] = reinhard_simd.into();
             let reinhard_diff = (reinhard_scalar - reinhard_simd_array[0]).abs();
-            assert!(reinhard_diff < 1e-6, "Reinhard SIMD and scalar differ for input {}: {} vs {}", val, reinhard_simd_array[0], reinhard_scalar);
-            
+            assert!(
+                reinhard_diff < 1e-6,
+                "Reinhard SIMD and scalar differ for input {}: {} vs {}",
+                val,
+                reinhard_simd_array[0],
+                reinhard_scalar
+            );
+
             // Test Linear (już przetestowane przez clamp)
             let linear_scalar = linear_tonemap(val);
             let linear_expected = val.clamp(0.0, 1.0);
-            assert!((linear_scalar - linear_expected).abs() < 1e-6, "Linear tonemap not working correctly");
-            
+            assert!(
+                (linear_scalar - linear_expected).abs() < 1e-6,
+                "Linear tonemap not working correctly"
+            );
+
             // Test Filmic
             let filmic_scalar = filmic_tonemap(val);
             let filmic_simd = filmic_tonemap_simd(f32x4::from_array([val, 0.0, 0.0, 0.0]));
             let filmic_simd_array: [f32; 4] = filmic_simd.into();
             let filmic_diff = (filmic_scalar - filmic_simd_array[0]).abs();
-            assert!(filmic_diff < 1e-6, "Filmic SIMD and scalar differ for input {}: {} vs {}", val, filmic_simd_array[0], filmic_scalar);
-            
+            assert!(
+                filmic_diff < 1e-6,
+                "Filmic SIMD and scalar differ for input {}: {} vs {}",
+                val,
+                filmic_simd_array[0],
+                filmic_scalar
+            );
+
             // Test Hable
             let hable_scalar = hable_tonemap(val);
             let hable_simd = hable_tonemap_simd(f32x4::from_array([val, 0.0, 0.0, 0.0]));
             let hable_simd_array: [f32; 4] = hable_simd.into();
             let hable_diff = (hable_scalar - hable_simd_array[0]).abs();
-            assert!(hable_diff < 1e-6, "Hable SIMD and scalar differ for input {}: {} vs {}", val, hable_simd_array[0], hable_scalar);
+            assert!(
+                hable_diff < 1e-6,
+                "Hable SIMD and scalar differ for input {}: {} vs {}",
+                val,
+                hable_simd_array[0],
+                hable_scalar
+            );
         }
     }
 
@@ -538,10 +610,19 @@ mod tests {
         }
         let scalar_duration = start.elapsed();
 
-        println!("SIMD version: {:?}, Scalar version: {:?}", simd_duration, scalar_duration);
-        println!("Performance ratio: {:.2}x", scalar_duration.as_nanos() as f64 / simd_duration.as_nanos() as f64);
-        
+        println!(
+            "SIMD version: {:?}, Scalar version: {:?}",
+            simd_duration, scalar_duration
+        );
+        println!(
+            "Performance ratio: {:.2}x",
+            scalar_duration.as_nanos() as f64 / simd_duration.as_nanos() as f64
+        );
+
         // Assert that SIMD is at least not significantly slower (allowing for measurement noise)
-        assert!(simd_duration <= scalar_duration * 2, "SIMD version unexpectedly slow");
+        assert!(
+            simd_duration <= scalar_duration * 2,
+            "SIMD version unexpectedly slow"
+        );
     }
 }

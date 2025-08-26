@@ -1,18 +1,18 @@
 use anyhow::Context;
+use rayon::prelude::*;
 use std::fs;
 use std::path::{Path, PathBuf};
-use rayon::prelude::*;
 
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::{Instant, Duration};
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
 
 use crate::io::image_cache::extract_layers_info;
-use crate::ui::progress::ProgressSink;
 use crate::processing::tone_mapping::ToneMapModeId;
-use std::sync::OnceLock;
+use crate::ui::progress::ProgressSink;
 use lru::LruCache;
 use std::sync::Mutex;
+use std::sync::OnceLock;
 
 // Dodaj importy dla nowego systemu
 use exr::prelude as exr;
@@ -20,8 +20,8 @@ use image;
 
 /// Statistics for timing operations
 pub struct TimingStats {
-    total_load_time: AtomicU64,    // Total time for loading/creating thumbnails (in nanoseconds)
-    total_save_time: AtomicU64,    // Total time for saving thumbnails (in nanoseconds)
+    total_load_time: AtomicU64, // Total time for loading/creating thumbnails (in nanoseconds)
+    total_save_time: AtomicU64, // Total time for saving thumbnails (in nanoseconds)
 }
 
 impl Clone for TimingStats {
@@ -42,10 +42,9 @@ impl TimingStats {
     }
 
     fn add_load_time(&self, duration: Duration) {
-        self.total_load_time.fetch_add(duration.as_nanos() as u64, AtomicOrdering::SeqCst);
+        self.total_load_time
+            .fetch_add(duration.as_nanos() as u64, AtomicOrdering::SeqCst);
     }
-
-
 
     fn get_load_time(&self) -> Duration {
         Duration::from_nanos(self.total_load_time.load(AtomicOrdering::SeqCst))
@@ -78,10 +77,6 @@ impl ColorConfig {
     }
 }
 
-
-
-
-
 /// Generuje miniaturki używając CPU (nowa, wydajna implementacja) - zwraca ExrThumbWork
 /// CUDA-accelerated thumbnail generation (safe fallback version)
 pub fn generate_thumbnails_gpu_raw(
@@ -96,7 +91,6 @@ pub fn generate_thumbnails_gpu_raw(
     generate_thumbnails_cpu_raw(files, thumb_height, exposure, gamma, tonemap_mode, progress)
 }
 
-
 pub fn generate_thumbnails_cpu_raw(
     files: Vec<PathBuf>,
     thumb_height: u32,
@@ -107,11 +101,7 @@ pub fn generate_thumbnails_cpu_raw(
 ) -> anyhow::Result<Vec<ExrThumbWork>> {
     let total_files = files.len();
     let timing_stats = TimingStats::new();
-    let color_config = ColorConfig::new(
-        gamma,
-        exposure,
-        tonemap_mode
-    );
+    let color_config = ColorConfig::new(gamma, exposure, tonemap_mode);
 
     // 1) Równolegle generuj dane miniaturek w typie bezpiecznym dla wątków
     let completed = AtomicUsize::new(0);
@@ -124,21 +114,42 @@ pub fn generate_thumbnails_cpu_raw(
                 let n = completed.fetch_add(1, Ordering::Relaxed) + 1;
                 if let Some(p) = progress {
                     let frac = (n as f32) / (total_files as f32);
-                    p.set(frac, Some(&format!("Cached: {}/{} {}", n, total_files, path.file_name().and_then(|n| n.to_str()).unwrap_or("?"))));
+                    p.set(
+                        frac,
+                        Some(&format!(
+                            "Cached: {}/{} {}",
+                            n,
+                            total_files,
+                            path.file_name().and_then(|n| n.to_str()).unwrap_or("?")
+                        )),
+                    );
                 }
                 return Some(cached);
             }
 
-            let res = generate_single_exr_thumbnail_work_new(&path, thumb_height, &color_config, &timing_stats)
-                .map(|work| {
-                    // Zapisz do cache
-                    put_thumb_cache(&work, thumb_height, exposure, gamma, tonemap_mode);
-                    work
-                });
+            let res = generate_single_exr_thumbnail_work_new(
+                &path,
+                thumb_height,
+                &color_config,
+                &timing_stats,
+            )
+            .map(|work| {
+                // Zapisz do cache
+                put_thumb_cache(&work, thumb_height, exposure, gamma, tonemap_mode);
+                work
+            });
             let n = completed.fetch_add(1, Ordering::Relaxed) + 1;
             if let Some(p) = progress {
                 let frac = (n as f32) / (total_files as f32);
-                p.set(frac, Some(&format!("Processed: {}/{} {}", n, total_files, path.file_name().and_then(|n| n.to_str()).unwrap_or("?"))));
+                p.set(
+                    frac,
+                    Some(&format!(
+                        "Processed: {}/{} {}",
+                        n,
+                        total_files,
+                        path.file_name().and_then(|n| n.to_str()).unwrap_or("?")
+                    )),
+                );
             }
             match res {
                 Ok(work) => Some(work),
@@ -147,20 +158,25 @@ pub fn generate_thumbnails_cpu_raw(
         })
         .collect();
 
-    if let Some(p) = progress { 
-        p.finish(Some(&format!("Thumbnails loaded: {} files processed", works.len()))); 
+    if let Some(p) = progress {
+        p.finish(Some(&format!(
+            "Thumbnails loaded: {} files processed",
+            works.len()
+        )));
     }
-    
+
     let load_time = timing_stats.get_load_time();
     let save_time = timing_stats.get_save_time();
     let processing_time = timing_stats.get_total_time();
-    println!("Thumbnail generation timing: Load: {:.2}ms, Save: {:.2}ms, Total: {:.2}ms", 
-             load_time.as_millis(), save_time.as_millis(), processing_time.as_millis());
-    
+    println!(
+        "Thumbnail generation timing: Load: {:.2}ms, Save: {:.2}ms, Total: {:.2}ms",
+        load_time.as_millis(),
+        save_time.as_millis(),
+        processing_time.as_millis()
+    );
+
     Ok(works)
 }
-
-
 
 pub fn list_exr_files(dir: &Path) -> anyhow::Result<Vec<PathBuf>> {
     let entries = fs::read_dir(dir)
@@ -200,16 +216,16 @@ pub fn generate_single_exr_thumbnail_work_new(
     timing_stats: &TimingStats,
 ) -> anyhow::Result<ExrThumbWork> {
     let load_start = Instant::now();
-    
+
     // Szybkie pobranie metadanych
     let layers_info = extract_layers_info(&exr_path.to_path_buf())
         .with_context(|| format!("Błąd odczytu meta EXR: {}", exr_path.display()))?;
-    
+
     // Skopiuj wartości do closure aby uniknąć problemów z lifetime
     let exposure = color_config.exposure;
     let tonemap_mode = color_config.tonemap_mode;
     let gamma = color_config.gamma;
-    
+
     // Użyj nowoczesnego API exr do wczytania danych
     let reader = exr::read_first_rgba_layer_from_file(
         exr_path,
@@ -221,25 +237,25 @@ pub fn generate_single_exr_thumbnail_work_new(
         // Przetwarzaj piksele z nowoczesnym przetwarzaniem kolorów
         move |pixel_vec, position, (r, g, b, a): (f32, f32, f32, f32)| {
             let index = position.y() * pixel_vec.resolution.width() + position.x();
-            
+
             // Zastosuj ekspozycję
             let exposure_mult = 2.0_f32.powf(exposure);
             let (r, g, b) = (r * exposure_mult, g * exposure_mult, b * exposure_mult);
-            
+
             // Tone mapping używając skonsolidowanej funkcji
             let mode = tonemap_mode.inner();
             let (r, g, b) = crate::processing::tone_mapping::apply_tonemap_scalar(r, g, b, mode);
 
             // Gamma correction
             let gamma_correct = |x: f32| x.powf(1.0 / gamma);
-            
+
             let processed = [
                 (gamma_correct(r) * 255.0) as u8,
                 (gamma_correct(g) * 255.0) as u8,
                 (gamma_correct(b) * 255.0) as u8,
                 (a.clamp(0.0, 1.0) * 255.0) as u8,
             ];
-            
+
             pixel_vec.pixels[index] = image::Rgba(processed);
         },
     )
@@ -259,20 +275,33 @@ pub fn generate_single_exr_thumbnail_work_new(
     let img = image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(
         width,
         height,
-        image_data.pixels.into_iter().flat_map(|rgba| rgba.0).collect::<Vec<u8>>(),
+        image_data
+            .pixels
+            .into_iter()
+            .flat_map(|rgba| rgba.0)
+            .collect::<Vec<u8>>(),
     )
     .ok_or_else(|| anyhow::anyhow!("Could not create image buffer"))?;
 
     // Resize używając szybszego filtra
-    let thumbnail = image::imageops::resize(&img, thumb_width, thumb_height, image::imageops::FilterType::Triangle);
+    let thumbnail = image::imageops::resize(
+        &img,
+        thumb_width,
+        thumb_height,
+        image::imageops::FilterType::Triangle,
+    );
 
     let load_duration = load_start.elapsed();
     timing_stats.add_load_time(load_duration);
 
     // Konwertuj do formatu RGBA8
     let pixels = thumbnail.into_raw();
-    
-    let file_name = exr_path.file_name().and_then(|n| n.to_str()).unwrap_or("?").to_string();
+
+    let file_name = exr_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("?")
+        .to_string();
     let file_size_bytes = fs::metadata(exr_path).map(|m| m.len()).unwrap_or(0);
 
     Ok(ExrThumbWork {
@@ -360,7 +389,11 @@ pub fn c_get(
     tonemap_mode: i32,
 ) -> Option<ExrThumbWork> {
     let preset = make_preset(thumb_h, exposure, gamma, tonemap_mode);
-    let key = ThumbKey { path: path.to_path_buf(), modified: file_mtime_u64(path), preset };
+    let key = ThumbKey {
+        path: path.to_path_buf(),
+        modified: file_mtime_u64(path),
+        preset,
+    };
     if let Ok(mut cache) = get_thumb_cache().lock() {
         cache.get(&key).map(|v| ExrThumbWork {
             path: key.path.clone(),
@@ -376,13 +409,18 @@ pub fn c_get(
     }
 }
 
-pub fn put_thumb_cache(work: &ExrThumbWork, thumb_h: u32, exposure: f32,
-                       gamma: f32, tonemap_mode: i32) {
+pub fn put_thumb_cache(
+    work: &ExrThumbWork,
+    thumb_h: u32,
+    exposure: f32,
+    gamma: f32,
+    tonemap_mode: i32,
+) {
     let preset = make_preset(thumb_h, exposure, gamma, tonemap_mode);
-    let key = ThumbKey { 
-        path: work.path.clone(), 
-        modified: file_mtime_u64(&work.path), 
-        preset 
+    let key = ThumbKey {
+        path: work.path.clone(),
+        modified: file_mtime_u64(&work.path),
+        preset,
     };
     let value = ThumbValue {
         width: work.width,

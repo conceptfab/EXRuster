@@ -9,11 +9,7 @@ fn main() {
 
         let mut res = winres::WindowsResource::new();
         // Szukaj ikony w kilku typowych lokalizacjach
-        let candidates = [
-            "resources/img/icon.ico",
-            "resources/icon.ico",
-            "icon.ico",
-        ];
+        let candidates = ["resources/img/icon.ico", "resources/icon.ico", "icon.ico"];
 
         if let Some(found) = candidates.iter().find(|p| Path::new(p).exists()) {
             res.set_icon(found);

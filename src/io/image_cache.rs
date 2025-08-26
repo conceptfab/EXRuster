@@ -1,16 +1,16 @@
-use slint::{Image, Rgba8Pixel, SharedPixelBuffer};
-use exr::prelude as exr;
-use std::path::PathBuf;
-use rayon::prelude::*;
-use std::collections::HashMap; // potrzebne dla extract_layers_info
-use crate::utils::split_layer_and_short;
 use crate::ui::progress::ProgressSink;
+use crate::utils::split_layer_and_short;
+use exr::prelude as exr;
+use rayon::prelude::*;
+use slint::{Image, Rgba8Pixel, SharedPixelBuffer};
+use std::collections::HashMap; // potrzebne dla extract_layers_info
+use std::path::PathBuf;
 // use crate::color_processing::compute_rgb_to_srgb_matrix_from_file_for_layer;
-use glam::Mat3;
-use std::sync::Arc;
 use crate::io::full_exr_cache::FullExrCacheData;
 use crate::io::lazy_exr_loader::LazyExrLoader;
 use crate::utils::buffer_pool::BufferPool;
+use glam::Mat3;
+use std::sync::Arc;
 use std::sync::OnceLock;
 
 // Global buffer pool for performance optimization
@@ -24,17 +24,24 @@ fn get_buffer_pool() -> Option<&'static Arc<BufferPool>> {
     GLOBAL_BUFFER_POOL.get()
 }
 
-
 /// Zwraca kanoniczny skrót kanału na podstawie aliasów/nazw przyjaznych.
 /// Np. "red"/"Red"/"RED"/"R"/"R8" → "R"; analogicznie dla G/B/A.
 #[inline]
 pub(crate) fn channel_alias_to_short(input: &str) -> String {
     let trimmed = input.trim();
     let upper = trimmed.to_ascii_uppercase();
-    if upper == "R" || upper.starts_with("RED") { return "R".to_string(); }
-    if upper == "G" || upper.starts_with("GREEN") { return "G".to_string(); }
-    if upper == "B" || upper.starts_with("BLUE") { return "B".to_string(); }
-    if upper == "A" || upper.starts_with("ALPHA") { return "A".to_string(); }
+    if upper == "R" || upper.starts_with("RED") {
+        return "R".to_string();
+    }
+    if upper == "G" || upper.starts_with("GREEN") {
+        return "G".to_string();
+    }
+    if upper == "B" || upper.starts_with("BLUE") {
+        return "B".to_string();
+    }
+    if upper == "A" || upper.starts_with("ALPHA") {
+        return "A".to_string();
+    }
     trimmed.to_string()
 }
 
@@ -48,7 +55,7 @@ pub struct LayerInfo {
 
 #[derive(Clone, Debug)]
 pub struct ChannelInfo {
-    pub name: String,           // krótka nazwa (po ostatniej kropce)
+    pub name: String, // krótka nazwa (po ostatniej kropce)
 }
 
 #[derive(Clone, Debug)]
@@ -89,11 +96,15 @@ pub struct ImageCache {
     pub histogram: Option<Arc<crate::processing::histogram::HistogramData>>,
 }
 
-
-
 impl ImageCache {
-    pub fn new_with_full_cache(path: &PathBuf, full_cache: Arc<FullExrCacheData>) -> anyhow::Result<Self> {
-        println!("=== ImageCache::new_with_full_cache START === {}", path.display());
+    pub fn new_with_full_cache(
+        path: &PathBuf,
+        full_cache: Arc<FullExrCacheData>,
+    ) -> anyhow::Result<Self> {
+        println!(
+            "=== ImageCache::new_with_full_cache START === {}",
+            path.display()
+        );
         // Najpierw wyciągnij informacje o warstwach (meta), wybierz najlepszą i wczytaj ją jako startowy podgląd
         let layers_info = extract_layers_info(path)?;
         let best_layer = find_best_layer(&layers_info);
@@ -124,19 +135,24 @@ impl ImageCache {
             histogram: None, // Będzie obliczany na żądanie
         })
     }
-    
-    pub fn load_layer(&mut self, path: &PathBuf, layer_name: &str, progress: Option<&dyn ProgressSink>) -> anyhow::Result<()> {
+
+    pub fn load_layer(
+        &mut self,
+        path: &PathBuf,
+        layer_name: &str,
+        progress: Option<&dyn ProgressSink>,
+    ) -> anyhow::Result<()> {
         println!("=== ImageCache::load_layer START === layer: {}", layer_name);
-        
+
         // Load layer data based on data source
         let layer_channels = match &self.data_source {
             ExrDataSource::Full(full_cache) => {
                 load_all_channels_for_layer_from_full(full_cache, layer_name, progress)?
-            },
+            }
             ExrDataSource::Lazy(lazy_loader) => {
                 let layer_data = lazy_loader.get_layer_data(layer_name, progress)?;
                 layer_data.to_layer_channels()
-            },
+            }
         };
 
         self.width = layer_channels.width;
@@ -161,7 +177,10 @@ impl ImageCache {
         let mut histogram = crate::processing::histogram::HistogramData::new(256);
         histogram.compute_from_rgba_pixels(&self.raw_pixels)?;
         self.histogram = Some(Arc::new(histogram));
-        println!("Histogram updated: {} pixels processed", self.histogram.as_ref().unwrap().total_pixels);
+        println!(
+            "Histogram updated: {} pixels processed",
+            self.histogram.as_ref().unwrap().total_pixels
+        );
         Ok(())
     }
 
@@ -170,10 +189,13 @@ impl ImageCache {
     }
 
     pub fn process_to_image(&self, exposure: f32, gamma: f32, tonemap_mode: i32) -> Image {
-        println!("=== PROCESS_TO_IMAGE START === {}x{}", self.width, self.height);
-        
+        println!(
+            "=== PROCESS_TO_IMAGE START === {}x{}",
+            self.width, self.height
+        );
+
         println!("Using CPU-only processing");
-        
+
         // GPU processing removed - using CPU processing only
 
         // Fallback CPU (SIMD + Rayon)
@@ -183,103 +205,156 @@ impl ImageCache {
 
         let color_m = self.color_matrix_rgb_to_srgb;
 
-        // Optymalizowana SIMD: separuj SIMD od skalarnej reszty  
-        self.process_rgba_chunks_optimized(&self.raw_pixels, out_slice, exposure, gamma, tonemap_mode, color_m);
+        // Optymalizowana SIMD: separuj SIMD od skalarnej reszty
+        self.process_rgba_chunks_optimized(
+            &self.raw_pixels,
+            out_slice,
+            exposure,
+            gamma,
+            tonemap_mode,
+            color_m,
+        );
 
         println!("=== PROCESS_TO_IMAGE END - CPU completed ===");
         Image::from_rgba8(buffer)
     }
-    
-    fn process_rgba_chunks_optimized(&self, input: &[f32], output: &mut [Rgba8Pixel], exposure: f32, gamma: f32, tonemap_mode: i32, color_m: Option<Mat3>) {
+
+    fn process_rgba_chunks_optimized(
+        &self,
+        input: &[f32],
+        output: &mut [Rgba8Pixel],
+        exposure: f32,
+        gamma: f32,
+        tonemap_mode: i32,
+        color_m: Option<Mat3>,
+    ) {
         // Use unified SIMD processing function with parallel processing
         crate::processing::simd_processing::process_rgba_chunk_optimized(
-            input, output, exposure, gamma, tonemap_mode, color_m, false, true
+            input,
+            output,
+            exposure,
+            gamma,
+            tonemap_mode,
+            color_m,
+            false,
+            true,
         );
     }
-    
-    
-    pub fn process_to_composite(&self, exposure: f32, gamma: f32, tonemap_mode: i32, lighting_rgb: bool) -> Image {
+
+    pub fn process_to_composite(
+        &self,
+        exposure: f32,
+        gamma: f32,
+        tonemap_mode: i32,
+        lighting_rgb: bool,
+    ) -> Image {
         let mut buffer = SharedPixelBuffer::<Rgba8Pixel>::new(self.width, self.height);
         let out_slice = buffer.make_mut_slice();
 
         let color_m = self.color_matrix_rgb_to_srgb;
 
-        // Optymalizowana SIMD: separuj SIMD od skalarnej reszty  
-        self.process_rgba_chunks_composite_optimized(&self.raw_pixels, out_slice, exposure, gamma, tonemap_mode, color_m, lighting_rgb);
-        
+        // Optymalizowana SIMD: separuj SIMD od skalarnej reszty
+        self.process_rgba_chunks_composite_optimized(
+            &self.raw_pixels,
+            out_slice,
+            exposure,
+            gamma,
+            tonemap_mode,
+            color_m,
+            lighting_rgb,
+        );
+
         Image::from_rgba8(buffer)
     }
-    
-    fn process_rgba_chunks_composite_optimized(&self, input: &[f32], output: &mut [Rgba8Pixel], exposure: f32, gamma: f32, tonemap_mode: i32, color_m: Option<Mat3>, lighting_rgb: bool) {
+
+    fn process_rgba_chunks_composite_optimized(
+        &self,
+        input: &[f32],
+        output: &mut [Rgba8Pixel],
+        exposure: f32,
+        gamma: f32,
+        tonemap_mode: i32,
+        color_m: Option<Mat3>,
+        lighting_rgb: bool,
+    ) {
         // Use unified SIMD processing function with sequential processing
         crate::processing::simd_processing::process_rgba_chunk_optimized(
-            input, output, exposure, gamma, tonemap_mode, color_m, !lighting_rgb, false
+            input,
+            output,
+            exposure,
+            gamma,
+            tonemap_mode,
+            color_m,
+            !lighting_rgb,
+            false,
         );
     }
-
-
 }
 
 // === GPU path implementation ===
 
 // GPU functions removed - using CPU-only processing
 
-
-
 pub(crate) fn extract_layers_info(path: &PathBuf) -> anyhow::Result<Vec<LayerInfo>> {
-        // Odczytaj jedynie meta-dane (nagłówki) bez pikseli
-        let meta = ::exr::meta::MetaData::read_from_file(path, /*pedantic=*/false)?;
+    // Odczytaj jedynie meta-dane (nagłówki) bez pikseli
+    let meta = ::exr::meta::MetaData::read_from_file(path, /*pedantic=*/ false)?;
 
-        // Mapowanie: nazwa_warstwy -> kanały
-        let mut layer_map: HashMap<String, Vec<ChannelInfo>> = HashMap::new();
-        // Kolejność pierwszego wystąpienia nazw warstw do stabilnego porządku w UI
-        let mut layer_order: Vec<String> = Vec::new();
+    // Mapowanie: nazwa_warstwy -> kanały
+    let mut layer_map: HashMap<String, Vec<ChannelInfo>> = HashMap::new();
+    // Kolejność pierwszego wystąpienia nazw warstw do stabilnego porządku w UI
+    let mut layer_order: Vec<String> = Vec::new();
 
-        for header in meta.headers.iter() {
-            // Preferuj nazwę z atrybutu warstwy; jeśli brak, kanały mogą być w formacie "warstwa.kanał"
-            let base_layer_name: Option<String> = header
-                .own_attributes
-                .layer_name
-                .as_ref()
-                .map(|t| t.to_string());
+    for header in meta.headers.iter() {
+        // Preferuj nazwę z atrybutu warstwy; jeśli brak, kanały mogą być w formacie "warstwa.kanał"
+        let base_layer_name: Option<String> = header
+            .own_attributes
+            .layer_name
+            .as_ref()
+            .map(|t| t.to_string());
 
-            for ch in header.channels.list.iter() {
-                let full_channel_name = ch.name.to_string();
-                let (layer_name_effective, short_channel_name) =
-                    split_layer_and_short(&full_channel_name, base_layer_name.as_deref());
+        for ch in header.channels.list.iter() {
+            let full_channel_name = ch.name.to_string();
+            let (layer_name_effective, short_channel_name) =
+                split_layer_and_short(&full_channel_name, base_layer_name.as_deref());
 
-                let entry = layer_map.entry(layer_name_effective.clone()).or_insert_with(|| {
+            let entry = layer_map
+                .entry(layer_name_effective.clone())
+                .or_insert_with(|| {
                     layer_order.push(layer_name_effective.clone());
                     Vec::new()
                 });
 
-                entry.push(ChannelInfo { name: short_channel_name });
-            }
+            entry.push(ChannelInfo {
+                name: short_channel_name,
+            });
         }
+    }
 
-        // Zbuduj listę warstw w kolejności pierwszego wystąpienia
-        let mut layers: Vec<LayerInfo> = Vec::with_capacity(layer_map.len());
-        for name in layer_order {
-            if let Some(channels) = layer_map.remove(&name) {
-                layers.push(LayerInfo { name, channels });
-            }
+    // Zbuduj listę warstw w kolejności pierwszego wystąpienia
+    let mut layers: Vec<LayerInfo> = Vec::with_capacity(layer_map.len());
+    for name in layer_order {
+        if let Some(channels) = layer_map.remove(&name) {
+            layers.push(LayerInfo { name, channels });
         }
+    }
 
-        Ok(layers)
+    Ok(layers)
 }
 
 pub(crate) fn find_best_layer(layers_info: &[LayerInfo]) -> String {
     // Use unified metadata approach for better layer selection
-    use crate::io::metadata_traits::{LayerDescriptor, utils::find_best_layer as unified_find_best};
-    
+    use crate::io::metadata_traits::{
+        utils::find_best_layer as unified_find_best, LayerDescriptor,
+    };
+
     // Convert to unified format for consistent layer selection logic
-    let unified_layers: Vec<crate::io::metadata_traits::UnifiedLayerInfo> = 
+    let unified_layers: Vec<crate::io::metadata_traits::UnifiedLayerInfo> =
         layers_info.iter().cloned().map(|l| l.into()).collect();
-    
+
     if let Some(best_layer) = unified_find_best(&unified_layers) {
         return best_layer.name().to_string();
     }
-    
+
     // Fallback to original logic if needed
     if let Some(layer) = layers_info.iter().find(|l| l.name.is_empty()) {
         let mut has_r = false;
@@ -287,39 +362,54 @@ pub(crate) fn find_best_layer(layers_info: &[LayerInfo]) -> String {
         let mut has_b = false;
         for ch in &layer.channels {
             let n = ch.name.trim().to_ascii_uppercase();
-            if n == "R" { has_r = true; }
-            else if n == "G" { has_g = true; }
-            else if n == "B" { has_b = true; }
+            if n == "R" {
+                has_r = true;
+            } else if n == "G" {
+                has_g = true;
+            } else if n == "B" {
+                has_b = true;
+            }
         }
         if has_r && has_g && has_b {
             return layer.name.clone();
         }
     }
-    
-    let priority_names = ["beauty", "Beauty", "RGBA", "rgba", "default", "Default", "combined", "Combined"];
-    
+
+    let priority_names = [
+        "beauty", "Beauty", "RGBA", "rgba", "default", "Default", "combined", "Combined",
+    ];
+
     for priority_name in &priority_names {
-        if let Some(layer) = layers_info.iter().find(|l| l.name.to_lowercase().contains(&priority_name.to_lowercase())) {
+        if let Some(layer) = layers_info.iter().find(|l| {
+            l.name
+                .to_lowercase()
+                .contains(&priority_name.to_lowercase())
+        }) {
             return layer.name.clone();
         }
     }
-    
+
     for layer in layers_info {
         let mut has_r = false;
         let mut has_g = false;
         let mut has_b = false;
         for ch in &layer.channels {
             let n = ch.name.trim().to_ascii_uppercase();
-            if n == "R" { has_r = true; }
-            else if n == "G" { has_g = true; }
-            else if n == "B" { has_b = true; }
+            if n == "R" {
+                has_r = true;
+            } else if n == "G" {
+                has_g = true;
+            } else if n == "B" {
+                has_b = true;
+            }
         }
         if has_r && has_g && has_b {
             return layer.name.clone();
         }
     }
-    
-    layers_info.first()
+
+    layers_info
+        .first()
         .map(|l| l.name.clone())
         .unwrap_or_else(|| "Layer 1".to_string())
 }
@@ -330,7 +420,9 @@ pub(crate) fn load_all_channels_for_layer_from_full(
     layer_name: &str,
     _progress: Option<&dyn ProgressSink>,
 ) -> anyhow::Result<LayerChannels> {
-    if let Some(p) = _progress { p.start_indeterminate(Some("Reading layer channels...")); }
+    if let Some(p) = _progress {
+        p.start_indeterminate(Some("Reading layer channels..."));
+    }
 
     let wanted_lower = layer_name.to_lowercase();
 
@@ -341,19 +433,33 @@ pub(crate) fn load_all_channels_for_layer_from_full(
         } else if wanted_lower.is_empty() || lname_lower.is_empty() {
             false
         } else {
-            lname_lower == wanted_lower || lname_lower.contains(&wanted_lower) || wanted_lower.contains(&lname_lower)
+            lname_lower == wanted_lower
+                || lname_lower.contains(&wanted_lower)
+                || wanted_lower.contains(&lname_lower)
         };
         if matches {
-            if let Some(p) = _progress { p.set(0.35, Some("Copying channel data...")); }
+            if let Some(p) = _progress {
+                p.set(0.35, Some("Copying channel data..."));
+            }
             let channel_names = layer.channel_names.clone();
-    
+
             let channel_data = Arc::from(layer.channel_data.as_slice());
-            if let Some(p) = _progress { p.finish(Some("Layer channels loaded")); }
-            return Ok(LayerChannels { layer_name: layer_name.to_string(), width: layer.width, height: layer.height, channel_names, channel_data });
+            if let Some(p) = _progress {
+                p.finish(Some("Layer channels loaded"));
+            }
+            return Ok(LayerChannels {
+                layer_name: layer_name.to_string(),
+                width: layer.width,
+                height: layer.height,
+                channel_names,
+                channel_data,
+            });
         }
     }
 
-    if let Some(p) = _progress { p.reset(); }
+    if let Some(p) = _progress {
+        p.reset();
+    }
     anyhow::bail!(format!("Nie znaleziono warstwy '{}'", layer_name))
 }
 
@@ -377,12 +483,14 @@ pub(crate) fn load_all_channels_for_layer(
         } else if wanted_lower.is_empty() || lname_lower.is_empty() {
             false
         } else {
-            lname_lower == wanted_lower || lname_lower.contains(&wanted_lower) || wanted_lower.contains(&lname_lower)
+            lname_lower == wanted_lower
+                || lname_lower.contains(&wanted_lower)
+                || wanted_lower.contains(&lname_lower)
         };
         if matches {
             let num_channels = layer.channel_data.list.len();
             let mut channel_names: Vec<String> = Vec::with_capacity(num_channels);
-            
+
             // Use buffer pool for channel data - optimized loading
             let channel_data_size = pixel_count * num_channels;
             let mut channel_data_vec = if let Some(pool) = get_buffer_pool() {
@@ -393,25 +501,34 @@ pub(crate) fn load_all_channels_for_layer(
             } else {
                 Vec::with_capacity(channel_data_size)
             };
-            
+
             // Pre-allocate the full buffer and use direct indexing for better performance
             unsafe {
                 channel_data_vec.set_len(channel_data_size);
                 let data_ptr = channel_data_vec.as_mut_ptr();
-                
+
                 for (ci, ch) in layer.channel_data.list.iter().enumerate() {
                     let full = ch.name.to_string();
                     let (_lname, short) = split_layer_and_short(&full, base_attr.as_deref());
                     channel_names.push(short);
-                    
+
                     let channel_base = ci * pixel_count;
-                    for i in 0..pixel_count { 
-                        *data_ptr.add(channel_base + i) = layer.channel_data.list[ci].sample_data.value_by_flat_index(i).to_f32();
+                    for i in 0..pixel_count {
+                        *data_ptr.add(channel_base + i) = layer.channel_data.list[ci]
+                            .sample_data
+                            .value_by_flat_index(i)
+                            .to_f32();
                     }
                 }
             }
             let channel_data = Arc::from(channel_data_vec.into_boxed_slice()); // Convert Vec to Arc<[f32]>
-            return Ok(LayerChannels { layer_name: layer_name.to_string(), width, height, channel_names, channel_data });
+            return Ok(LayerChannels {
+                layer_name: layer_name.to_string(),
+                width,
+                height,
+                channel_names,
+                channel_data,
+            });
         }
     }
     anyhow::bail!(format!("Nie znaleziono warstwy '{}'", layer_name))
@@ -420,7 +537,7 @@ pub(crate) fn load_all_channels_for_layer(
 // Pomocnicze: buduje kompozyt RGB z mapy kanałów - zoptymalizowana wersja
 fn compose_composite_from_channels(layer_channels: &LayerChannels) -> Vec<f32> {
     let pixel_count = (layer_channels.width as usize) * (layer_channels.height as usize);
-    
+
     // Use buffer pool for better performance - optimized allocation
     let buffer_size = pixel_count * 4;
     let mut out = if let Some(pool) = get_buffer_pool() {
@@ -431,11 +548,16 @@ fn compose_composite_from_channels(layer_channels: &LayerChannels) -> Vec<f32> {
     } else {
         Vec::with_capacity(buffer_size)
     };
-    
-    let pick_exact_index = |name: &str| -> Option<usize> { layer_channels.channel_names.iter().position(|n| n == name) };
+
+    let pick_exact_index = |name: &str| -> Option<usize> {
+        layer_channels.channel_names.iter().position(|n| n == name)
+    };
     let pick_prefix_index = |prefix: char| -> Option<usize> {
         let prefix = prefix.to_ascii_uppercase();
-        layer_channels.channel_names.iter().position(|n| n.to_ascii_uppercase().starts_with(prefix))
+        layer_channels
+            .channel_names
+            .iter()
+            .position(|n| n.to_ascii_uppercase().starts_with(prefix))
     };
 
     // Sprawdź czy warstwa ma kanały RGB - jeśli nie, użyj pierwszych 3 dostępnych kanałów
@@ -457,13 +579,17 @@ fn compose_composite_from_channels(layer_channels: &LayerChannels) -> Vec<f32> {
         let r_idx = 0;
         let g_idx = if num_channels > 1 { 1 } else { 0 };
         let b_idx = if num_channels > 2 { 2 } else { g_idx };
-        println!("Non-RGB layer '{}': mapping channels [{}] -> R:{}, G:{}, B:{}", 
-                 layer_channels.layer_name, 
-                 layer_channels.channel_names.join(", "), 
-                 r_idx, g_idx, b_idx);
+        println!(
+            "Non-RGB layer '{}': mapping channels [{}] -> R:{}, G:{}, B:{}",
+            layer_channels.layer_name,
+            layer_channels.channel_names.join(", "),
+            r_idx,
+            g_idx,
+            b_idx
+        );
         (r_idx, g_idx, b_idx)
     };
-    
+
     let a_idx = pick_exact_index("A").or_else(|| pick_prefix_index('A'));
 
     let base_r = r_idx * pixel_count;
@@ -480,7 +606,7 @@ fn compose_composite_from_channels(layer_channels: &LayerChannels) -> Vec<f32> {
     unsafe {
         out.set_len(pixel_count * 4);
         let out_ptr = out.as_mut_ptr();
-        
+
         // Process pixels in chunks of 4 for better cache efficiency
         for i in 0..pixel_count {
             let base_idx = i * 4;
@@ -496,28 +622,57 @@ fn compose_composite_from_channels(layer_channels: &LayerChannels) -> Vec<f32> {
 
 impl ImageCache {
     /// Wczytuje jeden wskazany kanał z danej warstwy i zapisuje go jako grayscale (R=G=B=val, A=1)
-    pub fn load_channel(&mut self, path: &PathBuf, layer_name: &str, channel_short: &str, progress: Option<&dyn ProgressSink>) -> anyhow::Result<()> {
+    pub fn load_channel(
+        &mut self,
+        path: &PathBuf,
+        layer_name: &str,
+        channel_short: &str,
+        progress: Option<&dyn ProgressSink>,
+    ) -> anyhow::Result<()> {
         // Zapewnij, że cache kanałów dla żądanej warstwy jest dostępny
-        let need_reload = self.current_layer_channels.as_ref().map(|lc| lc.layer_name.to_lowercase() != layer_name.to_lowercase()).unwrap_or(true);
+        let need_reload = self
+            .current_layer_channels
+            .as_ref()
+            .map(|lc| lc.layer_name.to_lowercase() != layer_name.to_lowercase())
+            .unwrap_or(true);
         if need_reload {
             // Załaduj wskazaną warstwę (zapełni current_layer_channels oraz ustawi kompozyt)
             self.load_layer(path, layer_name, progress)?;
         }
 
         // Teraz mamy current_layer_channels dla właściwej warstwy
-        let layer_cache = self.current_layer_channels.as_ref().ok_or_else(|| anyhow::anyhow!("Brak cache kanałów dla warstwy"))?;
+        let layer_cache = self
+            .current_layer_channels
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Brak cache kanałów dla warstwy"))?;
 
         let pixel_count = (layer_cache.width as usize) * (layer_cache.height as usize);
 
         let find_channel_index = |wanted: &str| -> Option<usize> {
             // 1) dokładne dopasowanie (case-sensitive)
-            if let Some(idx) = layer_cache.channel_names.iter().position(|k| k == wanted) { return Some(idx); }
+            if let Some(idx) = layer_cache.channel_names.iter().position(|k| k == wanted) {
+                return Some(idx);
+            }
             // 2) case-insensitive
             let wanted_lower = wanted.to_lowercase();
-            if let Some((idx, _)) = layer_cache.channel_names.iter().enumerate().find(|(_, k)| k.to_lowercase() == wanted_lower) { return Some(idx); }
+            if let Some((idx, _)) = layer_cache
+                .channel_names
+                .iter()
+                .enumerate()
+                .find(|(_, k)| k.to_lowercase() == wanted_lower)
+            {
+                return Some(idx);
+            }
             // 3) według kanonicznego skrótu R/G/B/A
             let wanted_canon = channel_alias_to_short(wanted).to_ascii_uppercase();
-            if let Some((idx, _)) = layer_cache.channel_names.iter().enumerate().find(|(_, k)| channel_alias_to_short(k).to_ascii_uppercase() == wanted_canon) { return Some(idx); }
+            if let Some((idx, _)) = layer_cache
+                .channel_names
+                .iter()
+                .enumerate()
+                .find(|(_, k)| channel_alias_to_short(k).to_ascii_uppercase() == wanted_canon)
+            {
+                return Some(idx);
+            }
             None
         };
 
@@ -528,17 +683,20 @@ impl ImageCache {
         let channel_index_opt = if is_depth {
             // Preferuj dokładnie "Z"; w razie braku wybierz kanał zawierający "DEPTH" albo "DISTANCE"
             find_channel_index("Z").or_else(|| {
-                layer_cache
-                    .channel_names
-                    .iter()
-                    .position(|k| k.to_ascii_uppercase().contains("DEPTH") || k.to_ascii_uppercase() == "DISTANCE")
+                layer_cache.channel_names.iter().position(|k| {
+                    k.to_ascii_uppercase().contains("DEPTH") || k.to_ascii_uppercase() == "DISTANCE"
+                })
             })
         } else {
             find_channel_index(channel_short)
         };
 
-        let channel_index = channel_index_opt
-            .ok_or_else(|| anyhow::anyhow!(format!("Nie znaleziono kanału '{}' w warstwie '{}'", channel_short, layer_cache.layer_name)))?;
+        let channel_index = channel_index_opt.ok_or_else(|| {
+            anyhow::anyhow!(format!(
+                "Nie znaleziono kanału '{}' w warstwie '{}'",
+                channel_short, layer_cache.layer_name
+            ))
+        })?;
 
         let base = channel_index * pixel_count;
         let channel_slice = &layer_cache.channel_data[base..base + pixel_count];
@@ -553,15 +711,15 @@ impl ImageCache {
         } else {
             Vec::with_capacity(buffer_size)
         };
-        
+
         // Optimized: expand grayscale channel to RGBA more efficiently
         unsafe {
             out.set_len(buffer_size);
             let out_ptr = out.as_mut_ptr();
-            
+
             for (i, &v) in channel_slice.iter().enumerate() {
                 let base_idx = i * 4;
-                *out_ptr.add(base_idx) = v;     // R
+                *out_ptr.add(base_idx) = v; // R
                 *out_ptr.add(base_idx + 1) = v; // G
                 *out_ptr.add(base_idx + 2) = v; // B
                 *out_ptr.add(base_idx + 3) = 1.0; // A
@@ -576,13 +734,23 @@ impl ImageCache {
     }
 
     /// Specjalne renderowanie głębi: auto-normalizacja percentylowa + opcjonalne odwrócenie
-    pub fn process_depth_image_with_progress(&self, invert: bool, progress: Option<&dyn ProgressSink>) -> Image {
-        if let Some(p) = progress { p.start_indeterminate(Some("Processing depth data...")); }
+    pub fn process_depth_image_with_progress(
+        &self,
+        invert: bool,
+        progress: Option<&dyn ProgressSink>,
+    ) -> Image {
+        if let Some(p) = progress {
+            p.start_indeterminate(Some("Processing depth data..."));
+        }
         let mut buffer = SharedPixelBuffer::<Rgba8Pixel>::new(self.width, self.height);
         let slice = buffer.make_mut_slice();
 
         // Wyciągnij z surowych pikseli jeden kanał (zakładamy, że R=G=B=val)
-        let mut values: Vec<f32> = self.raw_pixels.par_chunks_exact(4).map(|chunk| chunk[0]).collect();
+        let mut values: Vec<f32> = self
+            .raw_pixels
+            .par_chunks_exact(4)
+            .map(|chunk| chunk[0])
+            .collect();
         if values.is_empty() {
             return Image::from_rgba8(buffer);
         }
@@ -592,21 +760,30 @@ impl ImageCache {
         let len = values.len();
         let p_lo_idx = ((len as f32) * 0.01).floor() as usize;
         let mut p_hi_idx = ((len as f32) * 0.99).ceil() as isize - 1;
-        if p_hi_idx < 0 { p_hi_idx = 0; }
+        if p_hi_idx < 0 {
+            p_hi_idx = 0;
+        }
         let p_hi_idx = (p_hi_idx as usize).min(len - 1);
-        let (_, lo_ref, _) = values.select_nth_unstable_by(p_lo_idx, |a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
+        let (_, lo_ref, _) = values
+            .select_nth_unstable_by(p_lo_idx, |a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
         let mut lo = *lo_ref;
-        let (_, hi_ref, _) = values.select_nth_unstable_by(p_hi_idx, |a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
+        let (_, hi_ref, _) = values
+            .select_nth_unstable_by(p_hi_idx, |a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
         let mut hi = *hi_ref;
-        if let Some(p) = progress { p.set(0.4, Some("Computing percentiles...")); }
+        if let Some(p) = progress {
+            p.set(0.4, Some("Computing percentiles..."));
+        }
         if !lo.is_finite() || !hi.is_finite() || (hi - lo).abs() < 1e-20 {
-    
             let mut min_v = f32::INFINITY;
             let mut max_v = f32::NEG_INFINITY;
             for &v in &values {
                 let nv = if v.is_finite() { v } else { 0.0 };
-                if nv < min_v { min_v = nv; }
-                if nv > max_v { max_v = nv; }
+                if nv < min_v {
+                    min_v = nv;
+                }
+                if nv > max_v {
+                    max_v = nv;
+                }
             }
             lo = min_v;
             hi = max_v;
@@ -617,20 +794,34 @@ impl ImageCache {
 
         let map_val = |v: f32| -> u8 {
             let mut t = ((v - lo) / (hi - lo)).clamp(0.0, 1.0);
-            if invert { t = 1.0 - t; }
+            if invert {
+                t = 1.0 - t;
+            }
             (t * 255.0).round().clamp(0.0, 255.0) as u8
         };
 
-        if let Some(p) = progress { p.set(0.8, Some("Rendering depth image...")); }
-        self.raw_pixels.par_chunks_exact(4).zip(slice.par_iter_mut()).for_each(|(chunk, out)| {
-            let g8 = map_val(chunk[0]);
-            *out = Rgba8Pixel { r: g8, g: g8, b: g8, a: 255 };
-        });
+        if let Some(p) = progress {
+            p.set(0.8, Some("Rendering depth image..."));
+        }
+        self.raw_pixels
+            .par_chunks_exact(4)
+            .zip(slice.par_iter_mut())
+            .for_each(|(chunk, out)| {
+                let g8 = map_val(chunk[0]);
+                *out = Rgba8Pixel {
+                    r: g8,
+                    g: g8,
+                    b: g8,
+                    a: 255,
+                };
+            });
 
-        if let Some(p) = progress { p.finish(Some("Depth processed")); }
+        if let Some(p) = progress {
+            p.finish(Some("Depth processed"));
+        }
         Image::from_rgba8(buffer)
     }
-    
+
     /// Clear cached data to free memory (only works in lazy mode)
     #[allow(dead_code)]
     pub fn clear_data_cache(&self) {
@@ -639,5 +830,3 @@ impl ImageCache {
         }
     }
 }
-
-

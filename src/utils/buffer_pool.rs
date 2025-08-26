@@ -1,6 +1,6 @@
-use std::sync::{Mutex, Weak, Arc};
 use std::collections::BTreeMap;
 use std::ops::{Deref, DerefMut};
+use std::sync::{Arc, Mutex, Weak};
 
 /// Wrapper that automatically returns buffer to pool when dropped
 pub struct PooledBuffer<T: Send + 'static> {
@@ -15,7 +15,7 @@ impl<T: Send + 'static> PooledBuffer<T> {
             pool,
         }
     }
-    
+
     /// Take ownership of the inner Vec, preventing return to pool
     pub fn into_inner(mut self) -> Vec<T> {
         self.data.take().unwrap_or_default()
@@ -24,7 +24,7 @@ impl<T: Send + 'static> PooledBuffer<T> {
 
 impl<T: Send + 'static> Deref for PooledBuffer<T> {
     type Target = Vec<T>;
-    
+
     fn deref(&self) -> &Self::Target {
         self.data.as_ref().unwrap()
     }
@@ -91,24 +91,24 @@ impl BufferPool {
             let capacity = (min_capacity * 5 / 4).max(1024);
             Vec::with_capacity(capacity)
         };
-        
+
         PooledBuffer::new(buffer, Arc::downgrade(self))
     }
 
     /// Return a buffer to the pool (called automatically by PooledBuffer::drop)
-    fn return_buffer<T>(&self, buffer: Vec<T>) 
-    where 
+    fn return_buffer<T>(&self, buffer: Vec<T>)
+    where
         T: 'static + Send,
     {
         // Only handle f32 buffers for now
         if std::any::TypeId::of::<T>() == std::any::TypeId::of::<f32>() {
             // Safety: We just checked the type ID matches f32
             let buffer_f32: Vec<f32> = unsafe { std::mem::transmute(buffer) };
-            
+
             if let Ok(mut pool) = self.f32_buffers_by_size.lock() {
                 let capacity = buffer_f32.capacity();
                 let buffers = pool.entry(capacity).or_insert_with(Vec::new);
-                
+
                 // Enforce pool size limit - only store if under limit
                 if buffers.len() < self.max_pool_size {
                     buffers.push(buffer_f32);
@@ -117,11 +117,6 @@ impl BufferPool {
             }
         }
     }
-
-
-
-
-
 }
 
 impl Default for BufferPool {
@@ -130,8 +125,6 @@ impl Default for BufferPool {
     }
 }
 
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -139,7 +132,7 @@ mod tests {
     #[test]
     fn test_buffer_pool_basic_allocation() {
         let pool = Arc::new(BufferPool::new(4));
-        
+
         // Get a buffer
         let buffer = pool.get_f32_buffer(100);
         assert!(buffer.capacity() >= 100);
@@ -149,14 +142,14 @@ mod tests {
     #[test]
     fn test_buffer_pool_capacity() {
         let pool = Arc::new(BufferPool::new(4));
-        
+
         // Get a buffer and use it
         let mut buffer = pool.get_f32_buffer(100);
         buffer.push(1.0);
         buffer.push(2.0);
         assert_eq!(buffer.len(), 2);
         assert!(buffer.capacity() >= 100);
-        
+
         // Get another buffer with different capacity
         let buffer2 = pool.get_f32_buffer(200);
         assert!(buffer2.capacity() >= 200);
@@ -174,12 +167,12 @@ mod tests {
             // Buffer is automatically returned to pool when dropped
             cap
         };
-        
+
         // Get another buffer of same size - should reuse the previous one
         let mut buffer2 = pool.get_f32_buffer(100);
         assert_eq!(buffer2.capacity(), capacity);
         assert_eq!(buffer2.len(), 0); // Buffer should be cleared when reused
-        
+
         buffer2.push(1.0);
         assert_eq!(buffer2[0], 1.0);
     }
@@ -187,14 +180,14 @@ mod tests {
     #[test]
     fn test_buffer_pool_size_limit() {
         let pool = Arc::new(BufferPool::new(2)); // Only 2 buffers per size
-        
+
         // Create and drop 3 buffers of same capacity
         for i in 0..3 {
             let mut buffer = pool.get_f32_buffer(100);
             buffer.push(i as f32);
             // Buffer automatically returned on drop
         }
-        
+
         // Pool should only keep 2 buffers due to size limit
         let pool_state = pool.f32_buffers_by_size.lock().unwrap();
         if let Some(buffers) = pool_state.values().next() {

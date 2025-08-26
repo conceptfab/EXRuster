@@ -44,7 +44,8 @@
       "WebFetch(domain:docs.slint.dev)",
       "Bash(timeout 25s cargo run --bin EXruster_nightly)",
       "Bash(timeout 15s cargo test buffer_pool)",
-      "Bash(timeout 10s cargo test test_buffer_pool_reuse -- --nocapture)"
+      "Bash(timeout 10s cargo test test_buffer_pool_reuse -- --nocapture)",
+      "Bash(timeout 60s cargo check)"
     ],
     "deny": [],
     "ask": []

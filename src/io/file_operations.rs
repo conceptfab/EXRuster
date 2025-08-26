@@ -2,7 +2,7 @@ use rfd::FileDialog;
 use std::path::PathBuf;
 
 /// Otwiera dialog wyboru pliku i zwraca wybraną ścieżkę
-/// 
+///
 /// # Returns
 /// * `Option<PathBuf>` - ścieżka do wybranego pliku lub None jeśli anulowano
 pub fn open_file_dialog() -> Option<PathBuf> {
@@ -13,12 +13,11 @@ pub fn open_file_dialog() -> Option<PathBuf> {
         .pick_file()
 }
 
-
 /// Pobiera nazwę pliku z ścieżki
-/// 
+///
 /// # Arguments
 /// * `path` - ścieżka do pliku
-/// 
+///
 /// # Returns
 /// * `String` - nazwa pliku lub "Nieznany plik" jeśli nie można pobrać nazwy
 pub fn get_file_name(path: &PathBuf) -> String {
@@ -34,4 +33,3 @@ pub fn open_folder_dialog() -> Option<PathBuf> {
         .set_title("Wybierz folder roboczy")
         .pick_folder()
 }
-

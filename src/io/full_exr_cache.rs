@@ -27,7 +27,9 @@ pub fn build_full_exr_cache(
     path: &PathBuf,
     progress: Option<&dyn ProgressSink>,
 ) -> anyhow::Result<FullExrCacheData> {
-    if let Some(p) = progress { p.set(0.18, Some("Reading EXR (pixels)...")); }
+    if let Some(p) = progress {
+        p.set(0.18, Some("Reading EXR (pixels)..."));
+    }
     let any_image = exr::read_all_flat_layers_from_file(path)
         .with_context(|| format!("Błąd wczytania EXR: {}", path.display()))?;
 
@@ -43,11 +45,7 @@ pub fn build_full_exr_cache(
         let height = layer.size.height() as u32;
         let pixel_count = (width as usize) * (height as usize);
 
-        let base_attr: Option<String> = layer
-            .attributes
-            .layer_name
-            .as_ref()
-            .map(|s| s.to_string());
+        let base_attr: Option<String> = layer.attributes.layer_name.as_ref().map(|s| s.to_string());
 
         for (idx, ch) in layer.channel_data.list.iter().enumerate() {
             let full = ch.name.to_string();
@@ -57,10 +55,16 @@ pub fn build_full_exr_cache(
                 (width, height, Vec::new(), Vec::new())
             });
             // Jeśli rozmiary różnią się (rzadkie), preferuj pierwszy i pomiń konfliktujące kanały
-            if entry.0 != width || entry.1 != height { continue; }
+            if entry.0 != width || entry.1 != height {
+                continue;
+            }
             entry.2.push(short);
-            let samples = (0..pixel_count)
-                .map(|i| layer.channel_data.list[idx].sample_data.value_by_flat_index(i).to_f32());
+            let samples = (0..pixel_count).map(|i| {
+                layer.channel_data.list[idx]
+                    .sample_data
+                    .value_by_flat_index(i)
+                    .to_f32()
+            });
             entry.3.extend(samples);
         }
     }
@@ -68,16 +72,20 @@ pub fn build_full_exr_cache(
     let mut out_layers: Vec<FullLayer> = Vec::with_capacity(layer_map.len());
     for name in layer_order {
         if let Some((w, h, channel_names, channel_data)) = layer_map.remove(&name) {
-            out_layers.push(FullLayer { name, width: w, height: h, channel_names, channel_data });
+            out_layers.push(FullLayer {
+                name,
+                width: w,
+                height: h,
+                channel_names,
+                channel_data,
+            });
         }
     }
 
-    if let Some(p) = progress { p.set(0.24, Some("EXR in RAM")); }
+    if let Some(p) = progress {
+        p.set(0.24, Some("EXR in RAM"));
+    }
     Ok(FullExrCacheData { layers: out_layers })
 }
 
 // Plik został oczyszczony z nieużywanego kodu zgodnie z analizą optymalizacji
-
-
-
-

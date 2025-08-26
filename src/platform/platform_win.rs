@@ -13,7 +13,10 @@ pub fn try_set_runtime_window_icon() -> bool {
     };
 
     // Znajdź uchwyt okna po tytule ustawionym w `ui/appwindow.slint`
-    let title_wide: Vec<u16> = OsStr::new("EXRuster").encode_wide().chain(Some(0)).collect();
+    let title_wide: Vec<u16> = OsStr::new("EXRuster")
+        .encode_wide()
+        .chain(Some(0))
+        .collect();
     unsafe {
         let hwnd = match FindWindowW(PCWSTR(std::ptr::null()), PCWSTR(title_wide.as_ptr())) {
             Ok(h) => h,
@@ -43,13 +46,21 @@ pub fn try_set_runtime_window_icon() -> bool {
             let big_w = GetSystemMetrics(SM_CXICON);
             let big_h = GetSystemMetrics(SM_CYICON);
 
-            let path_wide: Vec<u16> =
-                OsStr::new(icon_path.as_os_str()).encode_wide().chain(Some(0)).collect();
-            let hicon =
-                match LoadImageW(None, PCWSTR(path_wide.as_ptr()), IMAGE_ICON, big_w, big_h, LR_LOADFROMFILE) {
-                    Ok(h) => h,
-                    Err(_) => return false,
-                };
+            let path_wide: Vec<u16> = OsStr::new(icon_path.as_os_str())
+                .encode_wide()
+                .chain(Some(0))
+                .collect();
+            let hicon = match LoadImageW(
+                None,
+                PCWSTR(path_wide.as_ptr()),
+                IMAGE_ICON,
+                big_w,
+                big_h,
+                LR_LOADFROMFILE,
+            ) {
+                Ok(h) => h,
+                Err(_) => return false,
+            };
 
             if !hicon.0.is_null() {
                 // Ustawienie na poziomie instancji klasy okna (fallback gdy WM_SETICON nie działa)

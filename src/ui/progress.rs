@@ -1,6 +1,6 @@
+use slint::invoke_from_event_loop;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use slint::invoke_from_event_loop;
 
 // Import komponentów Slint
 use crate::AppWindow;
@@ -22,9 +22,9 @@ pub struct UiProgress {
 impl UiProgress {
     pub fn new(ui: slint::Weak<AppWindow>) -> Self {
         // Zmniejszamy throttling do 20ms dla lepszej responsywności
-        Self { 
-            ui, 
-            last_update: Arc::new(Mutex::new(Instant::now() - Duration::from_millis(100))), 
+        Self {
+            ui,
+            last_update: Arc::new(Mutex::new(Instant::now() - Duration::from_millis(100))),
             min_interval: Duration::from_millis(20),
             last_progress: Arc::new(Mutex::new(0.0)),
         }
@@ -63,16 +63,16 @@ impl ProgressSink for UiProgress {
     fn set(&self, progress_0_1: f32, message: Option<&str>) {
         let clamped = progress_0_1.clamp(0.0, 1.0);
         let msg = message.map(|s| s.to_string());
-        
+
         // Sprawdź czy progress się zmienił znacząco
         let mut last_progress = self.last_progress.lock().unwrap();
         let progress_diff = (clamped - *last_progress).abs();
-        
+
         // Aktualizuj częściej - co 0.5% postępu, przy wiadomościach, lub przy znaczących zmianach
-        let force = msg.is_some() || 
-                   progress_diff >= 0.005 || 
-                   (clamped * 200.0).round() != (*last_progress * 200.0).round();
-        
+        let force = msg.is_some()
+            || progress_diff >= 0.005
+            || (clamped * 200.0).round() != (*last_progress * 200.0).round();
+
         if force {
             self.do_update(clamped, msg.clone());
             *self.last_update.lock().unwrap() = Instant::now();
@@ -85,7 +85,7 @@ impl ProgressSink for UiProgress {
     fn finish(&self, message: Option<&str>) {
         let msg = message.map(|s| s.to_string());
         self.do_update(1.0, msg);
-        
+
         // Resetuj progress po 500ms (dłużej żeby użytkownik zobaczył)
         let weak = self.ui.clone();
         let _ = invoke_from_event_loop(move || {
@@ -95,7 +95,7 @@ impl ProgressSink for UiProgress {
                 }
             });
         });
-        
+
         *self.last_progress.lock().unwrap() = 0.0;
     }
 
@@ -162,7 +162,6 @@ impl ScopedProgress {
     }
 }
 
-
 impl Drop for ScopedProgress {
     fn drop(&mut self) {
         if self.auto_finish {
@@ -188,7 +187,11 @@ pub mod patterns {
     use super::*;
 
     /// Create a file operation progress
-    pub fn file_operation(ui: slint::Weak<AppWindow>, operation: &str, filename: &str) -> ScopedProgress {
+    pub fn file_operation(
+        ui: slint::Weak<AppWindow>,
+        operation: &str,
+        filename: &str,
+    ) -> ScopedProgress {
         let message = format!("{}: {}", operation, filename);
         ScopedProgress::from_ui(ui).start_indeterminate(Some(&message))
     }

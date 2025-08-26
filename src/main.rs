@@ -3,17 +3,17 @@
 
 slint::include_modules!();
 
-mod processing;
 mod io;
+mod processing;
 mod ui;
 mod utils;
 
 #[cfg(target_os = "windows")]
 mod platform;
 
-use std::sync::{Arc, Mutex};
-use crate::ui::{create_shared_state};
-use ui::{ImageCacheType, CurrentFilePathType, FullExrCache, SharedUiState};
+use crate::ui::create_shared_app_state;
+use std::sync::Arc;
+use ui::SharedAppState;
 // BufferPool is now available via crate::utils::BufferPool re-export
 
 fn main() -> Result<(), slint::PlatformError> {
@@ -22,7 +22,7 @@ fn main() -> Result<(), slint::PlatformError> {
         eprintln!("PANIC: {}", panic_info);
         eprintln!("Aplikacja przechodzi w tryb awaryjny...");
     }));
-    
+
     // Ustaw Rayon thread pool na podstawie CPU cores
     rayon::ThreadPoolBuilder::new()
         .num_threads((num_cpus::get() - 1).max(1)) // Zostaw 1 core dla UI
@@ -30,7 +30,6 @@ fn main() -> Result<(), slint::PlatformError> {
         .expect("Failed to initialize thread pool");
 
     let ui = AppWindow::new()?;
-
 
     #[cfg(target_os = "windows")]
     {
@@ -42,32 +41,33 @@ fn main() -> Result<(), slint::PlatformError> {
         let timer_weak: Weak<slint::Timer> = Rc::downgrade(&timer);
         let retries = Rc::new(Cell::new(0));
         let retries_c = retries.clone();
-        timer.start(TimerMode::Repeated, std::time::Duration::from_millis(150), move || {
-            let done = crate::platform::try_set_runtime_window_icon();
-            let n = retries_c.get();
-            if done || n >= 40 {
-                if let Some(t) = timer_weak.upgrade() { t.stop(); }
-            } else {
-                retries_c.set(n + 1);
-            }
-        });
+        timer.start(
+            TimerMode::Repeated,
+            std::time::Duration::from_millis(150),
+            move || {
+                let done = crate::platform::try_set_runtime_window_icon();
+                let n = retries_c.get();
+                if done || n >= 40 {
+                    if let Some(t) = timer_weak.upgrade() {
+                        t.stop();
+                    }
+                } else {
+                    retries_c.set(n + 1);
+                }
+            },
+        );
     }
-    
 
     println!("Application running in CPU-only mode");
-    
-    let image_cache: ImageCacheType = Arc::new(Mutex::new(None));
-    let current_file_path: CurrentFilePathType = Arc::new(Mutex::new(None));
-    let full_exr_cache: FullExrCache = Arc::new(Mutex::new(None));
-    let ui_state: SharedUiState = create_shared_state();
-    
+
+    let app_state: SharedAppState = create_shared_app_state();
+
     // Initialize global buffer pool for performance optimization
     let buffer_pool = Arc::new(crate::utils::BufferPool::new(32)); // Pool of 32 buffers per type
     crate::io::image_cache::set_global_buffer_pool(buffer_pool.clone());
 
     // Setup UI callbacks...
-    let console_model = crate::ui::setup_ui_callbacks(&ui, image_cache.clone(), current_file_path.clone(), full_exr_cache.clone(), ui_state.clone());
-
+    let console_model = crate::ui::setup_ui_callbacks(&ui, app_state.clone());
 
     {
         use std::ffi::OsString;
@@ -77,18 +77,17 @@ fn main() -> Result<(), slint::PlatformError> {
                 let p = std::path::PathBuf::from(a);
                 if p.is_file() {
                     if let Some(ext) = p.extension().and_then(|e| e.to_str()) {
-                        if ext.eq_ignore_ascii_case("exr") { return Some(p); }
+                        if ext.eq_ignore_ascii_case("exr") {
+                            return Some(p);
+                        }
                     }
                 }
                 None
             }) {
                 crate::ui::handle_open_exr_from_path(
                     ui.as_weak(),
-                    current_file_path.clone(),
-                    image_cache.clone(),
+                    app_state.clone(),
                     console_model.clone(),
-                    full_exr_cache.clone(),
-                    ui_state.clone(),
                     first_exr.clone(),
                 );
 
@@ -98,25 +97,26 @@ fn main() -> Result<(), slint::PlatformError> {
                             .filter_map(|e| e.ok())
                             .map(|e| e.path())
                             .filter(|p| p.is_file())
-                            .filter(|p| p.extension().and_then(|e| e.to_str()).map(|s| s.eq_ignore_ascii_case("exr")).unwrap_or(false))
+                            .filter(|p| {
+                                p.extension()
+                                    .and_then(|e| e.to_str())
+                                    .map(|s| s.eq_ignore_ascii_case("exr"))
+                                    .unwrap_or(false)
+                            })
                             .count();
 
                         if exr_count > 1 {
-    
-                            crate::ui::load_thumbnails_for_directory(ui.as_weak(), dir, console_model.clone());
+                            crate::ui::load_thumbnails_for_directory(
+                                ui.as_weak(),
+                                dir,
+                                console_model.clone(),
+                            );
                         }
                     }
                 }
             }
         }
     }
-    
+
     ui.run()
 }
-
-
-
-
-
-
-

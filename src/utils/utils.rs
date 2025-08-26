@@ -1,6 +1,6 @@
 // Wspólne funkcje pomocnicze używane w wielu modułach
-use slint::Color;
 use crate::AppWindow;
+use slint::Color;
 
 #[inline]
 pub fn split_layer_and_short(full: &str, base_attr: Option<&str>) -> (String, String) {
@@ -12,7 +12,7 @@ pub fn split_layer_and_short(full: &str, base_attr: Option<&str>) -> (String, St
     } else {
         ("".to_string(), full.to_string())
     };
-    
+
     result
 }
 
@@ -38,10 +38,26 @@ pub fn get_channel_info(channel: &str, ui: &AppWindow) -> (Color, String, String
     let upper = channel.trim().to_ascii_uppercase();
     match upper.as_str() {
         "R" | "RED" => (ui.get_layers_color_r(), "🔴".to_string(), "Red".to_string()),
-        "G" | "GREEN" => (ui.get_layers_color_g(), "🟢".to_string(), "Green".to_string()),
-        "B" | "BLUE" => (ui.get_layers_color_b(), "🔵".to_string(), "Blue".to_string()),
-        "A" | "ALPHA" => (ui.get_layers_color_default(), "⚪".to_string(), "Alpha".to_string()),
-        _ => (ui.get_layers_color_default(), "•".to_string(), channel.to_string()),
+        "G" | "GREEN" => (
+            ui.get_layers_color_g(),
+            "🟢".to_string(),
+            "Green".to_string(),
+        ),
+        "B" | "BLUE" => (
+            ui.get_layers_color_b(),
+            "🔵".to_string(),
+            "Blue".to_string(),
+        ),
+        "A" | "ALPHA" => (
+            ui.get_layers_color_default(),
+            "⚪".to_string(),
+            "Alpha".to_string(),
+        ),
+        _ => (
+            ui.get_layers_color_default(),
+            "•".to_string(),
+            channel.to_string(),
+        ),
     }
 }
 

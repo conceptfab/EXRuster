@@ -1,9 +1,9 @@
-use core::simd::{f32x4, Simd};
-use std::simd::prelude::SimdFloat;
-use slint::Rgba8Pixel;
-use glam::{Mat3, Vec3};
-use crate::processing::image_processing::process_pixel;
 use crate::processing::histogram::LuminanceWeights;
+use crate::processing::image_processing::process_pixel;
+use core::simd::{f32x4, Simd};
+use glam::{Mat3, Vec3};
+use slint::Rgba8Pixel;
+use std::simd::prelude::SimdFloat;
 
 #[cfg(feature = "unified_simd")]
 use crate::processing::tone_mapping::{ToneMapMode, ToneMapModeId};
@@ -14,7 +14,7 @@ use crate::processing::tone_mapping::{ToneMapMode, ToneMapModeId};
 #[cfg(feature = "unified_simd")]
 mod unified_processing {
     use super::*;
-    
+
     /// Parameters for pixel processing operations
     #[derive(Clone, Copy)]
     pub struct ProcessParams {
@@ -40,7 +40,7 @@ mod unified_processing {
         pub fn apply_exposure(&self, value: f32, exposure_multiplier: f32) -> f32 {
             value * exposure_multiplier
         }
-        
+
         pub fn apply_tonemap(&self, value: f32, mode: ToneMapMode) -> f32 {
             use ToneMapMode::*;
             match mode {
@@ -51,14 +51,14 @@ mod unified_processing {
                     let d = 0.59;
                     let e = 0.14;
                     ((value * (a * value + b)) / (value * (c * value + d) + e)).clamp(0.0, 1.0)
-                },
+                }
                 Reinhard => value / (1.0 + value),
                 Filmic => {
                     let x_max = 0.22 * 11.2;
                     let linear = 0.22 * value;
                     let squared = 0.1 * value * value;
                     ((linear + squared) / (1.0 + linear + squared)).min(x_max)
-                },
+                }
                 Hable => {
                     let a = 0.15;
                     let b = 0.50;
@@ -67,16 +67,19 @@ mod unified_processing {
                     let e = 0.02;
                     let f = 0.30;
                     let w = 11.2;
-                    
-                    let curr = ((value * (a * value + c * b) + d * e) / (value * (a * value + b) + d * f)) - e / f;
-                    let white_scale = ((w * (a * w + c * b) + d * e) / (w * (a * w + b) + d * f)) - e / f;
+
+                    let curr = ((value * (a * value + c * b) + d * e)
+                        / (value * (a * value + b) + d * f))
+                        - e / f;
+                    let white_scale =
+                        ((w * (a * w + c * b) + d * e) / (w * (a * w + b) + d * f)) - e / f;
                     (curr / white_scale).clamp(0.0, 1.0)
-                },
+                }
                 Linear => value.clamp(0.0, 1.0),
                 Local => value.clamp(0.0, 1.0), // Fallback for local tone mapping
             }
         }
-        
+
         pub fn apply_gamma(&self, value: f32, gamma_inv: f32, use_srgb: bool) -> f32 {
             if use_srgb {
                 if value <= 0.0031308 {
@@ -88,49 +91,56 @@ mod unified_processing {
                 value.powf(gamma_inv).clamp(0.0, 1.0)
             }
         }
-        
+
         pub fn clamp_unit(&self, value: f32) -> f32 {
             value.clamp(0.0, 1.0)
         }
-        
+
         pub fn select_finite(&self, value: f32, fallback: f32) -> f32 {
-            if value.is_finite() && value >= 0.0 { value } else { fallback }
+            if value.is_finite() && value >= 0.0 {
+                value
+            } else {
+                fallback
+            }
         }
     }
 
     /// Unified processing function that works with scalar types
     pub fn process_pixel_unified(
         processor: &ScalarProcessor,
-        r: f32, g: f32, b: f32, a: f32,
+        r: f32,
+        g: f32,
+        b: f32,
+        a: f32,
         params: &ProcessParams,
     ) -> (f32, f32, f32, f32) {
         let exposure_multiplier = 2.0_f32.powf(params.exposure);
-        
+
         // Clean up inputs (handle NaN/Inf)
         let clean_r = processor.select_finite(r, 0.0);
         let clean_g = processor.select_finite(g, 0.0);
         let clean_b = processor.select_finite(b, 0.0);
         let clean_a = processor.select_finite(a, 1.0);
-        
+
         // Apply exposure
         let exposed_r = processor.apply_exposure(clean_r, exposure_multiplier);
         let exposed_g = processor.apply_exposure(clean_g, exposure_multiplier);
         let exposed_b = processor.apply_exposure(clean_b, exposure_multiplier);
-        
+
         // Apply tone mapping
         let tone_mapped_r = processor.apply_tonemap(exposed_r, params.tonemap_mode);
         let tone_mapped_g = processor.apply_tonemap(exposed_g, params.tonemap_mode);
         let tone_mapped_b = processor.apply_tonemap(exposed_b, params.tonemap_mode);
-        
+
         // Apply gamma correction
         let use_srgb = (params.gamma - 2.2).abs() < 0.2 || (params.gamma - 2.4).abs() < 0.2;
         let gamma_inv = 1.0 / params.gamma.max(1e-4);
-        
+
         let final_r = processor.apply_gamma(tone_mapped_r, gamma_inv, use_srgb);
         let final_g = processor.apply_gamma(tone_mapped_g, gamma_inv, use_srgb);
         let final_b = processor.apply_gamma(tone_mapped_b, gamma_inv, use_srgb);
         let final_a = processor.clamp_unit(clean_a);
-        
+
         (final_r, final_g, final_b, final_a)
     }
 }
@@ -160,7 +170,14 @@ pub fn process_simd_chunk_rgba(
     }
 
     // Apply tone mapping and gamma correction
-    let (r8, g8, b8) = crate::processing::tone_mapping::tone_map_and_gamma_simd(r, g, b, exposure, gamma, tonemap_mode);
+    let (r8, g8, b8) = crate::processing::tone_mapping::tone_map_and_gamma_simd(
+        r,
+        g,
+        b,
+        exposure,
+        gamma,
+        tonemap_mode,
+    );
     let a8 = a.simd_clamp(Simd::splat(0.0), Simd::splat(1.0));
 
     // Convert to u8 and store
@@ -183,8 +200,15 @@ pub fn process_simd_chunk_grayscale(
         (r, g, b) = apply_color_matrix_simd(r, g, b, mat);
     }
 
-    let (r_tm, g_tm, b_tm) = crate::processing::tone_mapping::tone_map_and_gamma_simd(r, g, b, exposure, gamma, tonemap_mode);
-    
+    let (r_tm, g_tm, b_tm) = crate::processing::tone_mapping::tone_map_and_gamma_simd(
+        r,
+        g,
+        b,
+        exposure,
+        gamma,
+        tonemap_mode,
+    );
+
     // Convert to grayscale using Rec.709 luminance weights
     let (wr, wg, wb) = LuminanceWeights::default().coefficients();
     let gray = (Simd::splat(wr) * r_tm + Simd::splat(wg) * g_tm + Simd::splat(wb) * b_tm)
@@ -210,7 +234,7 @@ fn load_rgba_simd(input: &[f32]) -> (f32x4, f32x4, f32x4, f32x4) {
 fn apply_color_matrix_simd(r: f32x4, g: f32x4, b: f32x4, mat: Mat3) -> (f32x4, f32x4, f32x4) {
     // Pre-splat matrix elements for SIMD
     let m00 = Simd::splat(mat.x_axis.x);
-    let m01 = Simd::splat(mat.y_axis.x);  
+    let m01 = Simd::splat(mat.y_axis.x);
     let m02 = Simd::splat(mat.z_axis.x);
     let m10 = Simd::splat(mat.x_axis.y);
     let m11 = Simd::splat(mat.y_axis.y);
@@ -223,7 +247,7 @@ fn apply_color_matrix_simd(r: f32x4, g: f32x4, b: f32x4, mat: Mat3) -> (f32x4, f
     let rr = m00 * r + m01 * g + m02 * b;
     let gg = m10 * r + m11 * g + m12 * b;
     let bb = m20 * r + m21 * g + m22 * b;
-    
+
     (rr, gg, bb)
 }
 
@@ -253,14 +277,19 @@ fn store_grayscale_simd(gray: f32x4, a: f32x4, output: &mut [Rgba8Pixel]) {
 
     for i in 0..4 {
         let g8 = (ga[i] * 255.0).round().clamp(0.0, 255.0) as u8;
-        output[i] = Rgba8Pixel { r: g8, g: g8, b: g8, a: aa[i] as u8 };
+        output[i] = Rgba8Pixel {
+            r: g8,
+            g: g8,
+            b: g8,
+            a: aa[i] as u8,
+        };
     }
 }
 
 /// Scalar processing for remainder pixels that don't fit in SIMD chunks
 pub fn process_scalar_pixels(
     input: &[f32],
-    output: &mut [Rgba8Pixel], 
+    output: &mut [Rgba8Pixel],
     exposure: f32,
     gamma: f32,
     tonemap_mode: i32,
@@ -270,10 +299,10 @@ pub fn process_scalar_pixels(
     // Option to use unified processing approach
     #[cfg(feature = "unified_simd")]
     {
-        use unified_processing::{ScalarProcessor, ProcessParams, process_pixel_unified};
+        use unified_processing::{process_pixel_unified, ProcessParams, ScalarProcessor};
         let processor = ScalarProcessor;
         let params = ProcessParams::new(exposure, gamma, tonemap_mode);
-        
+
         let pixel_count = input.len() / 4;
         for i in 0..pixel_count {
             let pixel_start = i * 4;
@@ -281,15 +310,18 @@ pub fn process_scalar_pixels(
             let mut g = input[pixel_start + 1];
             let mut b = input[pixel_start + 2];
             let a = input[pixel_start + 3];
-            
+
             // Apply color matrix if provided
             if let Some(mat) = color_matrix {
                 let v = mat * Vec3::new(r, g, b);
-                r = v.x; g = v.y; b = v.z;
+                r = v.x;
+                g = v.y;
+                b = v.z;
             }
-            
-            let (final_r, final_g, final_b, final_a) = process_pixel_unified(&processor, r, g, b, a, &params);
-            
+
+            let (final_r, final_g, final_b, final_a) =
+                process_pixel_unified(&processor, r, g, b, a, &params);
+
             if grayscale {
                 let gray = LuminanceWeights::default().luminance(final_r, final_g, final_b);
                 output[i] = Rgba8Pixel {
@@ -309,22 +341,24 @@ pub fn process_scalar_pixels(
         }
         return;
     }
-    
+
     // Original implementation (fallback)
     let pixel_count = input.len() / 4;
-    
+
     for i in 0..pixel_count {
         let pixel_start = i * 4;
         let r0 = input[pixel_start];
         let g0 = input[pixel_start + 1];
         let b0 = input[pixel_start + 2];
         let a0 = input[pixel_start + 3];
-        
+
         // Apply color matrix if provided
         let (mut r, mut g, mut b) = (r0, g0, b0);
         if let Some(mat) = color_matrix {
             let v = mat * Vec3::new(r, g, b);
-            r = v.x; g = v.y; b = v.z;
+            r = v.x;
+            g = v.y;
+            b = v.z;
         }
 
         if grayscale {
@@ -334,13 +368,17 @@ pub fn process_scalar_pixels(
             let bb = (px.b as f32) / 255.0;
             let gray_val = rr.max(gg).max(bb).clamp(0.0, 1.0);
             let g8 = (gray_val * 255.0).round().clamp(0.0, 255.0) as u8;
-            output[i] = Rgba8Pixel { r: g8, g: g8, b: g8, a: px.a };
+            output[i] = Rgba8Pixel {
+                r: g8,
+                g: g8,
+                b: g8,
+                a: px.a,
+            };
         } else {
             output[i] = process_pixel(r, g, b, a0, exposure, gamma, tonemap_mode);
         }
     }
 }
-
 
 /// Unified SIMD processing function - consolidates patterns from image_cache.rs
 /// Handles both parallel and sequential processing with consistent SIMD optimization
@@ -368,9 +406,23 @@ pub fn process_rgba_chunk_optimized(
                 .zip(output[..simd_pixels].par_chunks_exact_mut(SIMD_PIXEL_COUNT))
                 .for_each(|(in_chunk, out_chunk)| {
                     if grayscale {
-                        process_simd_chunk_grayscale(in_chunk, out_chunk, exposure, gamma, tonemap_mode, color_matrix);
+                        process_simd_chunk_grayscale(
+                            in_chunk,
+                            out_chunk,
+                            exposure,
+                            gamma,
+                            tonemap_mode,
+                            color_matrix,
+                        );
                     } else {
-                        process_simd_chunk_rgba(in_chunk, out_chunk, exposure, gamma, tonemap_mode, color_matrix);
+                        process_simd_chunk_rgba(
+                            in_chunk,
+                            out_chunk,
+                            exposure,
+                            gamma,
+                            tonemap_mode,
+                            color_matrix,
+                        );
                     }
                 });
         } else {
@@ -380,9 +432,23 @@ pub fn process_rgba_chunk_optimized(
                 .zip(output[..simd_pixels].chunks_exact_mut(SIMD_PIXEL_COUNT))
                 .for_each(|(in_chunk, out_chunk)| {
                     if grayscale {
-                        process_simd_chunk_grayscale(in_chunk, out_chunk, exposure, gamma, tonemap_mode, color_matrix);
+                        process_simd_chunk_grayscale(
+                            in_chunk,
+                            out_chunk,
+                            exposure,
+                            gamma,
+                            tonemap_mode,
+                            color_matrix,
+                        );
                     } else {
-                        process_simd_chunk_rgba(in_chunk, out_chunk, exposure, gamma, tonemap_mode, color_matrix);
+                        process_simd_chunk_rgba(
+                            in_chunk,
+                            out_chunk,
+                            exposure,
+                            gamma,
+                            tonemap_mode,
+                            color_matrix,
+                        );
                     }
                 });
         }
@@ -393,8 +459,11 @@ pub fn process_rgba_chunk_optimized(
         process_scalar_pixels(
             &input[simd_elements..],
             &mut output[simd_pixels..],
-            exposure, gamma, tonemap_mode,
-            color_matrix, grayscale
+            exposure,
+            gamma,
+            tonemap_mode,
+            color_matrix,
+            grayscale,
         );
     }
 }
@@ -408,12 +477,17 @@ mod tests {
     fn test_simd_chunk_processing() {
         // Test data: 4 pixels RGBA
         let input: [f32; 16] = [
-            1.0, 0.5, 0.2, 1.0,  // Pixel 1
-            0.8, 0.6, 0.3, 1.0,  // Pixel 2
-            0.4, 0.9, 0.1, 1.0,  // Pixel 3
-            0.2, 0.3, 0.8, 1.0,  // Pixel 4
+            1.0, 0.5, 0.2, 1.0, // Pixel 1
+            0.8, 0.6, 0.3, 1.0, // Pixel 2
+            0.4, 0.9, 0.1, 1.0, // Pixel 3
+            0.2, 0.3, 0.8, 1.0, // Pixel 4
         ];
-        let mut output: [Rgba8Pixel; 4] = [Rgba8Pixel { r: 0, g: 0, b: 0, a: 0 }; 4];
+        let mut output: [Rgba8Pixel; 4] = [Rgba8Pixel {
+            r: 0,
+            g: 0,
+            b: 0,
+            a: 0,
+        }; 4];
 
         process_simd_chunk_rgba(&input, &mut output, 0.0, 2.2, 0, None);
 
@@ -429,15 +503,15 @@ mod tests {
         let r = f32x4::from_array([1.0, 0.5, 0.2, 0.8]);
         let g = f32x4::from_array([0.3, 0.7, 0.9, 0.1]);
         let b = f32x4::from_array([0.4, 0.2, 0.6, 0.5]);
-        
+
         let identity = Mat3::IDENTITY;
         let (rr, gg, bb) = apply_color_matrix_simd(r, g, b, identity);
-        
+
         // With identity matrix, values should remain the same
         let r_out: [f32; 4] = rr.into();
         let g_out: [f32; 4] = gg.into();
         let b_out: [f32; 4] = bb.into();
-        
+
         assert!((r_out[0] - 1.0).abs() < 0.001);
         assert!((g_out[1] - 0.7).abs() < 0.001);
         assert!((b_out[2] - 0.6).abs() < 0.001);
