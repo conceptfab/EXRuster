@@ -1,7 +1,7 @@
 use slint::Rgba8Pixel;
 
 // Import funkcji tone mapping z tone_mapping.rs
-use crate::processing::tone_mapping::{ToneMapMode, ToneMapModeId};
+use crate::processing::tone_mapping::ToneMapMode;
 
 // Thread-local cache LUT został usunięty - funkcja apply_gamma_lut
 // została przeniesiona do tone_mapping.rs
@@ -20,8 +20,9 @@ pub fn process_pixel(
     gamma: f32,
     tonemap_mode: i32,
 ) -> Rgba8Pixel {
+    let mode = ToneMapMode::from(tonemap_mode);
     let (corrected_r, corrected_g, corrected_b) =
-        tone_map_and_gamma(r, g, b, exposure, gamma, tonemap_mode);
+        crate::processing::tone_mapping::tone_map_and_gamma(r, g, b, exposure, gamma, mode);
 
     let safe_a = if a.is_finite() {
         a.clamp(0.0, 1.0)
@@ -42,35 +43,6 @@ pub fn process_pixel(
 // Funkcja srgb_oetf została przeniesiona do tone_mapping.rs
 // aby uniknąć duplikacji kodu
 
-/// Wspólny pipeline: ekspozycja → tone-map (wg trybu) → gamma/sRGB
-/// Zwraca wartości w [0, 1] po korekcji gamma.
-/// Wykorzystuje skonsolidowaną implementację z tone_mapping.rs
-/// New type-safe API using ToneMapModeId
-#[allow(dead_code)]
-#[inline]
-pub fn tone_map_and_gamma_safe(
-    r: f32,
-    g: f32,
-    b: f32,
-    exposure: f32,
-    gamma: f32,
-    tonemap_mode: ToneMapModeId,
-) -> (f32, f32, f32) {
-    crate::processing::tone_mapping::tone_map_and_gamma_safe(r, g, b, exposure, gamma, tonemap_mode)
-}
-
-/// Legacy API for backward compatibility - consider using tone_map_and_gamma_safe instead
-pub fn tone_map_and_gamma(
-    r: f32,
-    g: f32,
-    b: f32,
-    exposure: f32,
-    gamma: f32,
-    tonemap_mode: i32,
-) -> (f32, f32, f32) {
-    let mode = ToneMapMode::from(tonemap_mode);
-    crate::processing::tone_mapping::tone_map_and_gamma(r, g, b, exposure, gamma, mode)
-}
 
 // ===================== SIMD warianty =====================
 // Wszystkie funkcje SIMD tone mapping zostały przeniesione do tone_mapping.rs

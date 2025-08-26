@@ -3,12 +3,14 @@ use std::collections::HashMap;
 
 /// UI-focused layer information for display purposes
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub struct UiLayerInfo {
     pub name: String,
     pub selected: bool,
     pub visible: bool,
 }
 
+#[allow(dead_code)]
 impl UiLayerInfo {
     pub fn new(name: String) -> Self {
         Self {
@@ -24,7 +26,9 @@ impl UiLayerInfo {
 pub struct MetadataLayerInfo {
     pub name: String,
     pub channels: Vec<ChannelInfo>,
+    #[allow(dead_code)]
     pub dimensions: (u32, u32),
+    #[allow(dead_code)]
     pub attributes: HashMap<String, String>,
 }
 
@@ -41,6 +45,7 @@ impl MetadataLayerInfo {
 
 /// Lazy loading layer information for performance optimization
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub struct LazyLayerInfo {
     pub name: String,
     pub channel_names: Vec<String>,
@@ -48,6 +53,7 @@ pub struct LazyLayerInfo {
     pub loader_id: Option<String>,
 }
 
+#[allow(dead_code)]
 impl LazyLayerInfo {
     pub fn new(name: String, channel_names: Vec<String>) -> Self {
         Self {

@@ -45,7 +45,8 @@
       "Bash(timeout 25s cargo run --bin EXruster_nightly)",
       "Bash(timeout 15s cargo test buffer_pool)",
       "Bash(timeout 10s cargo test test_buffer_pool_reuse -- --nocapture)",
-      "Bash(timeout 60s cargo check)"
+      "Bash(timeout 60s cargo check)",
+      "Bash(timeout 30s cargo test test_tonemap_mode_conversion -- --nocapture)"
     ],
     "deny": [],
     "ask": []
