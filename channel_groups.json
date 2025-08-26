@@ -20,26 +20,24 @@
   "groups": {
     "technical": {
       "name": "Technical",
-      "prefixes": ["RenderStamp", "RenderStamp0"],
-      "patterns": [],
+      "prefixes": [],
+      "patterns": ["RenderStamp*", "renderstamp*"],
       "basic_rgb": false
     },
     "light": {
       "name": "Light",
       "prefixes": ["Sky", "Sun", "LightMix"],
-      "patterns": ["Light*"],
+      "patterns": ["Light*", "light*"],
       "basic_rgb": false
     },
     "scene": {
       "name": "Scene",
       "prefixes": [
         "Background",
-        "Translucency",
-        "Translucency0",
-        "VirtualBeauty",
+        "VirtualBeauty", 
         "ZDepth"
       ],
-      "patterns": [],
+      "patterns": ["Translucency*", "translucency*"],
       "basic_rgb": false
     },
     "base": {
@@ -51,13 +49,13 @@
     "scene_objects": {
       "name": "Scene Objects",
       "prefixes": [],
-      "patterns": ["ID*", "leather", "scratch", "_*"],
+      "patterns": ["ID*", "_*"],
       "basic_rgb": false
     },
     "cryptomatte": {
       "name": "Cryptomatte",
-      "prefixes": ["Cryptomatte", "Cryptomatte0"],
-      "patterns": [],
+      "prefixes": [],
+      "patterns": ["Cryptomatte*", "cryptomatte*"],
       "basic_rgb": false
     }
   },

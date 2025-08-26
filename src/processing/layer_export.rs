@@ -1,6 +1,7 @@
 use crate::io::full_exr_cache::FullExrCacheData;
 use crate::io::image_cache::{LayerChannels, LayerInfo};
-use crate::processing::channel_classification::determine_channel_group_ultra_fast;
+use crate::processing::channel_classification::determine_channel_group_with_config;
+use crate::utils::channel_config::load_channel_config;
 use crate::processing::tone_mapping::{tone_map_and_gamma, ToneMapMode};
 use anyhow::Result;
 use rayon::prelude::*;
@@ -138,11 +139,16 @@ impl LayerExporter {
             _ => return Err(anyhow::anyhow!("Unknown group: {}", group_name)),
         };
 
+        let config = load_channel_config().unwrap_or_else(|_| {
+            crate::utils::channel_config::get_fallback_config()
+        });
+        
         let mut group_layers = Vec::new();
 
         for layer in &self.layers_info {
-            let layer_group = determine_channel_group_ultra_fast(&layer.name);
-            if layer_group == group_key {
+            let layer_group = determine_channel_group_with_config(&layer.name, &config);
+            let group_key_owned = group_key.to_string();
+            if layer_group == group_key_owned || layer_group == config.groups.get(group_key).map(|g| g.name.clone()).unwrap_or_default() {
                 group_layers.push(layer.clone());
             }
         }

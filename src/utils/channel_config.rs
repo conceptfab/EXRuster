@@ -96,12 +96,10 @@ fn create_default_config_file() -> ConfigFile {
             name: "Scene".to_string(),
             prefixes: vec![
                 "Background".to_string(),
-                "Translucency".to_string(),
-                "Translucency0".to_string(),
                 "VirtualBeauty".to_string(),
                 "ZDepth".to_string(),
             ],
-            patterns: vec![],
+            patterns: vec!["Translucency*".to_string(), "translucency*".to_string()],
             basic_rgb: false,
         },
     );
@@ -110,8 +108,8 @@ fn create_default_config_file() -> ConfigFile {
         "technical".to_string(),
         GroupDefinition {
             name: "Technical".to_string(),
-            prefixes: vec!["RenderStamp".to_string(), "RenderStamp0".to_string()],
-            patterns: vec![],
+            prefixes: vec![],
+            patterns: vec!["RenderStamp*".to_string(), "renderstamp*".to_string()],
             basic_rgb: false,
         },
     );
@@ -121,7 +119,7 @@ fn create_default_config_file() -> ConfigFile {
         GroupDefinition {
             name: "Light".to_string(),
             prefixes: vec!["Sky".to_string(), "Sun".to_string(), "LightMix".to_string()],
-            patterns: vec!["Light*".to_string()],
+            patterns: vec!["Light*".to_string(), "light*".to_string()],
             basic_rgb: false,
         },
     );
@@ -130,8 +128,8 @@ fn create_default_config_file() -> ConfigFile {
         "cryptomatte".to_string(),
         GroupDefinition {
             name: "Cryptomatte".to_string(),
-            prefixes: vec!["Cryptomatte".to_string(), "Cryptomatte0".to_string()],
-            patterns: vec![],
+            prefixes: vec![],
+            patterns: vec!["Cryptomatte*".to_string(), "cryptomatte*".to_string()],
             basic_rgb: false,
         },
     );

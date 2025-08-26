@@ -46,7 +46,11 @@
       "Bash(timeout 15s cargo test buffer_pool)",
       "Bash(timeout 10s cargo test test_buffer_pool_reuse -- --nocapture)",
       "Bash(timeout 60s cargo check)",
-      "Bash(timeout 30s cargo test test_tonemap_mode_conversion -- --nocapture)"
+      "Bash(timeout 30s cargo test test_tonemap_mode_conversion -- --nocapture)",
+      "Bash(timeout 30s cargo test test_channel_group_classification -- --nocapture)",
+      "Bash(timeout 30s cargo test test_simd_pattern_matching -- --nocapture)",
+      "Bash(timeout 30s cargo test test_wildcard_patterns_with_config -- --nocapture)",
+      "Bash(timeout 30s cargo test channel_classification -- --nocapture)"
     ],
     "deny": [],
     "ask": []

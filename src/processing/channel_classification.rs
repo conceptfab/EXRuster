@@ -47,23 +47,17 @@ static CHANNEL_PREFIX_MAP: Lazy<HashMap<&'static str, &'static str>> = Lazy::new
 
     // Scene channels
     map.insert("Background", "scene");
-    map.insert("Translucency", "scene");
-    map.insert("Translucency0", "scene");
     map.insert("VirtualBeauty", "scene");
     map.insert("ZDepth", "scene");
 
-    // Technical channels
-    map.insert("RenderStamp", "technical");
-    map.insert("RenderStamp0", "technical");
+    // Technical channels (note: now uses patterns, but keeping for ultra-fast fallback)
 
     // Light channels
     map.insert("Sky", "light");
     map.insert("Sun", "light");
     map.insert("LightMix", "light");
 
-    // Cryptomatte channels
-    map.insert("Cryptomatte", "cryptomatte");
-    map.insert("Cryptomatte0", "cryptomatte");
+    // Cryptomatte channels (note: now uses patterns, but keeping for ultra-fast fallback)
 
     map
 });
@@ -102,12 +96,10 @@ pub fn create_default_config() -> ChannelGroupConfig {
             name: "Scene".to_string(),
             prefixes: vec![
                 "Background".to_string(),
-                "Translucency".to_string(),
-                "Translucency0".to_string(),
                 "VirtualBeauty".to_string(),
                 "ZDepth".to_string(),
             ],
-            patterns: vec![],
+            patterns: vec!["Translucency*".to_string(), "translucency*".to_string()],
             basic_rgb: false,
         },
     );
@@ -116,8 +108,8 @@ pub fn create_default_config() -> ChannelGroupConfig {
         "technical".to_string(),
         GroupDefinition {
             name: "Technical".to_string(),
-            prefixes: vec!["RenderStamp".to_string(), "RenderStamp0".to_string()],
-            patterns: vec![],
+            prefixes: vec![],
+            patterns: vec!["RenderStamp*".to_string(), "renderstamp*".to_string()],
             basic_rgb: false,
         },
     );
@@ -127,7 +119,7 @@ pub fn create_default_config() -> ChannelGroupConfig {
         GroupDefinition {
             name: "Light".to_string(),
             prefixes: vec!["Sky".to_string(), "Sun".to_string(), "LightMix".to_string()],
-            patterns: vec!["Light*".to_string()],
+            patterns: vec!["Light*".to_string(), "light*".to_string()],
             basic_rgb: false,
         },
     );
@@ -136,8 +128,8 @@ pub fn create_default_config() -> ChannelGroupConfig {
         "cryptomatte".to_string(),
         GroupDefinition {
             name: "Cryptomatte".to_string(),
-            prefixes: vec!["Cryptomatte".to_string(), "Cryptomatte0".to_string()],
-            patterns: vec![],
+            prefixes: vec![],
+            patterns: vec!["Cryptomatte*".to_string(), "cryptomatte*".to_string()],
             basic_rgb: false,
         },
     );
@@ -147,7 +139,7 @@ pub fn create_default_config() -> ChannelGroupConfig {
         GroupDefinition {
             name: "Scene Objects".to_string(),
             prefixes: vec![],
-            patterns: vec!["ID*".to_string(), "_*".to_string()],
+            patterns: vec!["ID*".to_string(), "Object*".to_string(), "_*".to_string()],
             basic_rgb: false,
         },
     );
@@ -198,9 +190,8 @@ pub fn determine_channel_group_ultra_fast(channel_name: &str) -> &'static str {
         return "light";
     }
 
-    if matches_pattern_simd(prefix, "ID*") || matches_pattern_simd(prefix, "_*") {
-        return "scene_objects";
-    }
+    // Pattern matching will be handled by the configuration-based function
+    // This ultra-fast path only handles exact prefix matches
 
     // Default fallback
     "scene_objects"
@@ -410,6 +401,18 @@ mod tests {
         assert!(matches_pattern_simd("Background", "Back*"));
         assert!(matches_pattern_simd("test", "*"));
         assert!(!matches_pattern_simd("test", "other*"));
+        
+        // Test generic wildcard patterns with any text
+        assert!(matches_pattern_simd("anyPrefix", "any*"));
+        assert!(matches_pattern_simd("testValue", "test*"));
+        assert!(matches_pattern_simd("somethingElse", "something*"));
+        assert!(matches_pattern_simd("IDObject01", "ID*"));
+        assert!(matches_pattern_simd("_testLayer", "_*"));
+        assert!(matches_pattern_simd("_anything_here", "_*"));
+        
+        // Negative tests
+        assert!(!matches_pattern_simd("notAny", "different*"));
+        assert!(!matches_pattern_simd("wrongPrefix", "correct*"));
     }
 
     #[test]
@@ -426,8 +429,45 @@ mod tests {
             "scene_objects"
         );
         assert_eq!(
-            determine_channel_group_ultra_fast("_walls.blue"),
+            determine_channel_group_ultra_fast("_testLayer.blue"),
             "scene_objects"
         );
+    }
+
+    #[test]
+    fn test_wildcard_patterns_with_config() {
+        let config = create_default_config();
+        
+        // Test ID* pattern
+        let id001_result = determine_channel_group_with_config("ID001", &config);
+        println!("ID001 result: {}", id001_result);
+        assert_eq!(id001_result, "Scene Objects");
+        assert_eq!(determine_channel_group_with_config("IDWalls", &config), "Scene Objects");
+        
+        // Test _* pattern
+        assert_eq!(determine_channel_group_with_config("_testLayer", &config), "Scene Objects");
+        assert_eq!(determine_channel_group_with_config("_anything", &config), "Scene Objects");
+        
+        // Test Light* pattern (case sensitive)
+        assert_eq!(determine_channel_group_with_config("LightMix", &config), "Light");
+        assert_eq!(determine_channel_group_with_config("LightAny", &config), "Light");
+        assert_eq!(determine_channel_group_with_config("lightMix", &config), "Light");
+        assert_eq!(determine_channel_group_with_config("lightAny", &config), "Light");
+        
+        // Test RenderStamp* pattern (case sensitive)
+        assert_eq!(determine_channel_group_with_config("RenderStamp1", &config), "Technical");
+        assert_eq!(determine_channel_group_with_config("renderstamp2", &config), "Technical");
+        
+        // Test Cryptomatte* pattern (case sensitive)
+        assert_eq!(determine_channel_group_with_config("Cryptomatte3", &config), "Cryptomatte");
+        assert_eq!(determine_channel_group_with_config("cryptomatte4", &config), "Cryptomatte");
+        
+        // Test Translucency* pattern (case sensitive)
+        assert_eq!(determine_channel_group_with_config("Translucency1", &config), "Scene");
+        assert_eq!(determine_channel_group_with_config("translucency2", &config), "Scene");
+        
+        // Negative tests - should not match
+        assert_ne!(determine_channel_group_with_config("notID", &config), "Scene Objects");
+        assert_ne!(determine_channel_group_with_config("noLight", &config), "Light");
     }
 }
