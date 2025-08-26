@@ -1,4 +1,63 @@
 use crate::io::fast_exr_metadata::ChannelInfo;
+use std::collections::HashMap;
+
+/// UI-focused layer information for display purposes
+#[derive(Clone, Debug)]
+pub struct UiLayerInfo {
+    pub name: String,
+    pub selected: bool,
+    pub visible: bool,
+}
+
+impl UiLayerInfo {
+    pub fn new(name: String) -> Self {
+        Self {
+            name,
+            selected: false,
+            visible: true,
+        }
+    }
+}
+
+/// Metadata-focused layer information for EXR file details
+#[derive(Clone, Debug)]
+pub struct MetadataLayerInfo {
+    pub name: String,
+    pub channels: Vec<ChannelInfo>,
+    pub dimensions: (u32, u32),
+    pub attributes: HashMap<String, String>,
+}
+
+impl MetadataLayerInfo {
+    pub fn new(name: String, channels: Vec<ChannelInfo>, width: u32, height: u32) -> Self {
+        Self {
+            name,
+            channels,
+            dimensions: (width, height),
+            attributes: HashMap::new(),
+        }
+    }
+}
+
+/// Lazy loading layer information for performance optimization
+#[derive(Clone, Debug)]
+pub struct LazyLayerInfo {
+    pub name: String,
+    pub channel_names: Vec<String>,
+    pub dimensions: Option<(u32, u32)>,
+    pub loader_id: Option<String>,
+}
+
+impl LazyLayerInfo {
+    pub fn new(name: String, channel_names: Vec<String>) -> Self {
+        Self {
+            name,
+            channel_names,
+            dimensions: None,
+            loader_id: None,
+        }
+    }
+}
 
 /// Common trait for all layer descriptor types
 /// Provides a unified interface for accessing layer metadata
@@ -17,6 +76,48 @@ pub trait LayerDescriptor {
     #[allow(dead_code)]
     fn has_channel(&self, channel_name: &str) -> bool {
         self.channel_names().iter().any(|c| c == channel_name)
+    }
+}
+
+impl LayerDescriptor for UiLayerInfo {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn channel_names(&self) -> Vec<String> {
+        Vec::new() // UI layer info doesn't store channel details
+    }
+
+    fn dimensions(&self) -> Option<(u32, u32)> {
+        None // UI layer info doesn't store dimensions
+    }
+}
+
+impl LayerDescriptor for MetadataLayerInfo {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn channel_names(&self) -> Vec<String> {
+        self.channels.iter().map(|c| c.name.clone()).collect()
+    }
+
+    fn dimensions(&self) -> Option<(u32, u32)> {
+        Some(self.dimensions)
+    }
+}
+
+impl LayerDescriptor for LazyLayerInfo {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn channel_names(&self) -> Vec<String> {
+        self.channel_names.clone()
+    }
+
+    fn dimensions(&self) -> Option<(u32, u32)> {
+        self.dimensions
     }
 }
 
