@@ -1,9 +1,70 @@
 use crate::ui::{push_console, SharedAppState};
 use crate::utils::error_handling::UiErrorReporter;
 use crate::AppWindow;
-use slint::{ComponentHandle, Model, SharedString, VecModel};
+use slint::{ComponentHandle, Model, SharedString, VecModel, Weak};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
+
+/// Helper struct to reduce Arc cloning and simplify callback setup
+#[derive(Clone)]
+struct CallbackHelper {
+    ui_weak: Weak<AppWindow>,
+    app_state: SharedAppState,
+    console_model: Rc<VecModel<SharedString>>,
+}
+
+impl CallbackHelper {
+    fn new(ui: &AppWindow, app_state: SharedAppState, console_model: Rc<VecModel<SharedString>>) -> Self {
+        Self {
+            ui_weak: ui.as_weak(),
+            app_state,
+            console_model,
+        }
+    }
+
+    /// Execute export operation with error handling
+    fn execute_export<F>(&self, export_fn: F)
+    where
+        F: FnOnce(Weak<AppWindow>, SharedAppState, Rc<VecModel<SharedString>>),
+    {
+        export_fn(self.ui_weak.clone(), self.app_state.clone(), self.console_model.clone());
+    }
+
+    /// Handle tone mapping mode change
+    fn handle_tonemap_change(&self, mode: i32) {
+        if let Some(ui) = self.ui_weak.upgrade() {
+            if let Ok(state) = self.app_state.read() {
+                if let Some(ref cache) = state.image_cache {
+                    let exposure = ui.get_exposure_value();
+                    let gamma = ui.get_gamma_value();
+                    let image = crate::ui::update_preview_image(
+                        &ui, cache, exposure, gamma, mode, &self.console_model,
+                    );
+                    ui.set_exr_image(image);
+                    push_console(
+                        &ui,
+                        &self.console_model,
+                        format!("[preview] updated → tonemap mode: {}", mode),
+                    );
+                    ui.set_status_text(
+                        format!(
+                            "Tonemap: {}",
+                            match mode {
+                                0 => "ACES",
+                                1 => "Reinhard", 
+                                2 => "Linear",
+                                3 => "Filmic",
+                                4 => "Hable",
+                                5 => "Local",
+                                _ => "Unknown",
+                            }
+                        ).into()
+                    );
+                }
+            }
+        }
+    }
+}
 
 /// Setup menu-related callbacks (file operations, console management, histogram, layers)
 pub fn setup_menu_callbacks(
@@ -11,6 +72,7 @@ pub fn setup_menu_callbacks(
     app_state: SharedAppState,
     console_model: Rc<VecModel<SharedString>>,
 ) {
+    let helper = CallbackHelper::new(ui, app_state.clone(), console_model.clone());
     ui.on_clear_console({
         let ui_handle = ui.as_weak();
         let console_for_clear = console_model.clone();
@@ -92,83 +154,35 @@ pub fn setup_menu_callbacks(
         });
     }
 
-    // Export callbacks - full implementations
+    // Export callbacks - using helper to reduce Arc cloning
     ui.on_export_beauty({
-        let ui_handle = ui.as_weak();
-        let app_state = Arc::clone(&app_state);
-        let console = console_model.clone();
-        move || {
-            crate::ui::export_handlers::export_beauty(
-                ui_handle.clone(),
-                app_state.clone(),
-                console.clone(),
-            );
-        }
+        let helper = helper.clone();
+        move || helper.execute_export(crate::ui::export_handlers::export_beauty)
     });
 
     ui.on_export_all({
-        let ui_handle = ui.as_weak();
-        let app_state = Arc::clone(&app_state);
-        let console = console_model.clone();
-        move || {
-            crate::ui::export_handlers::export_all(
-                ui_handle.clone(),
-                app_state.clone(),
-                console.clone(),
-            );
-        }
+        let helper = helper.clone();
+        move || helper.execute_export(crate::ui::export_handlers::export_all)
     });
 
     ui.on_export_scene({
-        let ui_handle = ui.as_weak();
-        let app_state = Arc::clone(&app_state);
-        let console = console_model.clone();
-        move || {
-            crate::ui::export_handlers::export_scene(
-                ui_handle.clone(),
-                app_state.clone(),
-                console.clone(),
-            );
-        }
+        let helper = helper.clone();
+        move || helper.execute_export(crate::ui::export_handlers::export_scene)
     });
 
     ui.on_export_objects({
-        let ui_handle = ui.as_weak();
-        let app_state = Arc::clone(&app_state);
-        let console = console_model.clone();
-        move || {
-            crate::ui::export_handlers::export_objects(
-                ui_handle.clone(),
-                app_state.clone(),
-                console.clone(),
-            );
-        }
+        let helper = helper.clone();
+        move || helper.execute_export(crate::ui::export_handlers::export_objects)
     });
 
     ui.on_export_cryptomatte({
-        let ui_handle = ui.as_weak();
-        let app_state = Arc::clone(&app_state);
-        let console = console_model.clone();
-        move || {
-            crate::ui::export_handlers::export_cryptomatte(
-                ui_handle.clone(),
-                app_state.clone(),
-                console.clone(),
-            );
-        }
+        let helper = helper.clone();
+        move || helper.execute_export(crate::ui::export_handlers::export_cryptomatte)
     });
 
     ui.on_export_lights({
-        let ui_handle = ui.as_weak();
-        let app_state = Arc::clone(&app_state);
-        let console = console_model.clone();
-        move || {
-            crate::ui::export_handlers::export_lights(
-                ui_handle.clone(),
-                app_state.clone(),
-                console.clone(),
-            );
-        }
+        let helper = helper.clone();
+        move || helper.execute_export(crate::ui::export_handlers::export_lights)
     });
 }
 
@@ -178,6 +192,7 @@ pub fn setup_image_control_callbacks(
     app_state: SharedAppState,
     console_model: Rc<VecModel<SharedString>>,
 ) {
+    let helper = CallbackHelper::new(ui, app_state.clone(), console_model.clone());
     let ui_weak_for_throttle = ui.as_weak();
     let app_state_for_throttle = app_state.clone();
     let console_for_throttle = console_model.clone();
@@ -213,45 +228,10 @@ pub fn setup_image_control_callbacks(
         }
     });
 
-    // Tonemap mode changed
+    // Tonemap mode changed - using extracted helper method
     ui.on_tonemap_mode_changed({
-        let ui_handle = ui.as_weak();
-        let app_state = Arc::clone(&app_state);
-        let console = console_model.clone();
-        move |mode: i32| {
-            if let Some(ui) = ui_handle.upgrade() {
-                if let Ok(state) = app_state.read() {
-                    if let Some(ref cache) = state.image_cache {
-                        let exposure = ui.get_exposure_value();
-                        let gamma = ui.get_gamma_value();
-                        let image = crate::ui::update_preview_image(
-                            &ui, cache, exposure, gamma, mode, &console,
-                        );
-                        ui.set_exr_image(image);
-                        push_console(
-                            &ui,
-                            &console,
-                            format!("[preview] updated → tonemap mode: {}", mode),
-                        );
-                        ui.set_status_text(
-                            format!(
-                                "Tonemap: {}",
-                                match mode {
-                                    0 => "ACES",
-                                    1 => "Reinhard",
-                                    2 => "Linear",
-                                    3 => "Filmic",
-                                    4 => "Hable",
-                                    5 => "Local",
-                                    _ => "?",
-                                }
-                            )
-                            .into(),
-                        );
-                    }
-                }
-            }
-        }
+        let helper = helper.clone();
+        move |mode: i32| helper.handle_tonemap_change(mode)
     });
 
     // Re-render podgląd przy zmianie geometrii obszaru podglądu (1:1 względem widżetu, z DPI)
