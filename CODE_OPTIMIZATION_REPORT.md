@@ -14,27 +14,7 @@ The EXRuster codebase is functionally correct but contains several optimization 
 
 ## 🔴 High Priority Issues (Critical Impact)
 
-### 1. Memory Leak - Buffer Pool System
-**File:** `src/utils/buffer_pool.rs`  
-**Lines:** 22-47, 65-87  
-**Problem:** Buffer pool allocates but never returns buffers, causing memory growth  
-**Impact:** Application memory usage grows continuously during image processing  
-**Solution:**
-```rust
-// Implement Drop trait for automatic buffer return
-pub struct PooledBuffer<T> {
-    data: Vec<T>,
-    pool: Weak<Mutex<BufferPool<T>>>,
-}
-
-impl<T> Drop for PooledBuffer<T> {
-    fn drop(&mut self) {
-        if let Some(pool) = self.pool.upgrade() {
-            pool.lock().unwrap().return_buffer(std::mem::take(&mut self.data));
-        }
-    }
-}
-```
+#
 
 ### 2. Massive UI Component
 **File:** `ui/appwindow.slint`  
@@ -49,70 +29,7 @@ impl<T> Drop for PooledBuffer<T> {
 - `ControlPanel.slint` (right sidebar)
 - `ThumbnailPanel.slint` (bottom panel)
 
-### 3. Excessive Arc/Mutex Wrapping
-**File:** `src/main.rs`  
-**Lines:** 59-62  
-**Problem:** Multiple Arc<Mutex<>> wrappers for related state  
-**Impact:** Lock contention, complex error handling  
-**Solution:**
-```rust
-// Consolidate into single state manager
-#[derive(Default)]
-pub struct AppState {
-    image_cache: Option<ImageCache>,
-    current_file_path: Option<PathBuf>, 
-    full_exr_cache: Option<Arc<FullExrCacheData>>,
-    ui_state: UiState,
-}
 
-pub type SharedAppState = Arc<RwLock<AppState>>;
-```
-
-### 4. Unsafe Code Without Justification
-**File:** `src/io/image_cache.rs`  
-**Lines:** 479-492, 558-569  
-**Problem:** Unsafe blocks used for performance without safety documentation  
-**Impact:** Potential memory safety issues  
-**Solution:** Replace with safe SIMD or document safety invariants
-
----
-
-## 🟡 Medium Priority Issues (Important)
-
-### 5. Code Duplication - ChannelInfo
-**Files:** 
-- `src/io/image_cache.rs:42-53`
-- `src/io/metadata_traits.rs:15-26` 
-- `src/processing/channel_classification.rs:8-19`
-
-**Problem:** Same struct defined in 3 places  
-**Solution:** Consolidate in `src/io/metadata_traits.rs`, use re-exports
-
-### 6. Over-engineered UnifiedLayerInfo
-**File:** `src/io/metadata_traits.rs`  
-**Lines:** 35-100  
-**Problem:** Single type tries to handle UI, metadata, and lazy loading  
-**Solution:** Split into purpose-specific types:
-```rust
-pub struct UiLayerInfo { name: String, color: Color, selected: bool }
-pub struct MetadataLayerInfo { channels: Vec<String>, dimensions: (u32, u32) }
-pub struct LazyLayerInfo<T> { loader: Box<dyn Fn() -> Result<T>> }
-```
-
-### 7. Scattered Tone Mapping Logic
-**Files:**
-- `src/processing/image_processing.rs:156-203`
-- `src/processing/tone_mapping.rs:45-89` 
-- `src/processing/simd_processing.rs:234-267`
-
-**Problem:** Tone mapping implementation spread across 3 files  
-**Solution:** Consolidate all tone mapping in `src/processing/tone_mapping.rs`
-
-### 8. Deep Callback Nesting
-**File:** `src/ui/setup.rs`  
-**Lines:** 88-100, 223-240  
-**Problem:** Callbacks with excessive Arc cloning and deep nesting  
-**Solution:** Extract callback logic into separate methods, use weak references
 
 ### 9. Complex UI Property Calculations
 **File:** `ui/appwindow.slint`  

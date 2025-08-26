@@ -88,21 +88,16 @@ export component AppWindow inherits Window {
     in-out property <bool> internal-meta-visible: false;
     // Histogram floating window state
     in-out property <bool> internal-histogram-visible: false;
+    
+    // Cached layout calculations from Rust backend
+    in-out property <length> cached-right-panel-width: 200px;
+    in-out property <length> cached-right-panel-x: 800px;
+    callback calculate-layout(length /* window-width */, bool /* show-left */, bool /* show-right */, float /* col1 */, float /* col2 */, float /* col3 */);
+    
     callback clear-console();
 
-    // Helper properties to mirror column layout for positioning elements in the menu bar
-    // These compute the effective normalized widths of the three columns and allow
-    // us to align menu content with the right panel horizontally
-    property <length> _menu_non_column_width: 8px + (show-left-panel ? 2px : 0px) + (show-right-panel ? 2px : 0px);
-    property <float> _menu_col1_eff: show-left-panel ? column1-percent : 0.0;
-    property <float> _menu_col2_eff: column2-percent + (show-left-panel ? 0.0 : column1-percent) + (show-right-panel ? 0.0 : column3-percent);
-    property <float> _menu_col3_eff: show-right-panel ? column3-percent : 0.0;
-    property <float> _menu_sum_eff: max(0.0001, column1-percent + column2-percent + column3-percent);
-    property <float> _menu_n1: _menu_col1_eff / _menu_sum_eff;
-    property <float> _menu_n2: _menu_col2_eff / _menu_sum_eff;
-    property <float> _menu_n3: _menu_col3_eff / _menu_sum_eff;
-    property <length> _right_panel_width: (root.width - _menu_non_column_width) * _menu_n3;
-    property <length> _right_panel_x: 4px + (show-left-panel ? 2px : 0px) + (root.width - _menu_non_column_width) * (_menu_n1 + _menu_n2) + (show-right-panel ? 2px : 0px);
+    // Layout calculations moved to Rust backend for performance
+    // These values are computed once and cached when layout parameters change
 
     // Kolory kanałów udostępniane do kodu Rust
     out property <color> layers_color_default: Kolory.tekst_slabszy;
@@ -240,9 +235,9 @@ export component AppWindow inherits Window {
 
         // Image aligned with the right panel region in the menu bar
         if show-right-panel: Image {
-            x: _right_panel_x;
+            x: root.cached-right-panel-x;
             y: 0px;
-            width: _right_panel_width;
+            width: root.cached-right-panel-width;
             height: parent.height;
             source: @image-url("../resources/img/logo.png");
             image-fit: contain;
@@ -311,9 +306,9 @@ export component AppWindow inherits Window {
             padding: 0px;
             spacing: 0px;
             
-            PozycjaMenu { text: root.show-left-panel ? "Hide Left Panel" : "Show Left Panel"; clicked => { show-left-panel = !show-left-panel; view-menu-open = false; view-menu-timer-running = false; } }
-            PozycjaMenu { text: root.show-right-panel ? "Hide Right Panel" : "Show Right Panel"; clicked => { show-right-panel = !show-right-panel; view-menu-open = false; view-menu-timer-running = false; } }
-            PozycjaMenu { text: "Reset View"; clicked => { show-left-panel = true; show-right-panel = true; view-menu-open = false; view-menu-timer-running = false; } }
+            PozycjaMenu { text: root.show-left-panel ? "Hide Left Panel" : "Show Left Panel"; clicked => { show-left-panel = !show-left-panel; view-menu-open = false; view-menu-timer-running = false; root.calculate-layout(root.width, show-left-panel, show-right-panel, column1-percent, column2-percent, column3-percent); } }
+            PozycjaMenu { text: root.show-right-panel ? "Hide Right Panel" : "Show Right Panel"; clicked => { show-right-panel = !show-right-panel; view-menu-open = false; view-menu-timer-running = false; root.calculate-layout(root.width, show-left-panel, show-right-panel, column1-percent, column2-percent, column3-percent); } }
+            PozycjaMenu { text: "Reset View"; clicked => { show-left-panel = true; show-right-panel = true; view-menu-open = false; view-menu-timer-running = false; root.calculate-layout(root.width, show-left-panel, show-right-panel, column1-percent, column2-percent, column3-percent); } }
             PozycjaMenu { text: "Open Console"; clicked => { internal-console-visible = true; view-menu-open = false; view-menu-timer-running = false; } }
             PozycjaMenu { text: "Open Meta"; clicked => { internal-meta-visible = true; view-menu-open = false; view-menu-timer-running = false; } }
             PozycjaMenu { text: "Compute Histogram"; clicked => { internal-histogram-visible = true; histogram-requested(); view-menu-open = false; view-menu-timer-running = false; } }

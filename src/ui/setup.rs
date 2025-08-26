@@ -64,6 +64,29 @@ impl CallbackHelper {
             }
         }
     }
+
+    /// Calculate and cache layout positioning
+    fn calculate_layout(&self, window_width: f32, show_left: bool, show_right: bool, col1: f32, col2: f32, col3: f32) {
+        if let Some(ui) = self.ui_weak.upgrade() {
+            // Perform complex calculations once in Rust
+            let menu_non_column_width = 8.0 + if show_left { 2.0 } else { 0.0 } + if show_right { 2.0 } else { 0.0 };
+            let menu_col1_eff = if show_left { col1 } else { 0.0 };
+            let menu_col2_eff = col2 + if !show_left { col1 } else { 0.0 } + if !show_right { col3 } else { 0.0 };
+            let menu_col3_eff = if show_right { col3 } else { 0.0 };
+            let menu_sum_eff = (col1 + col2 + col3).max(0.0001);
+            let menu_n1 = menu_col1_eff / menu_sum_eff;
+            let menu_n2 = menu_col2_eff / menu_sum_eff;
+            let menu_n3 = menu_col3_eff / menu_sum_eff;
+            
+            let effective_width = window_width - menu_non_column_width;
+            let right_panel_width = effective_width * menu_n3;
+            let right_panel_x = 4.0 + if show_left { 2.0 } else { 0.0 } + effective_width * (menu_n1 + menu_n2) + if show_right { 2.0 } else { 0.0 };
+            
+            // Cache the results in UI properties
+            ui.set_cached_right_panel_width(right_panel_width);
+            ui.set_cached_right_panel_x(right_panel_x);
+        }
+    }
 }
 
 /// Setup menu-related callbacks (file operations, console management, histogram, layers)
@@ -73,6 +96,15 @@ pub fn setup_menu_callbacks(
     console_model: Rc<VecModel<SharedString>>,
 ) {
     let helper = CallbackHelper::new(ui, app_state.clone(), console_model.clone());
+    
+    // Setup layout calculation callback for performance optimization
+    ui.on_calculate_layout({
+        let helper = helper.clone();
+        move |window_width: f32, show_left: bool, show_right: bool, col1: f32, col2: f32, col3: f32| {
+            helper.calculate_layout(window_width, show_left, show_right, col1, col2, col3);
+        }
+    });
+    
     ui.on_clear_console({
         let ui_handle = ui.as_weak();
         let console_for_clear = console_model.clone();
