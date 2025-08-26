@@ -502,23 +502,20 @@ pub(crate) fn load_all_channels_for_layer(
                 Vec::with_capacity(channel_data_size)
             };
 
-            // Pre-allocate the full buffer and use direct indexing for better performance
-            unsafe {
-                channel_data_vec.set_len(channel_data_size);
-                let data_ptr = channel_data_vec.as_mut_ptr();
+            // Pre-allocate the full buffer and use safe indexing
+            channel_data_vec.resize(channel_data_size, 0.0);
 
-                for (ci, ch) in layer.channel_data.list.iter().enumerate() {
-                    let full = ch.name.to_string();
-                    let (_lname, short) = split_layer_and_short(&full, base_attr.as_deref());
-                    channel_names.push(short);
+            for (ci, ch) in layer.channel_data.list.iter().enumerate() {
+                let full = ch.name.to_string();
+                let (_lname, short) = split_layer_and_short(&full, base_attr.as_deref());
+                channel_names.push(short);
 
-                    let channel_base = ci * pixel_count;
-                    for i in 0..pixel_count {
-                        *data_ptr.add(channel_base + i) = layer.channel_data.list[ci]
-                            .sample_data
-                            .value_by_flat_index(i)
-                            .to_f32();
-                    }
+                let channel_base = ci * pixel_count;
+                for i in 0..pixel_count {
+                    channel_data_vec[channel_base + i] = layer.channel_data.list[ci]
+                        .sample_data
+                        .value_by_flat_index(i)
+                        .to_f32();
                 }
             }
             let channel_data = Arc::from(channel_data_vec.into_boxed_slice()); // Convert Vec to Arc<[f32]>
@@ -602,19 +599,16 @@ fn compose_composite_from_channels(layer_channels: &LayerChannels) -> Vec<f32> {
     let b_plane = &layer_channels.channel_data[base_b..base_b + pixel_count];
     let a_plane = a_base_opt.map(|ab| &layer_channels.channel_data[ab..ab + pixel_count]);
 
-    // Optimized bulk memory operations - use unsafe for maximum performance
-    unsafe {
-        out.set_len(pixel_count * 4);
-        let out_ptr = out.as_mut_ptr();
+    // Safe RGBA conversion using resize and indexing
+    out.resize(pixel_count * 4, 0.0);
 
-        // Process pixels in chunks of 4 for better cache efficiency
-        for i in 0..pixel_count {
-            let base_idx = i * 4;
-            *out_ptr.add(base_idx) = r_plane[i];
-            *out_ptr.add(base_idx + 1) = g_plane[i];
-            *out_ptr.add(base_idx + 2) = b_plane[i];
-            *out_ptr.add(base_idx + 3) = if let Some(a) = a_plane { a[i] } else { 1.0 };
-        }
+    // Process pixels in chunks of 4 for better cache efficiency
+    for i in 0..pixel_count {
+        let base_idx = i * 4;
+        out[base_idx] = r_plane[i];
+        out[base_idx + 1] = g_plane[i];
+        out[base_idx + 2] = b_plane[i];
+        out[base_idx + 3] = if let Some(a) = a_plane { a[i] } else { 1.0 };
     }
 
     out
@@ -712,18 +706,15 @@ impl ImageCache {
             Vec::with_capacity(buffer_size)
         };
 
-        // Optimized: expand grayscale channel to RGBA more efficiently
-        unsafe {
-            out.set_len(buffer_size);
-            let out_ptr = out.as_mut_ptr();
+        // Safe: expand grayscale channel to RGBA
+        out.resize(buffer_size, 0.0);
 
-            for (i, &v) in channel_slice.iter().enumerate() {
-                let base_idx = i * 4;
-                *out_ptr.add(base_idx) = v; // R
-                *out_ptr.add(base_idx + 1) = v; // G
-                *out_ptr.add(base_idx + 2) = v; // B
-                *out_ptr.add(base_idx + 3) = 1.0; // A
-            }
+        for (i, &v) in channel_slice.iter().enumerate() {
+            let base_idx = i * 4;
+            out[base_idx] = v; // R
+            out[base_idx + 1] = v; // G
+            out[base_idx + 2] = v; // B
+            out[base_idx + 3] = 1.0; // A
         }
 
         self.raw_pixels = out;
