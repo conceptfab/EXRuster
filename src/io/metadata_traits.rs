@@ -1,3 +1,5 @@
+use crate::io::fast_exr_metadata::ChannelInfo;
+
 /// Common trait for all layer descriptor types
 /// Provides a unified interface for accessing layer metadata
 pub trait LayerDescriptor {
@@ -18,17 +20,6 @@ pub trait LayerDescriptor {
     }
 }
 
-/// Channel information structure
-#[derive(Clone, Debug)]
-pub struct ChannelInfo {
-    pub name: String, // short name (after last dot)
-}
-
-impl ChannelInfo {
-    pub fn new(name: String) -> Self {
-        Self { name }
-    }
-}
 
 /// Unified layer information structure
 /// Combines all fields from LayerInfo, LayerMetadata, and LazyLayerMetadata
@@ -135,7 +126,7 @@ impl From<UnifiedLayerInfo> for crate::io::image_cache::LayerInfo {
             channels: unified
                 .channels
                 .into_iter()
-                .map(|c| crate::io::image_cache::ChannelInfo { name: c.name })
+                .map(|c| ChannelInfo::new(c.name))
                 .collect(),
         }
     }

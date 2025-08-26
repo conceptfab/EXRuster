@@ -28,6 +28,18 @@ pub struct ChannelInfo {
     pub quantize_linearly: bool,
 }
 
+impl ChannelInfo {
+    /// Create a simple ChannelInfo with just a name (for compatibility with old usage)
+    pub fn new(name: String) -> Self {
+        Self {
+            name,
+            sample_type: SampleType::Float,
+            sampling: (1, 1),
+            quantize_linearly: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum SampleType {
     UInt,

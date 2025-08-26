@@ -1,3 +1,4 @@
+use crate::io::fast_exr_metadata::ChannelInfo;
 use crate::ui::progress::ProgressSink;
 use crate::utils::split_layer_and_short;
 use exr::prelude as exr;
@@ -53,10 +54,6 @@ pub struct LayerInfo {
 
 // split_layer_and_short przeniesione do utils
 
-#[derive(Clone, Debug)]
-pub struct ChannelInfo {
-    pub name: String, // krótka nazwa (po ostatniej kropce)
-}
 
 #[derive(Clone, Debug)]
 pub struct LayerChannels {
@@ -324,9 +321,7 @@ pub(crate) fn extract_layers_info(path: &PathBuf) -> anyhow::Result<Vec<LayerInf
                     Vec::new()
                 });
 
-            entry.push(ChannelInfo {
-                name: short_channel_name,
-            });
+            entry.push(ChannelInfo::new(short_channel_name));
         }
     }
 
