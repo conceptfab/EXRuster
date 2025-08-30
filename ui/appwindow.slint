@@ -233,15 +233,15 @@ export component AppWindow inherits Window {
             }
         }
 
-        // Image aligned with the right panel region in the menu bar
-        if show-right-panel: Image {
-            x: root.cached-right-panel-x;
+        // Image aligned to the right edge of the window
+        Image {
+            x: root.width - 200px;
             y: 0px;
-            width: root.cached-right-panel-width;
+            width: 200px;
             height: parent.height;
             source: @image-url("../resources/img/logo.png");
             image-fit: contain;
-            horizontal-alignment: left;
+            horizontal-alignment: right;
             vertical-alignment: center;
         }
     }
