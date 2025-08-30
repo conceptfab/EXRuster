@@ -1,5 +1,9 @@
 # rustExR - Przeglądarka plików EXR
 
+
+
+
+
 Aplikacja do przeglądania i edycji plików EXR napisana w Rust z interfejsem Slint.
 
 ## Struktura projektu po refaktoryzacji
