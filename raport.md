@@ -20,7 +20,7 @@
 
 ### `src/io/lazy_exr_loader.rs`
 
-4. **[SKIP]** **`load_layer_from_disk` (linie ~185-265)** — "lazy" loader wywołuje `.all_channels().all_layers()` co dekoduje WSZYSTKIE warstwy z pliku EXR, a potem szuka jednej. Dla pliku z 20 warstwami czyta 20x za dużo danych. Fix: albo użyć selective-layer API crate `exr`, albo pre-loadować cache pełny w tle po wyświetleniu pierwszej warstwy. *(Wymaga badania API exr crate, zbyt inwazyjne)*
+4. **[DONE]** **`load_layer_from_disk` (linie ~185-265)** — "lazy" loader wywołuje `.all_channels().all_layers()` co dekoduje WSZYSTKIE warstwy z pliku EXR, a potem szuka jednej. Dla pliku z 20 warstwami czyta 20x za dużo danych. Fix: albo użyć selective-layer API crate `exr`, albo pre-loadować cache pełny w tle po wyświetleniu pierwszej warstwy. *(Zrealizowane: LayerNameFilter + read_single_layer_by_name, fallback na all_layers)*
 
 5. **[DONE]** **`to_layer_channels` (linie ~297-306)** — `channel_names: Vec<String>` jest głęboko klonowany (deep copy wszystkich stringów) przy każdym dostępie do warstwy. Fix: zmienić typ na `Arc<Vec<String>>` — klon staje się O(1).
 
@@ -60,9 +60,9 @@
 
 13. **[DONE]** **Histogram trzykrotnie zduplikowany (linie ~142-165, ~303-325, plus setup.rs ~144-166)** — identyczny blok `update_histogram` + `apply_to_ui` + percentyle skopiowany 3x. Fix: wyekstrahować do `fn apply_histogram_to_ui(ui, app_state)`.
 
-14. **[PARTIAL]** **Channel classification na każdym przebudowaniu drzewa (linie ~465-629)** — `determine_channel_group_with_config` wywoływany na każdy klik expand/collapse. Wewnątrz: `config.basic_rgb_channels.contains(&channel_name.to_string())` alokuje `String` na każde sprawdzenie. Sort używa `iter().position()` w komparatorze — O(n^2). Fix: cache'ować mapę kanał→grupa w `AppState`, użyć `HashMap` dla priorytetów sortu. *(Cached channel config w AppState — zrobione; HashMap sort — nie zrobione)*
+14. **[DONE]** **Channel classification na każdym przebudowaniu drzewa (linie ~465-629)** — `determine_channel_group_with_config` wywoływany na każdy klik expand/collapse. Wewnątrz: `config.basic_rgb_channels.contains(&channel_name.to_string())` alokuje `String` na każde sprawdzenie. Sort używa `iter().position()` w komparatorze — O(n^2). Fix: cache'ować mapę kanał→grupa w `AppState`, użyć `HashMap` dla priorytetów sortu. *(Zrealizowane: eq_ignore_ascii_case zamiast to_string; group_priority_map dla O(1) sortu; rgba_order bez to_uppercase)*
 
-15. **[SKIP]** **Wielokrotne blokady write lock w jednym closure (linie ~117-165, ~269-341)** — `app_state.write()` pobierany 3-4x sekwencyjnie w `invoke_from_event_loop`. Fix: skonsolidować w jeden scope write lock. *(Ryzyko deadlocków przy obecnej architekturze)*
+15. **[DONE]** **Wielokrotne blokady write lock w jednym closure (linie ~117-165, ~269-341)** — `app_state.write()` pobierany 3-4x sekwencyjnie w `invoke_from_event_loop`. Fix: skonsolidować w jeden scope write lock. *(Zrealizowane: jeden write lock dla lazy i full cache path)*
 
 ---
 
@@ -74,7 +74,7 @@
 
 ### `src/ui/setup.rs`
 
-17. **[PARTIAL]** **`on_preview_geometry_changed` (linie ~270-310)** — pełny re-render `process_to_image` + verbose log do konsoli przy każdym resize tick (co 100ms z timera). Fix: dodać debounce (np. 200ms `SingleShot` timer) zamiast natychmiastowego renderowania. *(Usunięto verbose log; debounce wymaga dodatkowej logiki timerów)*
+17. **[DONE]** **`on_preview_geometry_changed` (linie ~270-310)** — pełny re-render `process_to_image` + verbose log do konsoli przy każdym resize tick (co 100ms z timera). Fix: dodać debounce (np. 200ms `SingleShot` timer) zamiast natychmiastowego renderowania. *(Zrealizowane: DebouncedGeometry 200ms SingleShot)*
 
 18. **[DONE]** **Dead code: `calculate-layout` callback (linie ~68-89)** — oblicza `cached-right-panel-width` i `cached-right-panel-x`, ale te property nigdzie nie są czytane w `.slint`. Fix: usunąć callback, rejestrację i property.
 
@@ -96,7 +96,7 @@
 
 ### `src/ui/thumbnails.rs`
 
-22. **[SKIP]** **Kopiowanie pikseli na UI thread (linie ~126-161)** — `SharedPixelBuffer::new` + pętla kopiowania pikseli (~5MB+ dla 50 miniatur) wykonywana w `invoke_from_event_loop` blokując UI. Fix: przenieść tworzenie `SharedPixelBuffer` i kopiowanie pikseli do wątku tła, na UI thread zostawić tylko `Image::from_rgba8` + `set_thumbnails`. *(Wymaga zmiany architektury async)*
+22. **[DONE]** **Kopiowanie pikseli na UI thread (linie ~126-161)** — `SharedPixelBuffer::new` + pętla kopiowania pikseli (~5MB+ dla 50 miniatur) wykonywana w `invoke_from_event_loop` blokując UI. Fix: przenieść tworzenie `SharedPixelBuffer` i kopiowanie pikseli do wątku tła, na UI thread zostawić tylko `Image::from_rgba8` + `set_thumbnails`. *(Zrealizowane: konwersja Vec<u8>→Rgba8Pixel w tle; na UI tylko alloc + copy_from_slice)*
 
 ---
 
@@ -110,7 +110,7 @@
 
 | Status | Ilość |
 |--------|-------|
-| DONE | 17 |
-| PARTIAL | 2 |
-| SKIP | 4 |
-| **Razem** | **19/23 zoptymalizowane (w tym 2 częściowo), 4 pominięte** |
+| DONE | 22 |
+| PARTIAL | 0 |
+| SKIP | 1 |
+| **Razem** | **22/23 zoptymalizowane, 1 pominięty** |

@@ -150,12 +150,6 @@ impl ScopedProgress {
         self
     }
 
-    /// Set progress value and return self for chaining
-    pub fn set(self, progress: f32, message: Option<&str>) -> Self {
-        self.inner.set(progress, message);
-        self
-    }
-
     /// Get a reference to the underlying UiProgress for advanced usage
     pub fn inner(&self) -> &UiProgress {
         &self.inner
@@ -182,23 +176,30 @@ impl WeakProgressExt for slint::Weak<AppWindow> {
     }
 }
 
+/// Ustawia progress na 100% i planuje reset do 0.0 po 500 ms.
+/// Działa z dowolnego wątku (używa invoke_from_event_loop).
+pub fn schedule_progress_finish_with_reset(ui: slint::Weak<AppWindow>) {
+    let weak = ui.clone();
+    let _ = invoke_from_event_loop(move || {
+        if let Some(ui_ref) = weak.upgrade() {
+            ui_ref.set_progress_value(1.0);
+            let weak2 = weak.clone();
+            slint::Timer::single_shot(std::time::Duration::from_millis(500), move || {
+                if let Some(u) = weak2.upgrade() {
+                    u.set_progress_value(0.0);
+                }
+            });
+        }
+    });
+}
+
 /// Convenience functions for common progress patterns
 pub mod patterns {
     use super::*;
 
-    /// Create a file operation progress
-    pub fn file_operation(
-        ui: slint::Weak<AppWindow>,
-        operation: &str,
-        filename: &str,
-    ) -> ScopedProgress {
-        let message = format!("{}: {}", operation, filename);
-        ScopedProgress::from_ui(ui).start_indeterminate(Some(&message))
-    }
-
     /// Create a progress for processing operations with step tracking
     pub fn processing(ui: slint::Weak<AppWindow>, operation: &str) -> ScopedProgress {
         let message = format!("Processing: {}", operation);
-        ScopedProgress::from_ui(ui).start_indeterminate(Some(&message))
+        ui.scoped_progress().start_indeterminate(Some(&message))
     }
 }

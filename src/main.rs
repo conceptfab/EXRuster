@@ -28,6 +28,7 @@ fn main() -> Result<(), slint::PlatformError> {
         .expect("Failed to initialize thread pool");
 
     let ui = AppWindow::new()?;
+    ui.set_app_version(env!("VERSION_WITH_BUILD").into());
 
     #[cfg(target_os = "windows")]
     {

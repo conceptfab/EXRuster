@@ -25,7 +25,8 @@ export struct ThumbItem {
 
 export component AppWindow inherits Window {
     in-out property <[ThumbItem]> thumbnails: [];
-    title: "EXRuster";
+    in-out property <string> app-version: "0.0.0";
+    title: "EXRuster " + root.app-version;
     icon: @image-url("../resources/img/icon.png");
     background: Kolory.tlo;
     default-font-family: "Geist";
@@ -1348,8 +1349,8 @@ export component AppWindow inherits Window {
              Rectangle {
                 width: root.width/3 - 12px;
 
-                // Progress bar anchored to the right
-                Rectangle {
+                // Progress bar anchored to the right (ukryty gdy progress-value == 0.0)
+                if root.progress-value != 0.0: Rectangle {
                     // container
                     width: parent.width * 0.75;
                     height: 8px;

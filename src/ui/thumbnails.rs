@@ -118,44 +118,58 @@ pub fn load_thumbnails_for_directory(
             let count = sorted_works.len();
             let ms = t0.elapsed().as_millis();
 
-            // Update UI in main thread via invoke_from_event_loop
+            // Convert pixels to Rgba8Pixel in background (avoids blocking UI with ~5MB+ copy)
+            prog.set(0.92, Some("🎨 Preparing pixel data..."));
+            let prepared: Vec<_> = sorted_works
+                .into_iter()
+                .map(|w| {
+                    let pixels: Vec<Rgba8Pixel> = w
+                        .pixels
+                        .chunks_exact(4)
+                        .map(|chunk| Rgba8Pixel {
+                            r: chunk[0],
+                            g: chunk[1],
+                            b: chunk[2],
+                            a: chunk[3],
+                        })
+                        .collect();
+                    (
+                        pixels,
+                        w.file_name,
+                        w.file_size_bytes,
+                        w.num_layers,
+                        w.path,
+                        w.width,
+                        w.height,
+                    )
+                })
+                .collect();
+
+            // Update UI in main thread — only alloc + memcpy, no conversion loop
             let ui_weak_clone = ui_weak.clone();
             let count_clone = count;
             let ms_clone = ms;
 
             slint::invoke_from_event_loop(move || {
                 if let Some(ui) = ui_weak_clone.upgrade() {
-                    prog.set(0.95, Some("🎨 Converting thumbnails to UI format..."));
+                    prog.set(0.95, Some("🎨 Creating thumbnails..."));
 
-                    // Convert thumbnails to UI format in main thread
-                    let items: Vec<ThumbItem> = sorted_works
+                    let items: Vec<ThumbItem> = prepared
                         .into_iter()
-                        .map(|w| {
-                            // Convert raw RGBA8 pixels to slint::Image
+                        .map(|(pixels, file_name, file_size_bytes, num_layers, path, width, height)| {
                             let mut buffer =
-                                SharedPixelBuffer::<Rgba8Pixel>::new(w.width, w.height);
-                            let slice = buffer.make_mut_slice();
-
-                            // Copy RGBA8 pixels
-                            for (dst, chunk) in slice.iter_mut().zip(w.pixels.chunks_exact(4)) {
-                                *dst = Rgba8Pixel {
-                                    r: chunk[0],
-                                    g: chunk[1],
-                                    b: chunk[2],
-                                    a: chunk[3],
-                                };
-                            }
-
+                                SharedPixelBuffer::<Rgba8Pixel>::new(width, height);
+                            buffer.make_mut_slice().copy_from_slice(&pixels);
                             let image = Image::from_rgba8(buffer);
 
                             ThumbItem {
                                 img: image,
-                                name: w.file_name.into(),
-                                size: human_size(w.file_size_bytes).into(),
-                                layers: format!("{} layers", w.num_layers).into(),
-                                path: w.path.display().to_string().into(),
-                                width: w.width as i32,
-                                height: w.height as i32,
+                                name: file_name.into(),
+                                size: human_size(file_size_bytes).into(),
+                                layers: format!("{} layers", num_layers).into(),
+                                path: path.display().to_string().into(),
+                                width: width as i32,
+                                height: height as i32,
                             }
                         })
                         .collect();

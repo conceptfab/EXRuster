@@ -213,23 +213,31 @@ pub fn setup_image_control_callbacks(
         move |mode: i32| helper.handle_tonemap_change(mode)
     });
 
-    // Re-render podgląd przy zmianie geometrii obszaru podglądu (1:1 względem widżetu, z DPI)
-    ui.on_preview_geometry_changed({
+    // Re-render podgląd przy zmianie geometrii obszaru podglądu (debounce 200ms)
+    let debounced_geometry = {
         let ui_handle = ui.as_weak();
         let app_state = Arc::clone(&app_state);
         let console = console_model.clone();
-        move |_w, _h| {
+        let debounced = crate::ui::image_controls::DebouncedGeometry::new(move || {
             if let Some(ui) = ui_handle.upgrade() {
                 if let Ok(state) = app_state.read() {
                     if let Some(ref cache) = state.image_cache {
                         let exposure = ui.get_exposure_value();
                         let gamma = ui.get_gamma_value();
                         let mode = ui.get_tonemap_mode() as i32;
-                        let image = crate::ui::update_preview_image(&ui, cache, exposure, gamma, mode, &console);
+                        let image =
+                            crate::ui::update_preview_image(&ui, cache, exposure, gamma, mode, &console);
                         ui.set_exr_image(image);
                     }
                 }
             }
+        });
+        Arc::new(Mutex::new(debounced))
+    };
+    ui.on_preview_geometry_changed({
+        let debounced = Arc::clone(&debounced_geometry);
+        move |_w, _h| {
+            debounced.lock().unwrap().trigger();
         }
     });
 }

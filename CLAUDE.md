@@ -17,7 +17,7 @@ cargo build
 cargo build --release
 
 # Run the application
-cargo run --bin EXruster_nightly
+cargo run --bin EXruster
 
 # Alternative build using Python script (includes auto-detection and additional features)
 python build.py --release

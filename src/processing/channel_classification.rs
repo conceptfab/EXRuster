@@ -309,10 +309,11 @@ pub fn determine_channel_group_with_config(
     channel_name: &str,
     config: &ChannelGroupConfig,
 ) -> String {
-    // Check for basic RGB channels first
+    // Check for basic RGB channels first (eq_ignore_ascii_case avoids String allocation)
     if config
         .basic_rgb_channels
-        .contains(&channel_name.to_string())
+        .iter()
+        .any(|s| s.eq_ignore_ascii_case(channel_name))
     {
         for group_def in config.groups.values() {
             if group_def.basic_rgb {

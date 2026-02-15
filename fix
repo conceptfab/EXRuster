@@ -4,6 +4,10 @@ rustup install stable
 
 rustup default stable
 
+rustup update nightly
+
+rustup default nightly
+
 cargo update
 
 

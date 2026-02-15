@@ -1,5 +1,6 @@
 use core::simd::{f32x4, Simd};
 use std::simd::prelude::SimdFloat;
+use std::simd::Select;
 
 /// Precomputed sRGB OETF lookup table (4096 entries for [0,1] range)
 /// Fits in L1 cache (~16KB) and eliminates powf calls in hot path

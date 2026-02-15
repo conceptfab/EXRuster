@@ -1,3 +1,5 @@
+use crate::io::progress_reader::ProgressReader;
+use crate::io::selective_layer_reader::read_single_layer_by_name;
 use crate::ui::progress::ProgressSink;
 use crate::utils::split_layer_and_short;
 use anyhow::Context;
@@ -7,7 +9,7 @@ use exr::prelude as exr;
 use memmap2::Mmap;
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::Cursor;
+use std::io::{BufReader, Cursor};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
 
@@ -46,13 +48,20 @@ pub struct LazyExrLoader {
 #[allow(dead_code)]
 impl LazyExrLoader {
     /// Create a new lazy loader - loads only metadata, not pixel data
-    pub fn new(path: PathBuf, max_cached_layers: usize) -> anyhow::Result<Self> {
-        let metadata = Self::load_metadata_only(&path)?;
+    pub fn new(
+        path: PathBuf,
+        max_cached_layers: usize,
+        progress: Option<std::sync::Arc<dyn ProgressSink>>,
+    ) -> anyhow::Result<Self> {
+        let metadata = Self::load_metadata_only(&path, progress.clone())?;
 
         // For large files (> 500MB), use memory mapping to speed up random access
         let mut mmap = None;
         if let Ok(meta) = std::fs::metadata(&path) {
             if meta.len() > 500 * 1024 * 1024 {
+                if let Some(ref p) = progress {
+                    p.set(0.95, Some("Mapping file to memory..."));
+                }
                 if let Ok(file) = File::open(&path) {
                     // Unsafe because file could be modified/truncated while mapped,
                     // but for typical EXR usage this is acceptable risk for performance
@@ -75,9 +84,17 @@ impl LazyExrLoader {
     }
 
     /// Load only layer structure and channel info (no pixel data)
-    fn load_metadata_only(path: &PathBuf) -> anyhow::Result<Vec<LazyLayerMetadata>> {
-        // Read only metadata (headers) without pixel data
-        let meta = ::exr::meta::MetaData::read_from_file(path, /*pedantic=*/ false)
+    fn load_metadata_only(
+        path: &PathBuf,
+        progress: Option<std::sync::Arc<dyn ProgressSink>>,
+    ) -> anyhow::Result<Vec<LazyLayerMetadata>> {
+        let file_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(1);
+        let file = std::fs::File::open(path)
+            .with_context(|| format!("Failed to open: {}", path.display()))?;
+
+        let reader = ProgressReader::new(file, file_size, progress);
+
+        let meta = ::exr::meta::MetaData::read_from_unbuffered(reader, /*pedantic=*/ false)
             .with_context(|| format!("Failed to read EXR metadata: {}", path.display()))?;
 
         let mut layer_map: HashMap<String, LazyLayerMetadata> = HashMap::new();
@@ -182,6 +199,7 @@ impl LazyExrLoader {
     }
 
     /// Load specific layer from disk (protected by file access mutex)
+    /// Uses selective reading when possible — only decodes target layer (10-20x less I/O).
     fn load_layer_from_disk(
         &self,
         layer_name: &str,
@@ -189,63 +207,85 @@ impl LazyExrLoader {
     ) -> anyhow::Result<LazyLayerData> {
         let _guard = self.file_access.lock().unwrap();
 
-        // Find metadata for this layer
         let metadata = self
             .metadata
             .iter()
-            .find(|m| m.name.to_lowercase() == layer_name.to_lowercase())
+            .find(|m| m.name.eq_ignore_ascii_case(layer_name))
             .ok_or_else(|| anyhow::anyhow!("Layer not found: {}", layer_name))?;
 
         let width = metadata.width;
         let height = metadata.height;
         let pixel_count = (width as usize) * (height as usize);
 
-        // Read full image from mmap or file, then extract only the target layer
-        let any_image = if let Some(mmap) = &self.mmap {
+        // Try selective layer read first (only decodes target layer)
+        let layer_data = if let Some(mmap) = &self.mmap {
             let cursor = Cursor::new(&mmap[..]);
-            exr::read()
-                .no_deep_data()
-                .largest_resolution_level()
-                .all_channels()
-                .all_layers()
-                .all_attributes()
-                .from_buffered(cursor)
-                .map_err(|e| anyhow::anyhow!("EXR read error: {}", e))?
+            read_single_layer_by_name(cursor, layer_name).ok()
         } else {
             let file = File::open(&self.path)?;
-            let buffered_file = std::io::BufReader::new(file);
-            exr::read()
-                .no_deep_data()
-                .largest_resolution_level()
-                .all_channels()
-                .all_layers()
-                .all_attributes()
-                .from_buffered(buffered_file)
-                .map_err(|e| anyhow::anyhow!("EXR read error: {}", e))?
+            let reader = BufReader::new(file);
+            read_single_layer_by_name(reader, layer_name).ok()
         };
 
-        // Extract only the target layer's data (same pattern as build_full_exr_cache)
-        let mut channel_names: Vec<String> = Vec::new();
-        let mut channel_data: Vec<f32> = Vec::new();
-
-        for layer in any_image.layer_data.iter() {
-            let base_attr: Option<String> = layer.attributes.layer_name.as_ref().map(|s| s.to_string());
-
+        let (channel_names, channel_data) = if let Some(layer) = layer_data {
+            // Selective read succeeded — convert single Layer to our format
+            let base_attr = layer.attributes.layer_name.as_ref().map(|s| s.to_string());
+            let mut names: Vec<String> = Vec::new();
+            let mut data: Vec<f32> = Vec::new();
             for ch in layer.channel_data.list.iter() {
                 let full = ch.name.to_string();
-                let (lname, short) = split_layer_and_short(&full, base_attr.as_deref());
-
-                if !lname.eq_ignore_ascii_case(layer_name) {
-                    continue;
-                }
-
-                channel_names.push(short);
+                let (_lname, short) = split_layer_and_short(&full, base_attr.as_deref());
+                names.push(short);
                 let samples = (0..pixel_count).map(|i| {
                     ch.sample_data.value_by_flat_index(i).to_f32()
                 });
-                channel_data.extend(samples);
+                data.extend(samples);
             }
-        }
+            (names, data)
+        } else {
+            // Fallback: read all layers (e.g. selective failed for this EXR variant)
+            let any_image = if let Some(mmap) = &self.mmap {
+                let cursor = Cursor::new(&mmap[..]);
+                exr::read()
+                    .no_deep_data()
+                    .largest_resolution_level()
+                    .all_channels()
+                    .all_layers()
+                    .all_attributes()
+                    .from_buffered(cursor)
+                    .map_err(|e| anyhow::anyhow!("EXR read error: {}", e))?
+            } else {
+                let file = File::open(&self.path)?;
+                let buffered_file = BufReader::new(file);
+                exr::read()
+                    .no_deep_data()
+                    .largest_resolution_level()
+                    .all_channels()
+                    .all_layers()
+                    .all_attributes()
+                    .from_buffered(buffered_file)
+                    .map_err(|e| anyhow::anyhow!("EXR read error: {}", e))?
+            };
+
+            let mut channel_names: Vec<String> = Vec::new();
+            let mut channel_data: Vec<f32> = Vec::new();
+            for layer in any_image.layer_data.iter() {
+                let base_attr = layer.attributes.layer_name.as_ref().map(|s| s.to_string());
+                for ch in layer.channel_data.list.iter() {
+                    let full = ch.name.to_string();
+                    let (lname, short) = split_layer_and_short(&full, base_attr.as_deref());
+                    if !lname.eq_ignore_ascii_case(layer_name) {
+                        continue;
+                    }
+                    channel_names.push(short);
+                    let samples = (0..pixel_count).map(|i| {
+                        ch.sample_data.value_by_flat_index(i).to_f32()
+                    });
+                    channel_data.extend(samples);
+                }
+            }
+            (channel_names, channel_data)
+        };
 
         if channel_names.is_empty() {
             anyhow::bail!("No channels found for layer: {}", layer_name);

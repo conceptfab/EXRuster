@@ -1,4 +1,4 @@
-#!/usr/bin/env python3ca
+#!/usr/bin/env python3
 """
 Automatyczny skrypt kompilacji dla aplikacji rustExR
 Autor: Projekt rustExR - EXR File Viewer
@@ -11,12 +11,37 @@ import time
 import argparse
 import shutil
 from pathlib import Path
+from typing import Optional
 
 class RustBuilder:
     def __init__(self, project_dir="."):
         self.project_dir = Path(project_dir).resolve()
         self.cargo_toml = self.project_dir / "Cargo.toml"
     
+    def _read_package_version(self) -> Optional[str]:
+        """Odczytuje wersję pakietu z Cargo.toml."""
+        try:
+            content = self.cargo_toml.read_text(encoding="utf-8")
+        except Exception:
+            return None
+        try:
+            import tomllib  # type: ignore
+            data = tomllib.loads(content)
+            pkg = data.get("package", {})
+            ver = pkg.get("version")
+            return str(ver).strip() if isinstance(ver, str) else None
+        except Exception:
+            pass
+        for line in content.splitlines():
+            line = line.strip()
+            if line.startswith("version") and "=" in line:
+                try:
+                    part = line.split("=", 1)[1].strip().strip('"')
+                    return part
+                except Exception:
+                    pass
+        return None
+
     def detect_bin_name(self):
         """Wykrywa nazwę binarki na podstawie Cargo.toml.
         Zwraca nazwę lub None, jeśli nie udało się wykryć.
@@ -93,6 +118,59 @@ class RustBuilder:
         print(f"\n[{step}] {message}")
         print("-" * 40)
         
+    def check_rust_environment(self) -> bool:
+        """Sprawdza czy cargo i rustc są dostępne w PATH. Wyświetla wersje."""
+        print("🔍 Weryfikacja środowiska Rust...")
+        ok = True
+        for cmd, name in [(["cargo", "--version"], "cargo"), (["rustc", "--version"], "rustc")]:
+            try:
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    cwd=self.project_dir,
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    ver = result.stdout.strip().split("\n")[0]
+                    print(f"   ✓ {ver}")
+                else:
+                    print(f"   ❌ {name}: nie znaleziono lub błąd")
+                    ok = False
+            except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
+                print(f"   ❌ {name}: {e}")
+                ok = False
+        if not ok:
+            print("   💡 Podpowiedź: Zainstaluj Rust (rustup) z https://rustup.rs")
+        return ok
+
+    def kill_rust_compilation_processes(self) -> list[str]:
+        """Sprawdza i ubija działające w tle procesy kompilacji Rust (rustc.exe, cargo.exe).
+        Zwraca listę nazw procesów, które zostały zakończone.
+        """
+        if os.name != "nt":
+            # Na systemach Unix można dodać pkill/killall
+            return []
+        process_names = ["rustc.exe", "cargo.exe"]
+        killed = []
+        for name in process_names:
+            try:
+                result = subprocess.run(
+                    ["taskkill", "/F", "/IM", name],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                if result.returncode == 0:
+                    killed.append(name)
+            except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+                pass
+        if killed:
+            print(f"🛑 Zakończono procesy kompilacji w tle: {', '.join(killed)}")
+            time.sleep(0.5)  # Krótka pauza na zwolnienie blokad
+        print("✓ Środowisko gotowe do kompilacji")
+        return killed
+
     def check_cargo_project(self):
         """Sprawdza czy to jest prawidłowy projekt Cargo"""
         if not self.cargo_toml.exists():
@@ -101,6 +179,17 @@ class RustBuilder:
             return False
         return True
         
+    def _get_error_hint(self, command: list[str]) -> str:
+        """Zwraca podpowiedź w zależności od nieudanej komendy."""
+        cmd_str = " ".join(command) if isinstance(command, (list, tuple)) else str(command)
+        if "clean" in cmd_str:
+            return "Upewnij się, że żadne procesy cargo/rustc nie blokują plików. Uruchom ponownie: python build.py (ubije procesy w tle)"
+        if "build" in cmd_str or "check" in cmd_str:
+            return "Sprawdź błędy powyżej. Przydatne: cargo check, cargo clippy"
+        if "test" in cmd_str:
+            return "Sprawdź błędy powyżej. Więcej szczegółów: cargo test -- --nocapture"
+        return "Sprawdź logi powyżej i dokumentację projektu."
+
     def run_command(self, command, description, live_output=False):
         """Uruchamia komendę i zwraca wynik"""
         print(f"🔄 {description}...")
@@ -150,11 +239,15 @@ class RustBuilder:
             if e.stderr:
                 print("🚨 Stderr:")
                 print(e.stderr)
+
+            hint = self._get_error_hint(command)
+            print(f"   💡 Podpowiedź: {hint}")
                 
             return False, e
             
         except Exception as e:
             print(f"❌ Nieoczekiwany błąd: {e}")
+            print(f"   💡 Podpowiedź: Sprawdź czy cargo jest w PATH. Uruchom: cargo --version")
             return False, e
             
     def clean_build(self, verbose=False):
@@ -210,12 +303,13 @@ class RustBuilder:
                 
         return success
 
-    def build_final(self, bin_name: str = "EXruster_nightly", out_dir: str = "dist", clean: bool = False, verbose: bool = False) -> bool:
+    def build_final(self, bin_name: str = "EXruster", out_name: str = "EXruster", out_dir: str = "dist", clean: bool = False, verbose: bool = False, jobs: Optional[int] = None) -> bool:
         """Buduje finalną wersję binarki w trybie release i kopiuje do katalogu out_dir bez uruchamiania."""
         self.print_header("🚀 FINALNY BUILD APLIKACJI")
         print(f"📁 Katalog projektu: {self.project_dir}")
         print(f"🦀 Tryb kompilacji: release")
-        print(f"🔧 Binarka: {bin_name}")
+        print(f"🔧 Binarka (Cargo): {bin_name}")
+        print(f"📦 Docelowa nazwa pliku: {out_name}")
         print(f"📤 Katalog wyjściowy: {out_dir}")
 
         if not self.check_cargo_project():
@@ -238,35 +332,45 @@ class RustBuilder:
             except Exception as e:
                 print(f"⚠️  Fallback usunięcia 'target' nie powiódł się: {e}")
 
-        # Build release konkretnej binarki
+        # Build release konkretnej binarki (build.rs doda datę kompilacji do wersji)
         self.print_step("1", f"Kompilacja binarki '{bin_name}' w trybie release")
         cmd = ["cargo", "build", "--release", "--bin", bin_name]
+        if jobs is not None:
+            cmd.extend(["-j", str(jobs)])
         ok, _ = self.run_command(cmd, f"Kompilacja '{bin_name}' (release)", live_output=True)
         if not ok:
             return False
 
-        # Ścieżki artefaktów
+        # Ścieżki artefaktów (zbudowany plik ma nazwę binarki z Cargo)
         target_dir = self.project_dir / "target" / "release"
-        exe_name = f"{bin_name}.exe" if os.name == "nt" else bin_name
-        built_path = target_dir / exe_name
+        built_exe = f"{bin_name}.exe" if os.name == "nt" else bin_name
+        built_path = target_dir / built_exe
         if not built_path.exists():
             print(f"❌ Nie znaleziono skompilowanego pliku: {built_path}")
+            print(f"   💡 Podpowiedź: Sprawdź nazwę binarki (--bin {bin_name}) w Cargo.toml")
             return False
 
-        # Przygotuj katalog wyjściowy
+        # Przygotuj katalog wyjściowy (docelowa nazwa bez _nightly)
         out_path = self.project_dir / out_dir
         out_path.mkdir(parents=True, exist_ok=True)
-        final_path = out_path / exe_name
+        final_exe = f"{out_name}.exe" if os.name == "nt" else out_name
+        final_path = out_path / final_exe
 
         try:
             shutil.copy2(built_path, final_path)
         except Exception as e:
             print(f"❌ Kopiowanie do {final_path} nie powiodło się: {e}")
+            print(f"   💡 Podpowiedź: Sprawdź uprawnienia i czy plik nie jest zablokowany przez inną aplikację")
             return False
 
         size_mb = final_path.stat().st_size / (1024 * 1024)
+        # Odczytaj wersję z Cargo.toml (build.rs dodał datę wewnątrz exe)
+        pkg_version = self._read_package_version()
+        build_datetime = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
+        version_str = f"{pkg_version} ({build_datetime})" if pkg_version else "?"
         print(f"\n✅ Finalny plik: {final_path}")
         print(f"   Rozmiar: {size_mb:.2f} MB")
+        print(f"   Wersja: {version_str}")
         return True
         
     def check_project(self):
@@ -428,8 +532,15 @@ Przykłady użycia:
     parser.add_argument(
         "--bin",
         type=str,
-        default="EXruster_nightly",
-        help="Nazwa binarki Cargo do zbudowania (domyślnie: EXruster_nightly)"
+        default="EXruster",
+        help="Nazwa binarki Cargo do zbudowania (domyślnie: EXruster)"
+    )
+
+    parser.add_argument(
+        "--out-name",
+        type=str,
+        default="EXruster",
+        help="Docelowa nazwa pliku wyjściowego bez rozszerzenia (domyślnie: EXruster)"
     )
 
     parser.add_argument(
@@ -438,36 +549,63 @@ Przykłady użycia:
         default="dist",
         help="Katalog docelowy dla finalnego pliku (domyślnie: dist)"
     )
-    
+
+    parser.add_argument(
+        "--jobs",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Liczba zadań cargo (np. 1 przy LNK1104)"
+    )
+
     args = parser.parse_args()
     
     # Tworzenie buildera
     builder = RustBuilder(args.project_dir)
     
     try:
+        # Weryfikacja środowiska (cargo, rustc)
+        if not builder.check_rust_environment():
+            print("\n❌ Środowisko Rust nie jest gotowe. Zainstaluj rustup i spróbuj ponownie.")
+            sys.exit(1)
+
+        # Ubij ewentualne procesy kompilacji Rust działające w tle
+        builder.kill_rust_compilation_processes()
+
+        start_time = time.time()
+
         if args.clean_only:
             # Tylko czyszczenie
             builder.print_header("🗑️  CZYSZCZENIE CACHE KOMPILACJI")
             if not builder.check_cargo_project():
+                print(f"\n⏱️  Proces przerwany po {time.time() - start_time:.1f}s")
                 sys.exit(1)
             success = builder.clean_build()
+            elapsed = time.time() - start_time
+            print(f"\n⏱️  Cały proces zakończony w {elapsed:.1f}s")
             sys.exit(0 if success else 1)
             
         elif args.check_only:
             # Tylko sprawdzenie
             builder.print_header("🔍 SPRAWDZANIE SKŁADNI PROJEKTU")
             if not builder.check_cargo_project():
+                print(f"\n⏱️  Proces przerwany po {time.time() - start_time:.1f}s")
                 sys.exit(1)
             builder.clean_build()
             success = builder.check_project()
+            elapsed = time.time() - start_time
+            print(f"\n⏱️  Cały proces zakończony w {elapsed:.1f}s")
             sys.exit(0 if success else 1)
             
         else:
             # Domyślne zachowanie: zbuduj finalny artefakt bez uruchamiania
             builder.print_header("BUDOWANIE FINALNEGO ARTEFAKTU")
             if not builder.check_cargo_project():
+                print(f"\n⏱️  Proces przerwany po {time.time() - start_time:.1f}s")
                 sys.exit(1)
-            success = builder.build_final(bin_name=args.bin, out_dir=args.out_dir, clean=args.clean, verbose=args.verbose)
+            success = builder.build_final(bin_name=args.bin, out_name=args.out_name, out_dir=args.out_dir, clean=args.clean, verbose=args.verbose, jobs=args.jobs)
+            elapsed = time.time() - start_time
+            print(f"\n⏱️  Cały proces zakończony w {elapsed:.1f}s")
             sys.exit(0 if success else 1)
             
     except KeyboardInterrupt:

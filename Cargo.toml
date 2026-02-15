@@ -1,5 +1,5 @@
 [package]
-name = "EXruster_nightly"
+name = "EXruster"
 version = "0.3.5"
 edition = "2021"
 authors = ["Your Name <your.email@example.com>"]
@@ -10,7 +10,7 @@ keywords = ["exr", "image", "processing"]
 categories = ["multimedia::images"]
 
 [[bin]]
-name = "EXruster_nightly"
+name = "EXruster"
 path = "src/main.rs"
 
 [dependencies]
@@ -42,6 +42,7 @@ windows = { version = "0.61.3", features = [
 ] }
 
 [build-dependencies]
+chrono = "0.4"
 slint-build = "1.12.1"
 winres = "0.1"
 

@@ -3,7 +3,7 @@ use crate::io::file_operations::{get_file_name, open_file_dialog};
 use crate::io::full_exr_cache::build_full_exr_cache;
 use crate::io::image_cache::{ImageCache, LayerInfo};
 use crate::io::lazy_exr_loader::LazyExrLoader;
-use crate::ui::progress::{patterns, WeakProgressExt};
+use crate::ui::progress::{schedule_progress_finish_with_reset, UiProgress};
 use crate::ui::state::SharedAppState;
 use crate::ui::ui_handlers::{lock_or_recover, push_console, ConsoleModel};
 use crate::{
@@ -55,16 +55,15 @@ pub fn handle_open_exr(
     console: ConsoleModel,
 ) {
     if let Some(ui) = ui_handle.upgrade() {
-        let _prog = ui
-            .as_weak()
-            .scoped_progress()
-            .start_indeterminate(Some("Opening EXR file..."));
         push_console(&ui, &console, "[file] opening EXR file".to_string());
+        ui.set_status_text("Opening EXR file...".into());
+        ui.set_progress_value(-1.0);
 
         if let Some(path) = open_file_dialog() {
             handle_open_exr_from_path(ui_handle, app_state, console, path);
         } else {
             ui.set_status_text("File selection canceled".into());
+            ui.set_progress_value(0.0);
             push_console(&ui, &console, "[file] selection canceled".to_string());
         }
     }
@@ -78,8 +77,8 @@ pub fn handle_open_exr_from_path(
     path: PathBuf,
 ) {
     if let Some(ui) = ui_handle.upgrade() {
-        let prog = patterns::file_operation(ui.as_weak(), "Loading", &path.display().to_string())
-            .set(0.05, None);
+        ui.set_status_text(format!("Loading: {}", path.display()).into());
+        ui.set_progress_value(0.05);
         push_console(
             &ui,
             &console,
@@ -102,13 +101,14 @@ pub fn handle_open_exr_from_path(
                 let force_lazy = std::env::var("EXRUSTER_LAZY_OPEN").ok().as_deref() == Some("1");
                 let use_lazy = force_lazy || file_size_bytes > LIGHT_MODE_FILE_SIZE_THRESHOLD;
 
-                prog.set(
-                    0.22,
-                    Some(if use_lazy {
+                ui.set_progress_value(0.22);
+                ui.set_status_text(
+                    (if use_lazy {
                         "Reading EXR (lazy)..."
                     } else {
                         "Reading EXR (full)..."
-                    }),
+                    })
+                    .into(),
                 );
                 ui.set_progress_value(-1.0);
 
@@ -122,10 +122,12 @@ pub fn handle_open_exr_from_path(
                 let path_c = path.clone();
 
                 if use_lazy {
+                    let progress = std::sync::Arc::new(UiProgress::new(ui.as_weak()));
                     rayon::spawn(move || {
                         let t_start = Instant::now();
-                        // Initialize LazyExrLoader
-                        let lazy_res = LazyExrLoader::new(path_c.clone(), 20).map(std::sync::Arc::new);
+                        // Initialize LazyExrLoader (raportuje postęp odczytu na podstawie bajtów)
+                        let lazy_res =
+                            LazyExrLoader::new(path_c.clone(), 20, Some(progress)).map(std::sync::Arc::new);
 
                         match lazy_res {
                             Ok(lazy_loader) => {
@@ -135,45 +137,35 @@ pub fn handle_open_exr_from_path(
                                     Ok(cache) => {
                                         let _ = invoke_from_event_loop(move || {
                                             if let Some(ui2) = ui_weak.upgrade() {
-                                                // Update app state with new cache data
-                                                if let Ok(mut state) = app_state_c.write() {
-                                                    state.full_exr_cache = None; // Disable full cache in lazy mode
-                                                    state.image_cache = Some(cache);
-                                                }
-
-                                                // Generate image on UI thread
-                                                let img = {
+                                                // Single write lock: update state, generate image, get layers
+                                                let (img, layers_info_vec) = {
                                                     if let Ok(mut state) = app_state_c.write() {
-                                                        if let Some(ref mut c) = state.image_cache {
-                                                            c.process_to_image(
-                                                                exposure0,
-                                                                gamma0,
-                                                                tonemap_mode0,
-                                                            )
-                                                        } else {
-                                                            ui2.get_exr_image()
-                                                        }
+                                                        state.full_exr_cache = None;
+                                                        state.image_cache = Some(cache);
+                                                        let li = state
+                                                            .image_cache
+                                                            .as_ref()
+                                                            .map(|c| c.layers_info.clone())
+                                                            .unwrap_or_default();
+                                                        let img = state
+                                                            .image_cache
+                                                            .as_ref()
+                                                            .map(|c| {
+                                                                c.process_to_image(
+                                                                    exposure0,
+                                                                    gamma0,
+                                                                    tonemap_mode0,
+                                                                )
+                                                            })
+                                                            .unwrap_or_else(|| ui2.get_exr_image());
+                                                        (img, li)
                                                     } else {
-                                                        ui2.get_exr_image()
+                                                        (ui2.get_exr_image(), vec![])
                                                     }
                                                 };
                                                 ui2.set_exr_image(img);
 
-                                                // Automatically calculate histogram for new image
                                                 apply_histogram_to_ui(&ui2, &app_state_c);
-
-                                                // Update layers list
-                                                let layers_info_vec = {
-                                                    if let Ok(state) = app_state_c.read() {
-                                                        state
-                                                            .image_cache
-                                                            .as_ref()
-                                                            .map(|c| c.layers_info.clone())
-                                                            .unwrap_or_default()
-                                                    } else {
-                                                        vec![]
-                                                    }
-                                                };
                                                 if !layers_info_vec.is_empty() {
                                                     // Create a temporary SharedUiState wrapper for compatibility
                                                     let (
@@ -200,7 +192,7 @@ pub fn handle_open_exr_from_path(
                                                 ));
                                                 ui2.set_console_text(log.into());
                                                 ui2.set_status_text("Loaded (lazy)".into());
-                                                ui2.set_progress_value(1.0);
+                                                schedule_progress_finish_with_reset(ui2.as_weak());
                                             }
                                         });
                                     }
@@ -252,9 +244,11 @@ pub fn handle_open_exr_from_path(
                     });
                 } else {
                     // FULL path (existing)
+                    let progress = std::sync::Arc::new(UiProgress::new(ui.as_weak()));
                     rayon::spawn(move || {
                         let t_start = Instant::now();
-                        let full_res = build_full_exr_cache(&path_c, None).map(std::sync::Arc::new);
+                        let full_res =
+                            build_full_exr_cache(&path_c, Some(progress.as_ref())).map(std::sync::Arc::new);
                         match full_res {
                             Ok(full) => {
                                 let t_new = Instant::now();
@@ -264,40 +258,34 @@ pub fn handle_open_exr_from_path(
                                     Ok(cache) => {
                                         let _ = invoke_from_event_loop(move || {
                                             if let Some(ui2) = ui_weak.upgrade() {
-                                                // Update app state with new cache data
-                                                if let Ok(mut state) = app_state_c.write() {
-                                                    state.full_exr_cache = Some(full.clone());
-                                                    state.image_cache = Some(cache);
-                                                }
-
-                                                // Generate image on UI thread (Image is not Send)
+                                                // Single write lock: update state, generate image, get layers
                                                 let (img, layers_info_len, layers_info_vec) = {
                                                     if let Ok(mut state) = app_state_c.write() {
-                                                        if let Some(ref mut c) = state.image_cache {
-                                                            let li = c.layers_info.clone();
-                                                            (
+                                                        state.full_exr_cache = Some(full.clone());
+                                                        state.image_cache = Some(cache);
+                                                        let li = state
+                                                            .image_cache
+                                                            .as_ref()
+                                                            .map(|c| c.layers_info.clone())
+                                                            .unwrap_or_default();
+                                                        let img = state
+                                                            .image_cache
+                                                            .as_ref()
+                                                            .map(|c| {
                                                                 c.process_to_image(
                                                                     exposure0,
                                                                     gamma0,
                                                                     tonemap_mode0,
-                                                                ),
-                                                                li.len(),
-                                                                li,
-                                                            )
-                                                        } else {
-                                                            (
-                                                                ui2.get_exr_image(),
-                                                                0usize,
-                                                                Vec::new(),
-                                                            )
-                                                        }
+                                                                )
+                                                            })
+                                                            .unwrap_or_else(|| ui2.get_exr_image());
+                                                        (img, li.len(), li)
                                                     } else {
                                                         (ui2.get_exr_image(), 0usize, Vec::new())
                                                     }
                                                 };
                                                 ui2.set_exr_image(img);
 
-                                                // Automatically calculate histogram for new image
                                                 apply_histogram_to_ui(&ui2, &app_state_c);
 
                                                 if !layers_info_vec.is_empty() {
@@ -339,7 +327,7 @@ pub fn handle_open_exr_from_path(
                                                     )
                                                     .into(),
                                                 );
-                                                ui2.set_progress_value(1.0);
+                                                schedule_progress_finish_with_reset(ui2.as_weak());
                                             }
                                         });
                                     }
@@ -401,7 +389,7 @@ pub fn handle_open_exr_from_path(
             }
             Err(e) => {
                 ui.report_error_with_status(&console, "meta", "Błąd odczytu metadanych", e);
-                // Progress automatically resets on scope exit
+                ui.set_progress_value(0.0);
             }
         }
     }
@@ -470,6 +458,14 @@ pub fn create_layers_model(
         .map(|(key, def)| (def.name.as_str(), key.as_str()))
         .collect();
 
+    // HashMap for O(1) priority lookup instead of O(n) iter().position() in sort
+    let group_priority_map: HashMap<&str, usize> = config
+        .group_priority_order
+        .iter()
+        .enumerate()
+        .map(|(i, k)| (k.as_str(), i))
+        .collect();
+
     let mut items: Vec<SharedString> = Vec::new();
     let mut colors: Vec<Color> = Vec::new();
     let mut font_sizes: Vec<i32> = Vec::new();
@@ -490,21 +486,13 @@ pub fn create_layers_model(
         grouped_layers.entry(group_name).or_default().push(layer);
     }
 
-    // 2. Sort the groups based on config priority
+    // 2. Sort the groups based on config priority (O(1) lookup via HashMap)
     let mut sorted_groups: Vec<_> = grouped_layers.into_iter().collect();
     sorted_groups.sort_by(|a, b| {
         let a_key = name_to_key.get(a.0.as_str()).unwrap_or(&"");
         let b_key = name_to_key.get(b.0.as_str()).unwrap_or(&"");
-        let a_priority = config
-            .group_priority_order
-            .iter()
-            .position(|k| k == a_key)
-            .unwrap_or(999);
-        let b_priority = config
-            .group_priority_order
-            .iter()
-            .position(|k| k == b_key)
-            .unwrap_or(999);
+        let a_priority = *group_priority_map.get(a_key).unwrap_or(&999);
+        let b_priority = *group_priority_map.get(b_key).unwrap_or(&999);
         a_priority.cmp(&b_priority)
     });
 
@@ -563,19 +551,16 @@ pub fn create_layers_model(
                 // Add channels for the layer (always show all channels)
                 {
                     let mut channels_to_sort = layer.channels.clone();
-                    // Special sort for RGBA
+                    // Special sort for RGBA (eq_ignore_ascii_case avoids to_uppercase allocation)
+                    let rgba_order = |name: &str| -> usize {
+                        ["R", "G", "B", "A"]
+                            .iter()
+                            .position(|&s| name.eq_ignore_ascii_case(s))
+                            .unwrap_or(99)
+                    };
                     channels_to_sort.sort_by(|a, b| {
-                        let a_upper = a.name.to_uppercase();
-                        let b_upper = b.name.to_uppercase();
-                        let order = ["R", "G", "B", "A"];
-                        let a_pos = order
-                            .iter()
-                            .position(|&s| s == a_upper.as_str())
-                            .unwrap_or(99);
-                        let b_pos = order
-                            .iter()
-                            .position(|&s| s == b_upper.as_str())
-                            .unwrap_or(99);
+                        let a_pos = rgba_order(&a.name);
+                        let b_pos = rgba_order(&b.name);
                         if a_pos != 99 || b_pos != 99 {
                             a_pos.cmp(&b_pos)
                         } else {

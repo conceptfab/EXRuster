@@ -61,6 +61,28 @@ impl ThrottledUpdate {
     }
 }
 
+/// Debounced geometry change handler — delays re-render until resize settles (200ms).
+/// Avoids full process_to_image on every resize tick.
+pub struct DebouncedGeometry {
+    timer: Timer,
+}
+
+impl DebouncedGeometry {
+    pub fn new<F>(callback: F) -> Self
+    where
+        F: Fn() + 'static,
+    {
+        let timer = Timer::default();
+        timer.start(TimerMode::SingleShot, Duration::from_millis(200), callback);
+        timer.stop(); // Don't fire until first trigger()
+        Self { timer }
+    }
+
+    pub fn trigger(&self) {
+        self.timer.restart();
+    }
+}
+
 /// Enhanced function for handling exposure and gamma changes with throttling
 pub fn handle_parameter_changed_throttled(
     ui_handle: Weak<AppWindow>,
