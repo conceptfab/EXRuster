@@ -7,7 +7,6 @@ use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use crate::io::image_cache::extract_layers_info;
 use crate::processing::tone_mapping::ToneMapModeId;
 use crate::ui::progress::ProgressSink;
 use lru::LruCache;
@@ -217,75 +216,57 @@ pub fn generate_single_exr_thumbnail_work_new(
 ) -> anyhow::Result<ExrThumbWork> {
     let load_start = Instant::now();
 
-    // Szybkie pobranie metadanych
-    let layers_info = extract_layers_info(&exr_path.to_path_buf())
-        .with_context(|| format!("Błąd odczytu meta EXR: {}", exr_path.display()))?;
-
-    // Skopiuj wartości do closure aby uniknąć problemów z lifetime
     let exposure = color_config.exposure;
     let tonemap_mode = color_config.tonemap_mode;
     let gamma = color_config.gamma;
-
-    // Pre-compute exposure multiplier (constant per image)
     let exposure_mult = 2.0_f32.powf(exposure);
 
-    // Użyj nowoczesnego API exr do wczytania danych
+    // Read EXR — pixel callback handles tone mapping inline (single file read)
     let reader = exr::read_first_rgba_layer_from_file(
         exr_path,
-        // Generuj bufor pikseli
         |resolution, _| exr::pixel_vec::PixelVec {
             resolution,
             pixels: vec![image::Rgba([0u8; 4]); resolution.width() * resolution.height()],
         },
-        // Przetwarzaj piksele z nowoczesnym przetwarzaniem kolorów
         move |pixel_vec, position, (r, g, b, a): (f32, f32, f32, f32)| {
             let index = position.y() * pixel_vec.resolution.width() + position.x();
-
-            // Zastosuj ekspozycję
             let (r, g, b) = (r * exposure_mult, g * exposure_mult, b * exposure_mult);
-
-            // Tone mapping używając skonsolidowanej funkcji
             let mode = tonemap_mode.inner();
             let (r, g, b) = crate::processing::tone_mapping::apply_tonemap_scalar(r, g, b, mode);
-
-            // Gamma correction
-            let gamma_correct = |x: f32| x.powf(1.0 / gamma);
-
+            let gamma_inv = 1.0 / gamma;
             let processed = [
-                (gamma_correct(r) * 255.0) as u8,
-                (gamma_correct(g) * 255.0) as u8,
-                (gamma_correct(b) * 255.0) as u8,
+                (r.powf(gamma_inv) * 255.0) as u8,
+                (g.powf(gamma_inv) * 255.0) as u8,
+                (b.powf(gamma_inv) * 255.0) as u8,
                 (a.clamp(0.0, 1.0) * 255.0) as u8,
             ];
-
             pixel_vec.pixels[index] = image::Rgba(processed);
         },
     )
     .map_err(|e| anyhow::anyhow!("Failed to read EXR: {}", e))?;
 
-    // Pobierz dane obrazu
+    // Count layers from file metadata headers (fast header-only read, no pixel data)
+    let num_layers = ::exr::meta::MetaData::read_from_file(exr_path, false)
+        .map(|meta| meta.headers.len())
+        .unwrap_or(1);
+
     let image_data = reader.layer_data.channel_data.pixels;
     let (width, height) = (
         image_data.resolution.width() as u32,
         image_data.resolution.height() as u32,
     );
-
-    // Oblicz wymiary miniaturki
     let thumb_width = (width as f32 / height as f32 * thumb_height as f32) as u32;
 
-    // Stwórz obraz z pikseli
-    let img = image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(
-        width,
-        height,
-        image_data
-            .pixels
-            .into_iter()
-            .flat_map(|rgba| rgba.0)
-            .collect::<Vec<u8>>(),
-    )
-    .ok_or_else(|| anyhow::anyhow!("Could not create image buffer"))?;
+    // Build RGBA8 buffer directly without intermediate Vec — use raw pixel data
+    let pixel_count = (width as usize) * (height as usize);
+    let mut raw_pixels = Vec::with_capacity(pixel_count * 4);
+    for rgba in &image_data.pixels {
+        raw_pixels.extend_from_slice(&rgba.0);
+    }
 
-    // Resize używając szybszego filtra
+    let img = image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(width, height, raw_pixels)
+        .ok_or_else(|| anyhow::anyhow!("Could not create image buffer"))?;
+
     let thumbnail = image::imageops::resize(
         &img,
         thumb_width,
@@ -296,7 +277,6 @@ pub fn generate_single_exr_thumbnail_work_new(
     let load_duration = load_start.elapsed();
     timing_stats.add_load_time(load_duration);
 
-    // Konwertuj do formatu RGBA8
     let pixels = thumbnail.into_raw();
 
     let file_name = exr_path
@@ -312,7 +292,7 @@ pub fn generate_single_exr_thumbnail_work_new(
         file_size_bytes,
         width: thumb_width,
         height: thumb_height,
-        num_layers: layers_info.len(),
+        num_layers,
         pixels,
     })
 }

@@ -196,7 +196,7 @@ impl From<UnifiedLayerInfo> for crate::io::exr_metadata::LayerMetadata {
 /// Convert from LazyLayerMetadata (lazy_exr_loader.rs)
 impl From<crate::io::lazy_exr_loader::LazyLayerMetadata> for UnifiedLayerInfo {
     fn from(lazy: crate::io::lazy_exr_loader::LazyLayerMetadata) -> Self {
-        Self::from_lazy(lazy.name, lazy.width, lazy.height, lazy.channel_names)
+        Self::from_lazy(lazy.name, lazy.width, lazy.height, (*lazy.channel_names).clone())
     }
 }
 
@@ -207,7 +207,7 @@ impl From<UnifiedLayerInfo> for crate::io::lazy_exr_loader::LazyLayerMetadata {
             name: unified.name,
             width: unified.width.unwrap_or(0),
             height: unified.height.unwrap_or(0),
-            channel_names: unified.channel_names,
+            channel_names: std::sync::Arc::new(unified.channel_names),
         }
     }
 }

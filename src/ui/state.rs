@@ -1,5 +1,6 @@
 use crate::io::full_exr_cache::FullExrCacheData;
 use crate::io::image_cache::ImageCache;
+use crate::processing::channel_classification::ChannelGroupConfig;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
@@ -14,6 +15,7 @@ pub struct AppState {
     pub current_file_path: Option<PathBuf>,
     pub full_exr_cache: Option<Arc<FullExrCacheData>>,
     pub ui_state: UiState,
+    pub channel_config: Option<ChannelGroupConfig>,
 }
 
 impl Default for AppState {
@@ -23,6 +25,7 @@ impl Default for AppState {
             current_file_path: None,
             full_exr_cache: None,
             ui_state: UiState::default(),
+            channel_config: None,
         }
     }
 }

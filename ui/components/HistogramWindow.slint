@@ -223,48 +223,56 @@ export component HistogramWindow inherits Rectangle {
                         // Simplified max calculation - use a reasonable default for scaling
                         property <int> max-value: root.histogram-total-pixels > 0 ? root.histogram-total-pixels / 50 : 100;
                         
-                        // Red channel histogram
-                        for bin-value[i] in root.histogram-red-data: Rectangle {
-                            x: 8px + Math.min(i * histogram-area.bar-width, histogram-area.width - histogram-area.bar-width);
-                            y: Math.max(8px, histogram-area.height - 8px - (bin-value * (histogram-area.height - 16px)) / histogram-area.max-value);
-                            width: Math.max(0.5px, Math.min(histogram-area.bar-width - 0.5px, histogram-area.width - 8px - i * histogram-area.bar-width));
-                            height: Math.min(histogram-area.height - 16px, Math.max(0px, (bin-value * (histogram-area.height - 16px)) / histogram-area.max-value));
-                            background: Kolory.kanal_r;
-                            opacity: root.selected-channel == 0 ? 0.8 : (root.selected-channel == 4 ? 0.7 : 0);
-                            border-radius: 1px;
+                        // Red channel histogram — only instantiate when visible
+                        if root.selected-channel == 0 || root.selected-channel == 4 : Rectangle {
+                            for bin-value[i] in root.histogram-red-data: Rectangle {
+                                x: 8px + Math.min(i * histogram-area.bar-width, histogram-area.width - histogram-area.bar-width);
+                                y: Math.max(8px, histogram-area.height - 8px - (bin-value * (histogram-area.height - 16px)) / histogram-area.max-value);
+                                width: Math.max(0.5px, Math.min(histogram-area.bar-width - 0.5px, histogram-area.width - 8px - i * histogram-area.bar-width));
+                                height: Math.min(histogram-area.height - 16px, Math.max(0px, (bin-value * (histogram-area.height - 16px)) / histogram-area.max-value));
+                                background: Kolory.kanal_r;
+                                opacity: root.selected-channel == 0 ? 0.8 : 0.7;
+                                border-radius: 1px;
+                            }
                         }
-                        
-                        // Green channel histogram  
-                        for bin-value[i] in root.histogram-green-data: Rectangle {
-                            x: 8px + Math.min(i * histogram-area.bar-width, histogram-area.width - histogram-area.bar-width);
-                            y: Math.max(8px, histogram-area.height - 8px - (bin-value * (histogram-area.height - 16px)) / histogram-area.max-value);
-                            width: Math.max(0.5px, Math.min(histogram-area.bar-width - 0.5px, histogram-area.width - 8px - i * histogram-area.bar-width));
-                            height: Math.min(histogram-area.height - 16px, Math.max(0px, (bin-value * (histogram-area.height - 16px)) / histogram-area.max-value));
-                            background: Kolory.kanal_g;
-                            opacity: root.selected-channel == 1 ? 0.8 : (root.selected-channel == 4 ? 0.7 : 0);
-                            border-radius: 1px;
+
+                        // Green channel histogram
+                        if root.selected-channel == 1 || root.selected-channel == 4 : Rectangle {
+                            for bin-value[i] in root.histogram-green-data: Rectangle {
+                                x: 8px + Math.min(i * histogram-area.bar-width, histogram-area.width - histogram-area.bar-width);
+                                y: Math.max(8px, histogram-area.height - 8px - (bin-value * (histogram-area.height - 16px)) / histogram-area.max-value);
+                                width: Math.max(0.5px, Math.min(histogram-area.bar-width - 0.5px, histogram-area.width - 8px - i * histogram-area.bar-width));
+                                height: Math.min(histogram-area.height - 16px, Math.max(0px, (bin-value * (histogram-area.height - 16px)) / histogram-area.max-value));
+                                background: Kolory.kanal_g;
+                                opacity: root.selected-channel == 1 ? 0.8 : 0.7;
+                                border-radius: 1px;
+                            }
                         }
-                        
+
                         // Blue channel histogram
-                        for bin-value[i] in root.histogram-blue-data: Rectangle {
-                            x: 8px + Math.min(i * histogram-area.bar-width, histogram-area.width - histogram-area.bar-width);
-                            y: Math.max(8px, histogram-area.height - 8px - (bin-value * (histogram-area.height - 16px)) / histogram-area.max-value);
-                            width: Math.max(0.5px, Math.min(histogram-area.bar-width - 0.5px, histogram-area.width - 8px - i * histogram-area.bar-width));
-                            height: Math.min(histogram-area.height - 16px, Math.max(0px, (bin-value * (histogram-area.height - 16px)) / histogram-area.max-value));
-                            background: Kolory.kanal_b;
-                            opacity: root.selected-channel == 2 ? 0.8 : (root.selected-channel == 4 ? 0.7 : 0);
-                            border-radius: 1px;
+                        if root.selected-channel == 2 || root.selected-channel == 4 : Rectangle {
+                            for bin-value[i] in root.histogram-blue-data: Rectangle {
+                                x: 8px + Math.min(i * histogram-area.bar-width, histogram-area.width - histogram-area.bar-width);
+                                y: Math.max(8px, histogram-area.height - 8px - (bin-value * (histogram-area.height - 16px)) / histogram-area.max-value);
+                                width: Math.max(0.5px, Math.min(histogram-area.bar-width - 0.5px, histogram-area.width - 8px - i * histogram-area.bar-width));
+                                height: Math.min(histogram-area.height - 16px, Math.max(0px, (bin-value * (histogram-area.height - 16px)) / histogram-area.max-value));
+                                background: Kolory.kanal_b;
+                                opacity: root.selected-channel == 2 ? 0.8 : 0.7;
+                                border-radius: 1px;
+                            }
                         }
-                        
+
                         // Luminance channel histogram
-                        for bin-value[i] in root.histogram-luminance-data: Rectangle {
-                            x: 8px + Math.min(i * histogram-area.bar-width, histogram-area.width - histogram-area.bar-width);
-                            y: Math.max(8px, histogram-area.height - 8px - (bin-value * (histogram-area.height - 16px)) / histogram-area.max-value);
-                            width: Math.max(0.5px, Math.min(histogram-area.bar-width - 0.5px, histogram-area.width - 8px - i * histogram-area.bar-width));
-                            height: Math.min(histogram-area.height - 16px, Math.max(0px, (bin-value * (histogram-area.height - 16px)) / histogram-area.max-value));
-                            background: Kolory.tekst;
-                            opacity: root.selected-channel == 3 ? 0.8 : 0;
-                            border-radius: 1px;
+                        if root.selected-channel == 3 : Rectangle {
+                            for bin-value[i] in root.histogram-luminance-data: Rectangle {
+                                x: 8px + Math.min(i * histogram-area.bar-width, histogram-area.width - histogram-area.bar-width);
+                                y: Math.max(8px, histogram-area.height - 8px - (bin-value * (histogram-area.height - 16px)) / histogram-area.max-value);
+                                width: Math.max(0.5px, Math.min(histogram-area.bar-width - 0.5px, histogram-area.width - 8px - i * histogram-area.bar-width));
+                                height: Math.min(histogram-area.height - 16px, Math.max(0px, (bin-value * (histogram-area.height - 16px)) / histogram-area.max-value));
+                                background: Kolory.tekst;
+                                opacity: 0.8;
+                                border-radius: 1px;
+                            }
                         }
                          if root.current-histogram-data.length == 0: Text {
                             text: "No histogram data available";

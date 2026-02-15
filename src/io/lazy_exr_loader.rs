@@ -20,7 +20,7 @@ pub struct LazyLayerMetadata {
     pub name: String,
     pub width: u32,
     pub height: u32,
-    pub channel_names: Vec<String>,
+    pub channel_names: Arc<Vec<String>>,
     // Pixel data is NOT stored here - loaded on demand
 }
 
@@ -105,13 +105,13 @@ impl LazyExrLoader {
                         name: layer_name.clone(),
                         width,
                         height,
-                        channel_names: Vec::new(),
+                        channel_names: Arc::new(Vec::new()),
                     }
                 });
 
                 // Verify dimensions match (skip conflicting channels)
                 if entry.width == width && entry.height == height {
-                    entry.channel_names.push(short_channel_name);
+                    Arc::make_mut(&mut entry.channel_names).push(short_channel_name);
                 }
             }
         }
@@ -299,7 +299,7 @@ impl LazyLayerData {
             layer_name: self.metadata.name.clone(),
             width: self.metadata.width,
             height: self.metadata.height,
-            channel_names: self.metadata.channel_names.clone(),
+            channel_names: (*self.metadata.channel_names).clone(),
             channel_data: self.channel_data.clone(),
         }
     }

@@ -21,6 +21,26 @@ use std::time::Instant;
 /// File size threshold for light mode loading (>700 MB)
 const LIGHT_MODE_FILE_SIZE_THRESHOLD: u64 = 700 * 1024 * 1024;
 
+/// Shared histogram computation — updates histogram in cache and applies to UI
+pub fn apply_histogram_to_ui(ui: &AppWindow, app_state: &SharedAppState) {
+    if let Ok(mut state) = app_state.write() {
+        if let Some(ref mut cache) = state.image_cache {
+            if let Ok(()) = cache.update_histogram() {
+                if let Some(hist_data) = cache.get_histogram_data() {
+                    hist_data.apply_to_ui(ui);
+                    ui.set_histogram_total_pixels(hist_data.total_pixels as i32);
+                    let p1 = hist_data.get_percentile(crate::processing::histogram::HistogramChannel::Luminance, 0.01);
+                    let p50 = hist_data.get_percentile(crate::processing::histogram::HistogramChannel::Luminance, 0.50);
+                    let p99 = hist_data.get_percentile(crate::processing::histogram::HistogramChannel::Luminance, 0.99);
+                    ui.set_histogram_p1(p1);
+                    ui.set_histogram_p50(p50);
+                    ui.set_histogram_p99(p99);
+                }
+            }
+        }
+    }
+}
+
 // Global static variables for layer mapping (to be moved to state in future refactoring)
 pub static ITEM_TO_LAYER: std::sync::LazyLock<std::sync::Mutex<HashMap<String, String>>> =
     std::sync::LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
@@ -140,29 +160,7 @@ pub fn handle_open_exr_from_path(
                                                 ui2.set_exr_image(img);
 
                                                 // Automatically calculate histogram for new image
-                                                if let Ok(mut state) = app_state_c.write() {
-                                                    if let Some(ref mut cache) = state.image_cache {
-                                                        if let Ok(()) = cache.update_histogram() {
-                                                            if let Some(hist_data) =
-                                                                cache.get_histogram_data()
-                                                            {
-                                                                // Apply histogram data to UI using the new unified method
-                                                                hist_data.apply_to_ui(&ui2);
-                                                                ui2.set_histogram_total_pixels(
-                                                                    hist_data.total_pixels as i32,
-                                                                );
-
-                                                                // Percentiles
-                                                                let p1 = hist_data.get_percentile(crate::processing::histogram::HistogramChannel::Luminance, 0.01);
-                                                                let p50 = hist_data.get_percentile(crate::processing::histogram::HistogramChannel::Luminance, 0.50);
-                                                                let p99 = hist_data.get_percentile(crate::processing::histogram::HistogramChannel::Luminance, 0.99);
-                                                                ui2.set_histogram_p1(p1);
-                                                                ui2.set_histogram_p50(p50);
-                                                                ui2.set_histogram_p99(p99);
-                                                            }
-                                                        }
-                                                    }
-                                                }
+                                                apply_histogram_to_ui(&ui2, &app_state_c);
 
                                                 // Update layers list
                                                 let layers_info_vec = {
@@ -300,29 +298,7 @@ pub fn handle_open_exr_from_path(
                                                 ui2.set_exr_image(img);
 
                                                 // Automatically calculate histogram for new image
-                                                if let Ok(mut state) = app_state_c.write() {
-                                                    if let Some(ref mut cache) = state.image_cache {
-                                                        if let Ok(()) = cache.update_histogram() {
-                                                            if let Some(hist_data) =
-                                                                cache.get_histogram_data()
-                                                            {
-                                                                // Apply histogram data to UI using the new unified method
-                                                                hist_data.apply_to_ui(&ui2);
-                                                                ui2.set_histogram_total_pixels(
-                                                                    hist_data.total_pixels as i32,
-                                                                );
-
-                                                                // Percentiles
-                                                                let p1 = hist_data.get_percentile(crate::processing::histogram::HistogramChannel::Luminance, 0.01);
-                                                                let p50 = hist_data.get_percentile(crate::processing::histogram::HistogramChannel::Luminance, 0.50);
-                                                                let p99 = hist_data.get_percentile(crate::processing::histogram::HistogramChannel::Luminance, 0.99);
-                                                                ui2.set_histogram_p1(p1);
-                                                                ui2.set_histogram_p50(p50);
-                                                                ui2.set_histogram_p99(p99);
-                                                            }
-                                                        }
-                                                    }
-                                                }
+                                                apply_histogram_to_ui(&ui2, &app_state_c);
 
                                                 if !layers_info_vec.is_empty() {
                                                     // Create a temporary SharedUiState wrapper for compatibility
@@ -471,13 +447,22 @@ pub fn create_layers_model(
     use crate::utils::channel_config::{get_fallback_config, load_channel_config};
     use std::collections::HashMap;
 
-    let config = load_channel_config().unwrap_or_else(|e| {
-        eprintln!(
-            "Warning: Failed to load channel config for UI: {}. Using fallback.",
-            e
-        );
-        get_fallback_config()
-    });
+    // Use cached config from AppState, or load and cache it
+    let config = {
+        let cached = app_state.read().ok().and_then(|s| s.channel_config.clone());
+        if let Some(c) = cached {
+            c
+        } else {
+            let c = load_channel_config().unwrap_or_else(|e| {
+                eprintln!("Warning: Failed to load channel config for UI: {}. Using fallback.", e);
+                get_fallback_config()
+            });
+            if let Ok(mut state) = app_state.write() {
+                state.channel_config = Some(c.clone());
+            }
+            c
+        }
+    };
 
     let name_to_key: HashMap<&str, &str> = config
         .groups

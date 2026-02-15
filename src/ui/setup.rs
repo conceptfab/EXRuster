@@ -65,28 +65,6 @@ impl CallbackHelper {
         }
     }
 
-    /// Calculate and cache layout positioning
-    fn calculate_layout(&self, window_width: f32, show_left: bool, show_right: bool, col1: f32, col2: f32, col3: f32) {
-        if let Some(ui) = self.ui_weak.upgrade() {
-            // Perform complex calculations once in Rust
-            let menu_non_column_width = 8.0 + if show_left { 2.0 } else { 0.0 } + if show_right { 2.0 } else { 0.0 };
-            let menu_col1_eff = if show_left { col1 } else { 0.0 };
-            let menu_col2_eff = col2 + if !show_left { col1 } else { 0.0 } + if !show_right { col3 } else { 0.0 };
-            let menu_col3_eff = if show_right { col3 } else { 0.0 };
-            let menu_sum_eff = (col1 + col2 + col3).max(0.0001);
-            let menu_n1 = menu_col1_eff / menu_sum_eff;
-            let menu_n2 = menu_col2_eff / menu_sum_eff;
-            let menu_n3 = menu_col3_eff / menu_sum_eff;
-            
-            let effective_width = window_width - menu_non_column_width;
-            let right_panel_width = effective_width * menu_n3;
-            let right_panel_x = 4.0 + if show_left { 2.0 } else { 0.0 } + effective_width * (menu_n1 + menu_n2) + if show_right { 2.0 } else { 0.0 };
-            
-            // Cache the results in UI properties
-            ui.set_cached_right_panel_width(right_panel_width);
-            ui.set_cached_right_panel_x(right_panel_x);
-        }
-    }
 }
 
 /// Setup menu-related callbacks (file operations, console management, histogram, layers)
@@ -96,14 +74,6 @@ pub fn setup_menu_callbacks(
     console_model: Rc<VecModel<SharedString>>,
 ) {
     let helper = CallbackHelper::new(ui, app_state.clone(), console_model.clone());
-    
-    // Setup layout calculation callback for performance optimization
-    ui.on_calculate_layout({
-        let helper = helper.clone();
-        move |window_width: f32, show_left: bool, show_right: bool, col1: f32, col2: f32, col3: f32| {
-            helper.calculate_layout(window_width, show_left, show_right, col1, col2, col3);
-        }
-    });
     
     ui.on_clear_console({
         let ui_handle = ui.as_weak();
@@ -140,32 +110,9 @@ pub fn setup_menu_callbacks(
         let console = console_model.clone();
         move || {
             if let Some(ui) = ui_handle.upgrade() {
-                if let Ok(mut state) = app_state.write() {
-                    if let Some(ref mut cache) = state.image_cache {
-                        match cache.update_histogram() {
-                        Ok(()) => {
-                            if let Some(hist_data) = cache.get_histogram_data() {
-                                // Apply histogram data to UI using the new unified method
-                                hist_data.apply_to_ui(&ui);
-                                // Additional statistics not covered by apply_to_ui
-                                ui.set_histogram_total_pixels(hist_data.total_pixels as i32);
-                                // Percentyle
-                                let p1 = hist_data.get_percentile(crate::processing::histogram::HistogramChannel::Luminance, 0.01);
-                                let p50 = hist_data.get_percentile(crate::processing::histogram::HistogramChannel::Luminance, 0.50);
-                                let p99 = hist_data.get_percentile(crate::processing::histogram::HistogramChannel::Luminance, 0.99);
-                                ui.set_histogram_p1(p1);
-                                ui.set_histogram_p50(p50);
-                                ui.set_histogram_p99(p99);
-                                push_console(&ui, &console, format!("[histogram] computed: min={:.3}, max={:.3}, median={:.3}", p1, p50, p99));
-                                ui.set_status_text("Histogram updated".into());
-                            }
-                        }
-                        Err(e) => {
-                            ui.report_error(&console, "histogram", e);
-                        }
-                        }
-                    }
-                }
+                crate::ui::file_handlers::apply_histogram_to_ui(&ui, &app_state);
+                push_console(&ui, &console, "[histogram] updated".to_string());
+                ui.set_status_text("Histogram updated".into());
             }
         }
     });
@@ -275,34 +222,11 @@ pub fn setup_image_control_callbacks(
             if let Some(ui) = ui_handle.upgrade() {
                 if let Ok(state) = app_state.read() {
                     if let Some(ref cache) = state.image_cache {
-                    let exposure = ui.get_exposure_value();
-                    let gamma = ui.get_gamma_value();
-                    let mode = ui.get_tonemap_mode() as i32;
-                    let image = crate::ui::update_preview_image(&ui, cache, exposure, gamma, mode, &console);
-                    ui.set_exr_image(image);
-                    
-                    // Dodatkowe logowanie dla zmiany geometrii
-                    let preview_w = ui.get_preview_area_width() as f32;
-                    let preview_h = ui.get_preview_area_height() as f32;
-                    let dpr = ui.window().scale_factor() as f32;
-                    let img_w = cache.width as f32;
-                    let img_h = cache.height as f32;
-                    let container_ratio = if preview_h > 0.0 { preview_w / preview_h } else { 1.0 };
-                    let image_ratio = if img_h > 0.0 { img_w / img_h } else { 1.0 };
-                    let display_w_logical = if container_ratio > image_ratio { preview_h * image_ratio } else { preview_w };
-                    let display_h_logical = if container_ratio > image_ratio { preview_h } else { preview_w / image_ratio };
-                    let win_w = ui.get_window_width() as u32;
-                    let win_h = ui.get_window_height() as u32;
-                    let win_w_px = (win_w as f32 * dpr).round() as u32;
-                    let win_h_px = (win_h as f32 * dpr).round() as u32;
-                    crate::ui::push_console(&ui, &console, format!(
-                        "[preview] resized → window={}x{} (≈{}x{} px @{}x) | view={}x{} @{}x | img={}x{} | display≈{}x{} px",
-                        win_w, win_h, win_w_px, win_h_px, dpr,
-                        preview_w as u32, preview_h as u32, dpr,
-                        img_w as u32, img_h as u32,
-                        (display_w_logical * dpr).round() as u32,
-                        (display_h_logical * dpr).round() as u32
-                    ));
+                        let exposure = ui.get_exposure_value();
+                        let gamma = ui.get_gamma_value();
+                        let mode = ui.get_tonemap_mode() as i32;
+                        let image = crate::ui::update_preview_image(&ui, cache, exposure, gamma, mode, &console);
+                        ui.set_exr_image(image);
                     }
                 }
             }

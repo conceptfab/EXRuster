@@ -15,17 +15,16 @@ use std::sync::Arc;
 #[inline]
 pub(crate) fn channel_alias_to_short(input: &str) -> String {
     let trimmed = input.trim();
-    let upper = trimmed.to_ascii_uppercase();
-    if upper == "R" || upper.starts_with("RED") {
+    if trimmed.eq_ignore_ascii_case("R") || trimmed.len() >= 3 && trimmed[..3].eq_ignore_ascii_case("RED") {
         return "R".to_string();
     }
-    if upper == "G" || upper.starts_with("GREEN") {
+    if trimmed.eq_ignore_ascii_case("G") || trimmed.len() >= 5 && trimmed[..5].eq_ignore_ascii_case("GREEN") {
         return "G".to_string();
     }
-    if upper == "B" || upper.starts_with("BLUE") {
+    if trimmed.eq_ignore_ascii_case("B") || trimmed.len() >= 4 && trimmed[..4].eq_ignore_ascii_case("BLUE") {
         return "B".to_string();
     }
-    if upper == "A" || upper.starts_with("ALPHA") {
+    if trimmed.eq_ignore_ascii_case("A") || trimmed.len() >= 5 && trimmed[..5].eq_ignore_ascii_case("ALPHA") {
         return "A".to_string();
     }
     trimmed.to_string()
@@ -412,15 +411,14 @@ pub(crate) fn find_best_layer(layers_info: &[LayerInfo]) -> String {
         }
     }
 
-    let priority_names = [
-        "beauty", "Beauty", "RGBA", "rgba", "default", "Default", "combined", "Combined",
-    ];
+    let priority_names = ["beauty", "rgba", "default", "combined"];
 
     for priority_name in &priority_names {
         if let Some(layer) = layers_info.iter().find(|l| {
-            l.name
-                .to_lowercase()
-                .contains(&priority_name.to_lowercase())
+            let name_bytes = l.name.as_bytes();
+            let pat_bytes = priority_name.as_bytes();
+            // ASCII case-insensitive contains without allocation
+            name_bytes.windows(pat_bytes.len()).any(|w| w.eq_ignore_ascii_case(pat_bytes))
         }) {
             return layer.name.clone();
         }
@@ -461,18 +459,15 @@ pub(crate) fn load_all_channels_for_layer_from_full(
         p.start_indeterminate(Some("Reading layer channels..."));
     }
 
-    let wanted_lower = layer_name.to_lowercase();
-
     for layer in full.layers.iter() {
-        let lname_lower = layer.name.to_lowercase();
-        let matches = if wanted_lower.is_empty() && lname_lower.is_empty() {
+        let matches = if layer_name.is_empty() && layer.name.is_empty() {
             true
-        } else if wanted_lower.is_empty() || lname_lower.is_empty() {
+        } else if layer_name.is_empty() || layer.name.is_empty() {
             false
         } else {
-            lname_lower == wanted_lower
-                || lname_lower.contains(&wanted_lower)
-                || wanted_lower.contains(&lname_lower)
+            layer.name.eq_ignore_ascii_case(layer_name)
+                || layer.name.as_bytes().windows(layer_name.len()).any(|w| w.eq_ignore_ascii_case(layer_name.as_bytes()))
+                || layer_name.as_bytes().windows(layer.name.len()).any(|w| w.eq_ignore_ascii_case(layer.name.as_bytes()))
         };
         if matches {
             if let Some(p) = _progress {
@@ -549,13 +544,19 @@ fn compose_composite_into_buffer(layer_channels: &LayerChannels, out: &mut Vec<f
     let b_plane = &layer_channels.channel_data[b_idx * pixel_count..(b_idx + 1) * pixel_count];
     let a_plane = a_idx.map(|ai| &layer_channels.channel_data[ai * pixel_count..(ai + 1) * pixel_count]);
 
-    // Parallel RGBA composition using rayon
-    out.par_chunks_exact_mut(4).enumerate().for_each(|(i, chunk)| {
+    // Use sequential for small images (< 2MP), parallel for larger
+    let compose_fn = |(i, chunk): (usize, &mut [f32])| {
         chunk[0] = r_plane[i];
         chunk[1] = g_plane[i];
         chunk[2] = b_plane[i];
         chunk[3] = a_plane.map_or(1.0, |a| a[i]);
-    });
+    };
+
+    if pixel_count < 2_000_000 {
+        out.chunks_exact_mut(4).enumerate().for_each(compose_fn);
+    } else {
+        out.par_chunks_exact_mut(4).enumerate().for_each(compose_fn);
+    }
 }
 
 fn compose_composite_from_channels(layer_channels: &LayerChannels) -> Vec<f32> {

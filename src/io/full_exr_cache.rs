@@ -76,6 +76,7 @@ pub fn build_full_exr_cache(
                 continue;
             }
             entry.2.push(short);
+            entry.3.reserve(pixel_count);
             let samples = (0..pixel_count).map(|i| {
                 layer.channel_data.list[idx]
                     .sample_data

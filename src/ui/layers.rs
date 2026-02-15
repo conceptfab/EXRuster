@@ -328,13 +328,12 @@ pub fn toggle_all_layer_groups(
         let group_names = {
             if let Ok(state) = app_state.read() {
                 if let Some(cache) = state.image_cache.as_ref() {
-                    // Pobierz wszystkie warstwy i określ ich grupy
                     use crate::processing::channel_classification::determine_channel_group_with_config;
-                    use crate::utils::channel_config::{
-                        get_fallback_config, load_channel_config,
-                    };
-                    let config =
-                        load_channel_config().unwrap_or_else(|_| get_fallback_config());
+                    use crate::utils::channel_config::{get_fallback_config, load_channel_config};
+                    // Use cached config or load once
+                    let config = state.channel_config.clone().unwrap_or_else(|| {
+                        load_channel_config().unwrap_or_else(|_| get_fallback_config())
+                    });
                     let mut groups = HashSet::new();
                     for layer in &cache.layers_info {
                         let name_for_classification = if layer.name.is_empty() {

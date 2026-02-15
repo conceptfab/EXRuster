@@ -8,15 +8,27 @@ pub type ConsoleModel = Rc<VecModel<SharedString>>;
 
 // Utility functions - shared across UI modules
 
+/// Max console lines before truncation from top
+const MAX_CONSOLE_LINES: usize = 500;
+
 /// Dodaje linię do modelu konsoli i aktualizuje tekst w `TextEdit` (console-text)
-pub fn push_console(ui: &crate::AppWindow, console: &ConsoleModel, line: String) {
-    console.push(line.clone().into());
-    let mut joined = ui.get_console_text().to_string();
-    if !joined.is_empty() {
-        joined.push('\n');
+pub fn push_console(ui: &crate::AppWindow, _console: &ConsoleModel, line: String) {
+    let mut text = ui.get_console_text().to_string();
+    if !text.is_empty() {
+        text.push('\n');
     }
-    joined.push_str(&line);
-    ui.set_console_text(joined.into());
+    text.push_str(&line);
+
+    // Truncate from top if exceeding max lines
+    let line_count = text.bytes().filter(|&b| b == b'\n').count() + 1;
+    if line_count > MAX_CONSOLE_LINES {
+        let skip = line_count - MAX_CONSOLE_LINES;
+        if let Some(pos) = text.match_indices('\n').nth(skip - 1).map(|(i, _)| i) {
+            text = text[pos + 1..].to_string();
+        }
+    }
+
+    ui.set_console_text(text.into());
 }
 
 /// Kompatybilność wsteczna - używa panic recovery

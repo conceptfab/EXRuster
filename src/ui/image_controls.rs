@@ -28,14 +28,20 @@ impl ThrottledUpdate {
         let pending_gamma_clone = pending_gamma.clone();
 
         let timer = Timer::default();
-        timer.start(TimerMode::SingleShot, Duration::from_millis(16), move || {
+        // Deferred start — timer only starts on first update_exposure/update_gamma call
+        let callback = std::cell::RefCell::new(Some(move || {
             let exp = lock_or_recover(&pending_exp_clone).take();
             let gamma = lock_or_recover(&pending_gamma_clone).take();
-
             if exp.is_some() || gamma.is_some() {
                 callback(exp, gamma);
             }
-        });
+        }));
+
+        // Use a single-shot timer that only fires when restarted by update methods
+        if let Some(cb) = callback.borrow_mut().take() {
+            timer.start(TimerMode::SingleShot, Duration::from_millis(16), cb);
+            timer.stop(); // Don't fire immediately — wait for first restart()
+        }
 
         Self {
             timer,
@@ -133,35 +139,18 @@ pub fn update_preview_image(
 
     let image = cache.process_to_image(exposure, gamma, tonemap_mode);
 
-    // Throttled log to console: at least 300ms interval, with DPI and fitting diagnostics
+    // Throttled log to console: at least 300ms interval
     let mut last = lock_or_recover(&LAST_PREVIEW_LOG);
     let now = Instant::now();
     if last
         .map(|t| now.duration_since(t).as_millis() >= 300)
         .unwrap_or(true)
     {
-        let display_w_logical = if container_ratio > image_ratio {
-            preview_h * image_ratio
-        } else {
-            preview_w
-        };
-        let display_h_logical = if container_ratio > image_ratio {
-            preview_h
-        } else {
-            preview_w / image_ratio
-        };
-        let win_w = ui.get_window_width() as u32;
-        let win_h = ui.get_window_height() as u32;
-        let win_w_px = (win_w as f32 * dpr).round() as u32;
-        let win_h_px = (win_h as f32 * dpr).round() as u32;
         push_console(ui, console,
-            format!("[preview] params: exp={:.2}, gamma={:.2} | window={}x{} (≈{}x{} px @{}x) | view={}x{} @{}x | img={}x{} | display≈{}x{} px target={} px",
+            format!("[preview] exp={:.2}, gamma={:.2} | img={}x{} | view={}x{} @{:.1}x | target={} px",
                 exposure, gamma,
-                win_w, win_h, win_w_px, win_h_px, dpr,
-                preview_w as u32, preview_h as u32, dpr,
                 img_w as u32, img_h as u32,
-                (display_w_logical * dpr).round() as u32,
-                (display_h_logical * dpr).round() as u32,
+                preview_w as u32, preview_h as u32, dpr,
                 target));
         *last = Some(now);
     }
