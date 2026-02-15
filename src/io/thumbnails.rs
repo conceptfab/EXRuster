@@ -226,6 +226,9 @@ pub fn generate_single_exr_thumbnail_work_new(
     let tonemap_mode = color_config.tonemap_mode;
     let gamma = color_config.gamma;
 
+    // Pre-compute exposure multiplier (constant per image)
+    let exposure_mult = 2.0_f32.powf(exposure);
+
     // Użyj nowoczesnego API exr do wczytania danych
     let reader = exr::read_first_rgba_layer_from_file(
         exr_path,
@@ -239,7 +242,6 @@ pub fn generate_single_exr_thumbnail_work_new(
             let index = position.y() * pixel_vec.resolution.width() + position.x();
 
             // Zastosuj ekspozycję
-            let exposure_mult = 2.0_f32.powf(exposure);
             let (r, g, b) = (r * exposure_mult, g * exposure_mult, b * exposure_mult);
 
             // Tone mapping używając skonsolidowanej funkcji

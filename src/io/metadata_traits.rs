@@ -1,26 +1,6 @@
 use crate::io::fast_exr_metadata::ChannelInfo;
 use std::collections::HashMap;
 
-/// UI-focused layer information for display purposes
-#[derive(Clone, Debug)]
-#[allow(dead_code)]
-pub struct UiLayerInfo {
-    pub name: String,
-    pub selected: bool,
-    pub visible: bool,
-}
-
-#[allow(dead_code)]
-impl UiLayerInfo {
-    pub fn new(name: String) -> Self {
-        Self {
-            name,
-            selected: false,
-            visible: true,
-        }
-    }
-}
-
 /// Metadata-focused layer information for EXR file details
 #[derive(Clone, Debug)]
 pub struct MetadataLayerInfo {
@@ -39,28 +19,6 @@ impl MetadataLayerInfo {
             channels,
             dimensions: (width, height),
             attributes: HashMap::new(),
-        }
-    }
-}
-
-/// Lazy loading layer information for performance optimization
-#[derive(Clone, Debug)]
-#[allow(dead_code)]
-pub struct LazyLayerInfo {
-    pub name: String,
-    pub channel_names: Vec<String>,
-    pub dimensions: Option<(u32, u32)>,
-    pub loader_id: Option<String>,
-}
-
-#[allow(dead_code)]
-impl LazyLayerInfo {
-    pub fn new(name: String, channel_names: Vec<String>) -> Self {
-        Self {
-            name,
-            channel_names,
-            dimensions: None,
-            loader_id: None,
         }
     }
 }
@@ -85,20 +43,6 @@ pub trait LayerDescriptor {
     }
 }
 
-impl LayerDescriptor for UiLayerInfo {
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    fn channel_names(&self) -> Vec<String> {
-        Vec::new() // UI layer info doesn't store channel details
-    }
-
-    fn dimensions(&self) -> Option<(u32, u32)> {
-        None // UI layer info doesn't store dimensions
-    }
-}
-
 impl LayerDescriptor for MetadataLayerInfo {
     fn name(&self) -> &str {
         &self.name
@@ -113,20 +57,6 @@ impl LayerDescriptor for MetadataLayerInfo {
     }
 }
 
-impl LayerDescriptor for LazyLayerInfo {
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    fn channel_names(&self) -> Vec<String> {
-        self.channel_names.clone()
-    }
-
-    fn dimensions(&self) -> Option<(u32, u32)> {
-        self.dimensions
-    }
-}
-
 
 /// Unified layer information structure
 /// Combines all fields from LayerInfo, LayerMetadata, and LazyLayerMetadata
@@ -136,7 +66,7 @@ pub struct UnifiedLayerInfo {
     pub width: Option<u32>,
     pub height: Option<u32>,
     pub channels: Vec<ChannelInfo>,
-    pub channel_names: Vec<String>, // For compatibility with LazyLayerMetadata
+    pub channel_names: Vec<String>,
     pub attributes: Vec<(String, String)>,
 }
 
@@ -251,7 +181,7 @@ impl From<crate::io::exr_metadata::LayerMetadata> for UnifiedLayerInfo {
     }
 }
 
-/// Convert to LayerMetadata for backwards compatibility  
+/// Convert to LayerMetadata for backwards compatibility
 impl From<UnifiedLayerInfo> for crate::io::exr_metadata::LayerMetadata {
     fn from(unified: UnifiedLayerInfo) -> Self {
         Self {

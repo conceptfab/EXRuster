@@ -17,6 +17,9 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+/// File size threshold for light mode loading (>700 MB)
+const LIGHT_MODE_FILE_SIZE_THRESHOLD: u64 = 700 * 1024 * 1024;
+
 // Global static variables for layer mapping (to be moved to state in future refactoring)
 pub static ITEM_TO_LAYER: std::sync::LazyLock<std::sync::Mutex<HashMap<String, String>>> =
     std::sync::LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
@@ -76,7 +79,7 @@ pub fn handle_open_exr_from_path(
                 // Asynchronous loading: FULL vs LIGHT path selection
                 let file_size_bytes = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
                 let force_light = std::env::var("EXRUSTER_LIGHT_OPEN").ok().as_deref() == Some("1");
-                let use_light = force_light || file_size_bytes > 700 * 1024 * 1024; // >700MB ⇒ light
+                let use_light = force_light || file_size_bytes > LIGHT_MODE_FILE_SIZE_THRESHOLD;
 
                 prog.set(
                     0.22,

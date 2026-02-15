@@ -74,10 +74,10 @@ fn export_base_layer_impl(
         .read()
         .map_err(|_| anyhow::anyhow!("Failed to read app state"))?;
 
-    // Get current file path
-    let file_path = state
+    // Validate file is loaded
+    let _file_path = state
         .current_file_path
-        .clone()
+        .as_ref()
         .ok_or_else(|| anyhow::anyhow!("No file loaded"))?;
 
     // Get full cache data
@@ -86,8 +86,8 @@ fn export_base_layer_impl(
         .clone()
         .ok_or_else(|| anyhow::anyhow!("No EXR cache available"))?;
 
-    // Extract layers info
-    let layers_info = crate::io::image_cache::extract_layers_info(&file_path)?;
+    // Use cached layers info instead of re-reading from disk
+    let layers_info = cache_data.to_layers_info();
 
     // Create export parameters
     let export_params = create_export_params(ui, &export_config)?;
@@ -277,10 +277,10 @@ fn export_layer_group_impl(
         .read()
         .map_err(|_| anyhow::anyhow!("Failed to read app state"))?;
 
-    // Get current file path
-    let file_path = state
+    // Validate file is loaded
+    let _file_path = state
         .current_file_path
-        .clone()
+        .as_ref()
         .ok_or_else(|| anyhow::anyhow!("No file loaded"))?;
 
     // Get full cache data
@@ -289,8 +289,8 @@ fn export_layer_group_impl(
         .clone()
         .ok_or_else(|| anyhow::anyhow!("No EXR cache available"))?;
 
-    // Extract layers info
-    let layers_info = crate::io::image_cache::extract_layers_info(&file_path)?;
+    // Use cached layers info instead of re-reading from disk
+    let layers_info = cache_data.to_layers_info();
 
     // Create export parameters
     let export_params = create_export_params(ui, &export_config)?;

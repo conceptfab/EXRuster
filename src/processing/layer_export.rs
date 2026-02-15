@@ -8,14 +8,6 @@ use rayon::prelude::*;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-/// Layer export configuration types
-#[derive(Clone, Debug)]
-#[allow(dead_code)]
-pub enum LayerExportConfig {
-    /// Export only the base/beauty layer
-    BaseOnly,
-}
-
 /// Export format configuration
 #[derive(Clone, Debug)]
 pub enum ExportFormat {

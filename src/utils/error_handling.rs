@@ -109,31 +109,6 @@ macro_rules! handle_ui_option {
     };
 }
 
-/// Helper for resetting progress indicators on error
-#[allow(dead_code)]
-pub fn reset_progress_on_error(prog: &crate::ui::progress::UiProgress) {
-    use crate::ui::progress::ProgressSink;
-    prog.reset();
-}
-
-/// Standard error handling pattern that includes progress reset
-#[macro_export]
-macro_rules! handle_ui_error_with_progress {
-    ($result:expr, $ui:expr, $console:expr, $progress:expr, $context:expr => $success_block:block) => {
-        match $result {
-            Ok(value) => {
-                let _value = value;
-                $success_block
-            }
-            Err(e) => {
-                use $crate::utils::error_handling::{reset_progress_on_error, UiErrorReporter};
-                $ui.report_error($console, $context, e);
-                reset_progress_on_error($progress);
-            }
-        }
-    };
-}
-
 #[cfg(test)]
 mod tests {
     #[test]

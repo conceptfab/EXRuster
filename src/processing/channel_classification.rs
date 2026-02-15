@@ -1,6 +1,6 @@
 use dashmap::DashMap;
-use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
+use std::sync::LazyLock;
 /// Ultra-fast channel classification using SIMD patterns and dictionary lookups
 /// Based on the optimized implementation from read/simd_patterns.rs
 use std::collections::HashMap;
@@ -35,7 +35,7 @@ pub struct GroupDefinition {
 }
 
 /// Pre-computed hash-based pattern matching for ultra-fast channel classification
-static CHANNEL_PREFIX_MAP: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|| {
+static CHANNEL_PREFIX_MAP: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::new(|| {
     let mut map = HashMap::new();
 
     // Base channels
@@ -63,7 +63,7 @@ static CHANNEL_PREFIX_MAP: Lazy<HashMap<&'static str, &'static str>> = Lazy::new
 });
 
 /// String interning cache for group names to avoid repeated allocations
-pub static GROUP_NAME_CACHE: Lazy<HashMap<&'static str, String>> = Lazy::new(|| {
+pub static GROUP_NAME_CACHE: LazyLock<HashMap<&'static str, String>> = LazyLock::new(|| {
     let mut cache = HashMap::new();
     cache.insert("base", "Base".to_string());
     cache.insert("scene", "Scene".to_string());

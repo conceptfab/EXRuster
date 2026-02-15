@@ -12,9 +12,7 @@ mod utils;
 mod platform;
 
 use crate::ui::create_shared_app_state;
-use std::sync::Arc;
 use ui::SharedAppState;
-// BufferPool is now available via crate::utils::BufferPool re-export
 
 fn main() -> Result<(), slint::PlatformError> {
     // Ustaw obsługę panic aby aplikacja nie znikała
@@ -61,10 +59,6 @@ fn main() -> Result<(), slint::PlatformError> {
     println!("Application running in CPU-only mode");
 
     let app_state: SharedAppState = create_shared_app_state();
-
-    // Initialize global buffer pool for performance optimization
-    let buffer_pool = Arc::new(crate::utils::BufferPool::new(32)); // Pool of 32 buffers per type
-    crate::io::image_cache::set_global_buffer_pool(buffer_pool.clone());
 
     // Setup UI callbacks...
     let console_model = crate::ui::setup_ui_callbacks(&ui, app_state.clone());

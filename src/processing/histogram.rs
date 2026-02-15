@@ -1,6 +1,5 @@
 use crate::AppWindow;
 use rayon::prelude::*;
-// use std::sync::Arc;
 
 /// Luminance weighting standards for color-to-grayscale conversion
 #[derive(Debug, Clone, Copy, PartialEq)]

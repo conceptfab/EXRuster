@@ -22,6 +22,23 @@ pub struct FullExrCacheData {
     pub layers: Vec<FullLayer>,
 }
 
+impl FullExrCacheData {
+    /// Build layers info from cached data (avoids re-reading from disk)
+    pub fn to_layers_info(&self) -> Vec<crate::io::image_cache::LayerInfo> {
+        self.layers
+            .iter()
+            .map(|fl| crate::io::image_cache::LayerInfo {
+                name: fl.name.clone(),
+                channels: fl
+                    .channel_names
+                    .iter()
+                    .map(|c| crate::io::fast_exr_metadata::ChannelInfo::new(c.clone()))
+                    .collect(),
+            })
+            .collect()
+    }
+}
+
 /// Buduje pełny cache z pliku EXR: wszystkie warstwy i kanały w pamięci (float32)
 pub fn build_full_exr_cache(
     path: &PathBuf,

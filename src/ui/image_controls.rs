@@ -8,9 +8,10 @@ use std::time::{Duration, Instant};
 
 static LAST_PREVIEW_LOG: std::sync::Mutex<Option<Instant>> = std::sync::Mutex::new(None);
 
-/// Throttled update system for smooth parameter changes
+/// Throttled update system for smooth parameter changes.
+/// Uses SingleShot timer to avoid polling when UI is idle.
 pub struct ThrottledUpdate {
-    _timer: Timer,
+    timer: Timer,
     pending_exposure: Arc<Mutex<Option<f32>>>,
     pending_gamma: Arc<Mutex<Option<f32>>>,
 }
@@ -27,18 +28,17 @@ impl ThrottledUpdate {
         let pending_gamma_clone = pending_gamma.clone();
 
         let timer = Timer::default();
-        timer.start(TimerMode::Repeated, Duration::from_millis(16), move || {
+        timer.start(TimerMode::SingleShot, Duration::from_millis(16), move || {
             let exp = lock_or_recover(&pending_exp_clone).take();
             let gamma = lock_or_recover(&pending_gamma_clone).take();
 
-            // Call callback even if only one parameter changed
             if exp.is_some() || gamma.is_some() {
                 callback(exp, gamma);
             }
         });
 
         Self {
-            _timer: timer,
+            timer,
             pending_exposure,
             pending_gamma,
         }
@@ -46,10 +46,12 @@ impl ThrottledUpdate {
 
     pub fn update_exposure(&self, value: f32) {
         *lock_or_recover(&self.pending_exposure) = Some(value);
+        self.timer.restart();
     }
 
     pub fn update_gamma(&self, value: f32) {
         *lock_or_recover(&self.pending_gamma) = Some(value);
+        self.timer.restart();
     }
 }
 

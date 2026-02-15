@@ -356,7 +356,7 @@ pub fn build_ui_rows(meta: &ExrMetadata) -> Vec<(String, String)> {
 // struct GroupBuckets, impl GroupBuckets, enum ChannelGroup, fn classify_channel_group zostały usunięte
 
 // Funkcja pomocnicza do formatowania wartości atrybutów
-fn format_attribute_value(value: &AttributeValue, normalized_key: &str) -> String {
+fn format_attribute_value(value: &AttributeValue, _normalized_key: &str) -> String {
     match value {
         AttributeValue::Chromaticities(ch) => {
             let r = (ch.red.x() as f64, ch.red.y() as f64);
@@ -368,20 +368,8 @@ fn format_attribute_value(value: &AttributeValue, normalized_key: &str) -> Strin
                 r.0, r.1, g.0, g.1, b.0, b.1, w.0, w.1
             )
         }
-        AttributeValue::F32(v) => {
-            if normalized_key.eq_ignore_ascii_case("pixel_aspect") {
-                format!("{:.3}", *v as f64)
-            } else {
-                format!("{:.3}", *v as f64)
-            }
-        }
-        AttributeValue::F64(v) => {
-            if normalized_key.eq_ignore_ascii_case("pixel_aspect") {
-                format!("{:.3}", v)
-            } else {
-                format!("{:.3}", v)
-            }
-        }
+        AttributeValue::F32(v) => format!("{:.3}", *v as f64),
+        AttributeValue::F64(v) => format!("{:.3}", v),
         other => format!("{:?}", other),
     }
 }

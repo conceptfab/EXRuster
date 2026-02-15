@@ -1,14 +1,12 @@
 use crate::ui::progress::patterns;
 use crate::ui::push_console;
 use crate::ui::state::SharedAppState;
-use crate::ui::ui_handlers::lock_or_recover;
+use crate::ui::ui_handlers::{lock_or_recover, ConsoleModel};
 use crate::utils::{normalize_channel_name, UiErrorReporter};
 use crate::AppWindow;
-use slint::{ComponentHandle, SharedString, VecModel, Weak};
+use slint::{ComponentHandle, Weak};
 use std::collections::HashSet;
 use std::fmt::Write;
-
-pub type ConsoleModel = std::rc::Rc<VecModel<SharedString>>;
 
 /// Refreshes the layer model UI with current expand/collapse state (optimized)
 fn refresh_layer_model(ui_handle: Weak<AppWindow>, app_state: SharedAppState) {
@@ -331,6 +329,12 @@ pub fn toggle_all_layer_groups(
             if let Ok(state) = app_state.read() {
                 if let Some(cache) = state.image_cache.as_ref() {
                     // Pobierz wszystkie warstwy i określ ich grupy
+                    use crate::processing::channel_classification::determine_channel_group_with_config;
+                    use crate::utils::channel_config::{
+                        get_fallback_config, load_channel_config,
+                    };
+                    let config =
+                        load_channel_config().unwrap_or_else(|_| get_fallback_config());
                     let mut groups = HashSet::new();
                     for layer in &cache.layers_info {
                         let name_for_classification = if layer.name.is_empty() {
@@ -338,13 +342,6 @@ pub fn toggle_all_layer_groups(
                         } else {
                             &layer.name
                         };
-                        use crate::processing::channel_classification::determine_channel_group_with_config;
-                        use crate::utils::channel_config::{
-                            get_fallback_config, load_channel_config,
-                        };
-
-                        let config =
-                            load_channel_config().unwrap_or_else(|_| get_fallback_config());
                         let group_name =
                             determine_channel_group_with_config(name_for_classification, &config);
                         groups.insert(group_name);

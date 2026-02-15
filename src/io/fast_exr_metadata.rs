@@ -366,12 +366,15 @@ impl From<FastEXRMetadata> for crate::io::exr_metadata::ExrMetadata {
             });
         }
 
-        // Create layer metadata
+        // Create layer metadata with dimensions from display_window
         let layer_name = fast_meta.layer_name.unwrap_or_else(|| "".to_string());
+        let (x_min, y_min, x_max, y_max) = fast_meta.display_window;
+        let width = ((x_max - x_min) + 1).max(0) as u32;
+        let height = ((y_max - y_min) + 1).max(0) as u32;
         let layers = vec![LayerMetadata {
             name: layer_name,
-            width: 1920, // Default values - could be extracted from display_window
-            height: 1080,
+            width,
+            height,
             attributes: Vec::new(),
         }];
 

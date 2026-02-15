@@ -4,26 +4,12 @@ use crate::utils::split_layer_and_short;
 use exr::prelude as exr;
 use rayon::prelude::*;
 use slint::{Image, Rgba8Pixel, SharedPixelBuffer};
-use std::collections::HashMap; // potrzebne dla extract_layers_info
+use std::collections::HashMap;
 use std::path::PathBuf;
-// use crate::color_processing::compute_rgb_to_srgb_matrix_from_file_for_layer;
 use crate::io::full_exr_cache::FullExrCacheData;
 use crate::io::lazy_exr_loader::LazyExrLoader;
-use crate::utils::buffer_pool::BufferPool;
 use glam::Mat3;
 use std::sync::Arc;
-use std::sync::OnceLock;
-
-// Global buffer pool for performance optimization
-static GLOBAL_BUFFER_POOL: OnceLock<Arc<BufferPool>> = OnceLock::new();
-
-pub fn set_global_buffer_pool(pool: Arc<BufferPool>) {
-    GLOBAL_BUFFER_POOL.set(pool).ok();
-}
-
-fn get_buffer_pool() -> Option<&'static Arc<BufferPool>> {
-    GLOBAL_BUFFER_POOL.get()
-}
 
 /// Zwraca kanoniczny skrót kanału na podstawie aliasów/nazw przyjaznych.
 /// Np. "red"/"Red"/"RED"/"R"/"R8" → "R"; analogicznie dla G/B/A.
@@ -155,7 +141,7 @@ impl ImageCache {
         self.width = layer_channels.width;
         self.height = layer_channels.height;
         self.current_layer_name = layer_channels.layer_name.clone();
-        self.raw_pixels = compose_composite_from_channels(&layer_channels);
+        compose_composite_into_buffer(&layer_channels, &mut self.raw_pixels);
         self.current_layer_channels = Some(layer_channels);
         // Sprawdź, czy macierz dla danej warstwy jest już w cache'u
         if self.color_matrices.contains_key(layer_name) {
@@ -460,8 +446,7 @@ pub(crate) fn load_all_channels_for_layer_from_full(
     anyhow::bail!(format!("Nie znaleziono warstwy '{}'", layer_name))
 }
 
-/// Zachowany wariant czytający z dysku (używany w ścieżkach niezależnych od globalnego cache)
-#[allow(dead_code)]
+/// Wariant czytający z dysku (używany w light mode i ścieżkach niezależnych od cache)
 pub(crate) fn load_all_channels_for_layer(
     path: &PathBuf,
     layer_name: &str,
@@ -488,16 +473,8 @@ pub(crate) fn load_all_channels_for_layer(
             let num_channels = layer.channel_data.list.len();
             let mut channel_names: Vec<String> = Vec::with_capacity(num_channels);
 
-            // Use buffer pool for channel data - optimized loading
             let channel_data_size = pixel_count * num_channels;
-            let mut channel_data_vec = if let Some(pool) = get_buffer_pool() {
-                let mut buffer = pool.get_f32_buffer(channel_data_size);
-                buffer.clear();
-                buffer.reserve(channel_data_size);
-                buffer.into_inner() // Take ownership of inner Vec
-            } else {
-                Vec::with_capacity(channel_data_size)
-            };
+            let mut channel_data_vec = Vec::with_capacity(channel_data_size);
 
             // Pre-allocate the full buffer and use safe indexing
             channel_data_vec.resize(channel_data_size, 0.0);
@@ -529,85 +506,67 @@ pub(crate) fn load_all_channels_for_layer(
 }
 
 // Pomocnicze: buduje kompozyt RGB z mapy kanałów - zoptymalizowana wersja
-fn compose_composite_from_channels(layer_channels: &LayerChannels) -> Vec<f32> {
-    let pixel_count = (layer_channels.width as usize) * (layer_channels.height as usize);
-
-    // Use buffer pool for better performance - optimized allocation
-    let buffer_size = pixel_count * 4;
-    let mut out = if let Some(pool) = get_buffer_pool() {
-        let mut buffer = pool.get_f32_buffer(buffer_size);
-        buffer.clear();
-        buffer.reserve(buffer_size);
-        buffer.into_inner() // Take ownership of inner Vec
-    } else {
-        Vec::with_capacity(buffer_size)
+/// Resolve RGB(A) channel indices from channel names list
+fn resolve_rgb_indices(channel_names: &[String]) -> (usize, usize, usize, Option<usize>) {
+    let pick_exact = |name: &str| -> Option<usize> {
+        channel_names.iter().position(|n| n == name)
     };
-
-    let pick_exact_index = |name: &str| -> Option<usize> {
-        layer_channels.channel_names.iter().position(|n| n == name)
-    };
-    let pick_prefix_index = |prefix: char| -> Option<usize> {
+    let pick_prefix = |prefix: char| -> Option<usize> {
         let prefix = prefix.to_ascii_uppercase();
-        layer_channels
-            .channel_names
+        channel_names
             .iter()
             .position(|n| n.to_ascii_uppercase().starts_with(prefix))
     };
 
-    // Sprawdź czy warstwa ma kanały RGB - jeśli nie, użyj pierwszych 3 dostępnych kanałów
-    let r_idx_opt = pick_exact_index("R").or_else(|| pick_prefix_index('R'));
-    let g_idx_opt = pick_exact_index("G").or_else(|| pick_prefix_index('G'));
-    let b_idx_opt = pick_exact_index("B").or_else(|| pick_prefix_index('B'));
+    let r_idx_opt = pick_exact("R").or_else(|| pick_prefix('R'));
+    let g_idx_opt = pick_exact("G").or_else(|| pick_prefix('G'));
+    let b_idx_opt = pick_exact("B").or_else(|| pick_prefix('B'));
 
     let has_any_rgb = r_idx_opt.is_some() || g_idx_opt.is_some() || b_idx_opt.is_some();
 
     let (r_idx, g_idx, b_idx) = if has_any_rgb {
-        // Mamy co najmniej jeden z kanałów R, G, B. Zbuduj z nich obraz (ew. grayscale).
         let r_idx = r_idx_opt.unwrap_or_else(|| g_idx_opt.or(b_idx_opt).unwrap_or(0));
         let g_idx = g_idx_opt.unwrap_or(r_idx);
         let b_idx = b_idx_opt.unwrap_or(g_idx);
         (r_idx, g_idx, b_idx)
     } else {
-        // Dla warstw bez RGB (np. cryptomatte) - użyj pierwszych 3 kanałów
-        let num_channels = layer_channels.channel_names.len();
+        let num_channels = channel_names.len();
         let r_idx = 0;
         let g_idx = if num_channels > 1 { 1 } else { 0 };
         let b_idx = if num_channels > 2 { 2 } else { g_idx };
-        println!(
-            "Non-RGB layer '{}': mapping channels [{}] -> R:{}, G:{}, B:{}",
-            layer_channels.layer_name,
-            layer_channels.channel_names.join(", "),
-            r_idx,
-            g_idx,
-            b_idx
-        );
         (r_idx, g_idx, b_idx)
     };
 
-    let a_idx = pick_exact_index("A").or_else(|| pick_prefix_index('A'));
+    let a_idx = pick_exact("A").or_else(|| pick_prefix('A'));
+    (r_idx, g_idx, b_idx, a_idx)
+}
 
-    let base_r = r_idx * pixel_count;
-    let base_g = g_idx * pixel_count;
-    let base_b = b_idx * pixel_count;
-    let a_base_opt = a_idx.map(|ai| ai * pixel_count);
+/// Compose RGBA composite into an existing buffer (reuses allocation)
+fn compose_composite_into_buffer(layer_channels: &LayerChannels, out: &mut Vec<f32>) {
+    let pixel_count = (layer_channels.width as usize) * (layer_channels.height as usize);
+    let buffer_size = pixel_count * 4;
+    out.resize(buffer_size, 0.0);
 
-    let r_plane = &layer_channels.channel_data[base_r..base_r + pixel_count];
-    let g_plane = &layer_channels.channel_data[base_g..base_g + pixel_count];
-    let b_plane = &layer_channels.channel_data[base_b..base_b + pixel_count];
-    let a_plane = a_base_opt.map(|ab| &layer_channels.channel_data[ab..ab + pixel_count]);
+    let (r_idx, g_idx, b_idx, a_idx) = resolve_rgb_indices(&layer_channels.channel_names);
 
-    // Safe RGBA conversion using resize and indexing
-    out.resize(pixel_count * 4, 0.0);
+    let r_plane = &layer_channels.channel_data[r_idx * pixel_count..(r_idx + 1) * pixel_count];
+    let g_plane = &layer_channels.channel_data[g_idx * pixel_count..(g_idx + 1) * pixel_count];
+    let b_plane = &layer_channels.channel_data[b_idx * pixel_count..(b_idx + 1) * pixel_count];
+    let a_plane = a_idx.map(|ai| &layer_channels.channel_data[ai * pixel_count..(ai + 1) * pixel_count]);
 
-    // Process pixels in chunks of 4 for better cache efficiency
-    for i in 0..pixel_count {
-        let base_idx = i * 4;
-        out[base_idx] = r_plane[i];
-        out[base_idx + 1] = g_plane[i];
-        out[base_idx + 2] = b_plane[i];
-        out[base_idx + 3] = if let Some(a) = a_plane { a[i] } else { 1.0 };
-    }
+    // Parallel RGBA composition using rayon
+    out.par_chunks_exact_mut(4).enumerate().for_each(|(i, chunk)| {
+        chunk[0] = r_plane[i];
+        chunk[1] = g_plane[i];
+        chunk[2] = b_plane[i];
+        chunk[3] = a_plane.map_or(1.0, |a| a[i]);
+    });
+}
 
+fn compose_composite_from_channels(layer_channels: &LayerChannels) -> Vec<f32> {
+    let pixel_count = (layer_channels.width as usize) * (layer_channels.height as usize);
+    let mut out = Vec::with_capacity(pixel_count * 4);
+    compose_composite_into_buffer(layer_channels, &mut out);
     out
 }
 
@@ -692,29 +651,18 @@ impl ImageCache {
         let base = channel_index * pixel_count;
         let channel_slice = &layer_cache.channel_data[base..base + pixel_count];
 
-        // Use buffer pool for better performance - optimized grayscale expansion
+        // Reuse existing raw_pixels buffer - expand grayscale channel to RGBA
         let buffer_size = pixel_count * 4;
-        let mut out = if let Some(pool) = get_buffer_pool() {
-            let mut buffer = pool.get_f32_buffer(buffer_size);
-            buffer.clear();
-            buffer.reserve(buffer_size);
-            buffer.into_inner() // Take ownership of inner Vec
-        } else {
-            Vec::with_capacity(buffer_size)
-        };
+        self.raw_pixels.resize(buffer_size, 0.0);
 
-        // Safe: expand grayscale channel to RGBA
-        out.resize(buffer_size, 0.0);
-
-        for (i, &v) in channel_slice.iter().enumerate() {
-            let base_idx = i * 4;
-            out[base_idx] = v; // R
-            out[base_idx + 1] = v; // G
-            out[base_idx + 2] = v; // B
-            out[base_idx + 3] = 1.0; // A
-        }
-
-        self.raw_pixels = out;
+        // Parallel grayscale expansion using rayon
+        self.raw_pixels.par_chunks_exact_mut(4).enumerate().for_each(|(i, chunk)| {
+            let v = channel_slice[i];
+            chunk[0] = v; // R
+            chunk[1] = v; // G
+            chunk[2] = v; // B
+            chunk[3] = 1.0; // A
+        });
         self.width = layer_cache.width;
         self.height = layer_cache.height;
         self.current_layer_name = layer_cache.layer_name.clone();

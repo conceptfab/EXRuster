@@ -197,22 +197,6 @@ pub fn compute_rgb_to_srgb_matrix_from_file_for_layer_cached(
     Ok(matrix)
 }
 
-#[allow(dead_code)]
-pub fn get_color_matrix_cache_stats() -> (u64, u64, f32) {
-    // Updated for RwLock - use read lock for stats
-    if let Ok(cache) = COLOR_MATRIX_CACHE.read() {
-        let len = cache.len() as u64;
-        let cap = cache.cap().get() as u64;
-        let usage = if cap > 0 {
-            len as f32 / cap as f32
-        } else {
-            0.0
-        };
-        (len, cap, usage)
-    } else {
-        (0, 0, 0.0)
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -261,10 +245,4 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_cache_stats() {
-        let (_len, cap, usage) = get_color_matrix_cache_stats();
-        assert!(cap > 0);
-        assert!(usage >= 0.0 && usage <= 1.0);
-    }
 }

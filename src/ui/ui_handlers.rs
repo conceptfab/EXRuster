@@ -1,8 +1,7 @@
 use crate::AppWindow;
-use anyhow::Result;
 use slint::{ComponentHandle, SharedString, VecModel, Weak};
 use std::rc::Rc;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Mutex, MutexGuard};
 
 // Type aliases - shared across UI modules
 pub type ConsoleModel = Rc<VecModel<SharedString>>;
@@ -27,18 +26,6 @@ pub fn lock_or_recover<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
         Ok(g) => g,
         Err(p) => p.into_inner(),
     }
-}
-
-/// Standardowy wzorzec dla bezpiecznego dostępu do Mutex z kontekstem błędu
-#[allow(dead_code)]
-#[inline]
-pub(crate) fn safe_lock<'a, T>(
-    mutex: &'a Arc<Mutex<T>>,
-    context: &'static str,
-) -> Result<MutexGuard<'a, T>> {
-    mutex
-        .lock()
-        .map_err(|_| anyhow::anyhow!("Mutex poisoned: {}", context))
 }
 
 /// Obsługuje callback wyjścia z aplikacji
