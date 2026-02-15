@@ -1,0 +1,20 @@
+cargo clean
+
+rustup install stable
+
+rustup default stable
+
+cargo update
+
+
+# Instalacja
+cargo install cargo-machete
+
+# Sprawdź nieużywane zależności
+cargo machete
+
+# Automatycznie usuń je z Cargo.toml
+cargo machete --fix
+
+# Jeśli masz false positives (np. serde)
+cargo machete --with-metadata

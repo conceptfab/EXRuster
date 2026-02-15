@@ -22,7 +22,6 @@ rayon = "1.11"
 num_cpus = "1.17"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "hdr", "tiff", "webp", "bmp", "ico", "pnm", "tga", "dds", "exr"] }
 tiff = "0.10.2"
-cfg-if = "1.0"
 glam = "0.30.5"
 lru = "0.16"
 trash = "5"
