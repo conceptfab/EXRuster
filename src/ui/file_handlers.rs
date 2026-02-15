@@ -1,7 +1,8 @@
 use crate::io::exr_metadata;
 use crate::io::file_operations::{get_file_name, open_file_dialog};
-use crate::io::full_exr_cache::{build_full_exr_cache, FullExrCacheData, FullLayer};
+use crate::io::full_exr_cache::build_full_exr_cache;
 use crate::io::image_cache::{ImageCache, LayerInfo};
+use crate::io::lazy_exr_loader::LazyExrLoader;
 use crate::ui::progress::{patterns, WeakProgressExt};
 use crate::ui::state::SharedAppState;
 use crate::ui::ui_handlers::{lock_or_recover, push_console, ConsoleModel};
@@ -76,15 +77,15 @@ pub fn handle_open_exr_from_path(
                     state.current_file_path = Some(path.clone());
                 }
 
-                // Asynchronous loading: FULL vs LIGHT path selection
+                // Asynchronous loading: FULL vs LAZY path selection
                 let file_size_bytes = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-                let force_light = std::env::var("EXRUSTER_LIGHT_OPEN").ok().as_deref() == Some("1");
-                let use_light = force_light || file_size_bytes > LIGHT_MODE_FILE_SIZE_THRESHOLD;
+                let force_lazy = std::env::var("EXRUSTER_LAZY_OPEN").ok().as_deref() == Some("1");
+                let use_lazy = force_lazy || file_size_bytes > LIGHT_MODE_FILE_SIZE_THRESHOLD;
 
                 prog.set(
                     0.22,
-                    Some(if use_light {
-                        "Reading EXR (light)..."
+                    Some(if use_lazy {
+                        "Reading EXR (lazy)..."
                     } else {
                         "Reading EXR (full)..."
                     }),
@@ -100,37 +101,23 @@ pub fn handle_open_exr_from_path(
                 let app_state_c = app_state.clone();
                 let path_c = path.clone();
 
-                if use_light {
+                if use_lazy {
                     rayon::spawn(move || {
                         let t_start = Instant::now();
-                        // Read only the best layer and build minimal cache
-                        let light_res = (|| -> anyhow::Result<std::sync::Arc<FullExrCacheData>> {
-                            let layers = crate::io::image_cache::extract_layers_info(&path_c)?;
-                            let best = crate::io::image_cache::find_best_layer(&layers);
-                            let lc = crate::io::image_cache::load_all_channels_for_layer(
-                                &path_c, &best, None,
-                            )?;
-                            let fl = FullLayer {
-                                name: lc.layer_name.clone(),
-                                width: lc.width,
-                                height: lc.height,
-                                channel_names: lc.channel_names.clone(),
-                                channel_data: lc.channel_data.to_vec(),
-                            };
-                            Ok(std::sync::Arc::new(FullExrCacheData { layers: vec![fl] }))
-                        })();
+                        // Initialize LazyExrLoader
+                        let lazy_res = LazyExrLoader::new(path_c.clone(), 20).map(std::sync::Arc::new);
 
-                        match light_res {
-                            Ok(full) => {
+                        match lazy_res {
+                            Ok(lazy_loader) => {
                                 let cache_res =
-                                    ImageCache::new_with_full_cache(&path_c, full.clone());
+                                    ImageCache::new_with_lazy_loader(&path_c, lazy_loader.clone());
                                 match cache_res {
                                     Ok(cache) => {
                                         let _ = invoke_from_event_loop(move || {
                                             if let Some(ui2) = ui_weak.upgrade() {
                                                 // Update app state with new cache data
                                                 if let Ok(mut state) = app_state_c.write() {
-                                                    state.full_exr_cache = Some(full.clone());
+                                                    state.full_exr_cache = None; // Disable full cache in lazy mode
                                                     state.image_cache = Some(cache);
                                                 }
 
@@ -210,11 +197,11 @@ pub fn handle_open_exr_from_path(
                                                     log.push('\n');
                                                 }
                                                 log.push_str(&format!(
-                                                    "[light] image ready in {} ms",
+                                                    "[lazy] metadata ready in {} ms",
                                                     t_start.elapsed().as_millis()
                                                 ));
                                                 ui2.set_console_text(log.into());
-                                                ui2.set_status_text("Loaded (light)".into());
+                                                ui2.set_status_text("Loaded (lazy)".into());
                                                 ui2.set_progress_value(1.0);
                                             }
                                         });
@@ -234,7 +221,7 @@ pub fn handle_open_exr_from_path(
                                                 if !log.is_empty() {
                                                     log.push('\n');
                                                 }
-                                                log.push_str(&format!("[error] light open: {}", e));
+                                                log.push_str(&format!("[error] lazy open: {}", e));
                                                 ui2.set_console_text(log.into());
                                                 ui2.set_progress_value(0.0);
                                             }
@@ -257,7 +244,7 @@ pub fn handle_open_exr_from_path(
                                         if !log.is_empty() {
                                             log.push('\n');
                                         }
-                                        log.push_str(&format!("[error] light open: {}", e));
+                                        log.push_str(&format!("[error] lazy open: {}", e));
                                         ui2.set_console_text(log.into());
                                         ui2.set_progress_value(0.0);
                                     }

@@ -1,7 +1,6 @@
 use crate::io::fast_exr_metadata::ChannelInfo;
 use crate::ui::progress::ProgressSink;
 use crate::utils::split_layer_and_short;
-use exr::prelude as exr;
 use rayon::prelude::*;
 use slint::{Image, Rgba8Pixel, SharedPixelBuffer};
 use std::collections::HashMap;
@@ -116,6 +115,61 @@ impl ImageCache {
             current_layer_channels: Some(layer_channels),
             data_source: ExrDataSource::Full(full_cache),
             histogram: None, // Będzie obliczany na żądanie
+        })
+    }
+
+    pub fn new_with_lazy_loader(
+        path: &PathBuf,
+        lazy_loader: Arc<LazyExrLoader>,
+    ) -> anyhow::Result<Self> {
+        println!(
+            "=== ImageCache::new_with_lazy_loader START === {}",
+            path.display()
+        );
+
+        // Convert lazy metadata to LayerInfo for UI and selection logic
+        let layers_info: Vec<LayerInfo> = lazy_loader
+            .get_metadata()
+            .iter()
+            .map(|meta| LayerInfo {
+                name: meta.name.clone(),
+                channels: meta
+                    .channel_names
+                    .iter()
+                    .map(|n| ChannelInfo::new(n.clone()))
+                    .collect(),
+            })
+            .collect();
+
+        let best_layer = find_best_layer(&layers_info);
+        
+        // Load the initial best layer
+        let layer_data = lazy_loader.get_layer_data(&best_layer, None)?;
+        let layer_channels = layer_data.to_layer_channels();
+
+        let raw_pixels = compose_composite_from_channels(&layer_channels);
+        let width = layer_channels.width;
+        let height = layer_channels.height;
+        let current_layer_name = layer_channels.layer_name.clone();
+
+        // Color matrix
+        let mut color_matrices = HashMap::new();
+        let color_matrix_rgb_to_srgb = crate::processing::color_processing::compute_rgb_to_srgb_matrix_from_file_for_layer_cached(path, &best_layer).ok();
+        if let Some(matrix) = color_matrix_rgb_to_srgb {
+            color_matrices.insert(best_layer.clone(), matrix);
+        }
+
+        Ok(ImageCache {
+            raw_pixels,
+            width,
+            height,
+            layers_info,
+            current_layer_name,
+            color_matrix_rgb_to_srgb,
+            color_matrices,
+            current_layer_channels: Some(layer_channels),
+            data_source: ExrDataSource::Lazy(lazy_loader),
+            histogram: None,
         })
     }
 
@@ -442,65 +496,6 @@ pub(crate) fn load_all_channels_for_layer_from_full(
 
     if let Some(p) = _progress {
         p.reset();
-    }
-    anyhow::bail!(format!("Nie znaleziono warstwy '{}'", layer_name))
-}
-
-/// Wariant czytający z dysku (używany w light mode i ścieżkach niezależnych od cache)
-pub(crate) fn load_all_channels_for_layer(
-    path: &PathBuf,
-    layer_name: &str,
-    _progress: Option<&dyn ProgressSink>,
-) -> anyhow::Result<LayerChannels> {
-    let any_image = exr::read_all_flat_layers_from_file(path)?;
-    let wanted_lower = layer_name.to_lowercase();
-    for layer in any_image.layer_data.iter() {
-        let width = layer.size.width() as u32;
-        let height = layer.size.height() as u32;
-        let pixel_count = (width as usize) * (height as usize);
-        let base_attr: Option<String> = layer.attributes.layer_name.as_ref().map(|s| s.to_string());
-        let lname_lower = base_attr.as_deref().unwrap_or("").to_lowercase();
-        let matches = if wanted_lower.is_empty() && lname_lower.is_empty() {
-            true
-        } else if wanted_lower.is_empty() || lname_lower.is_empty() {
-            false
-        } else {
-            lname_lower == wanted_lower
-                || lname_lower.contains(&wanted_lower)
-                || wanted_lower.contains(&lname_lower)
-        };
-        if matches {
-            let num_channels = layer.channel_data.list.len();
-            let mut channel_names: Vec<String> = Vec::with_capacity(num_channels);
-
-            let channel_data_size = pixel_count * num_channels;
-            let mut channel_data_vec = Vec::with_capacity(channel_data_size);
-
-            // Pre-allocate the full buffer and use safe indexing
-            channel_data_vec.resize(channel_data_size, 0.0);
-
-            for (ci, ch) in layer.channel_data.list.iter().enumerate() {
-                let full = ch.name.to_string();
-                let (_lname, short) = split_layer_and_short(&full, base_attr.as_deref());
-                channel_names.push(short);
-
-                let channel_base = ci * pixel_count;
-                for i in 0..pixel_count {
-                    channel_data_vec[channel_base + i] = layer.channel_data.list[ci]
-                        .sample_data
-                        .value_by_flat_index(i)
-                        .to_f32();
-                }
-            }
-            let channel_data = Arc::from(channel_data_vec.into_boxed_slice()); // Convert Vec to Arc<[f32]>
-            return Ok(LayerChannels {
-                layer_name: layer_name.to_string(),
-                width,
-                height,
-                channel_names,
-                channel_data,
-            });
-        }
     }
     anyhow::bail!(format!("Nie znaleziono warstwy '{}'", layer_name))
 }
