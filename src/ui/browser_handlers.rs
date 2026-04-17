@@ -1,7 +1,7 @@
 use crate::ui::state::SharedAppState;
 use crate::ui::ui_handlers::{push_console, ConsoleModel};
 use crate::{log_error, log_warn, AppWindow};
-use slint::Weak;
+use slint::{ComponentHandle, Weak};
 use std::path::PathBuf;
 
 /// Copy the absolute path of the currently open EXR to the system clipboard.
@@ -108,4 +108,41 @@ pub fn handle_copy_current_file_to(
             ui.set_status_text(format!("Copy failed: {}", e).into());
         }
     }
+}
+
+pub fn size_level_to_height(level: i32) -> u32 {
+    match level {
+        2 => 260,
+        3 => 390,
+        _ => 130,
+    }
+}
+
+pub fn handle_thumbnail_size_changed(
+    ui_handle: Weak<AppWindow>,
+    app_state: SharedAppState,
+    console: ConsoleModel,
+    level: i32,
+) {
+    let Some(ui) = ui_handle.upgrade() else { return; };
+    let height = size_level_to_height(level);
+
+    // TODO: unlike the other handlers here which use match+log_error on poison,
+    // the spec calls for .ok() which silently drops a poisoned-lock error.
+    let folder_opt = app_state
+        .read()
+        .ok()
+        .and_then(|s| s.current_browsed_folder.clone());
+
+    let Some(folder) = folder_opt else {
+        ui.set_status_text("No folder selected".into());
+        return;
+    };
+
+    push_console(
+        &ui,
+        &console,
+        format!("[browser] thumbnail size -> {}px ({})", height, folder.display()),
+    );
+    crate::ui::load_thumbnails_for_directory(ui.as_weak(), &folder, console, height);
 }

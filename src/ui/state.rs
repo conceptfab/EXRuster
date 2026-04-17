@@ -17,6 +17,7 @@ pub struct AppState {
     pub full_exr_cache: Option<Arc<FullExrCacheData>>,
     pub ui_state: UiState,
     pub channel_config: Option<ChannelGroupConfig>,
+    pub current_browsed_folder: Option<PathBuf>,
 }
 
 

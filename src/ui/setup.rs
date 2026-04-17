@@ -264,6 +264,7 @@ pub fn setup_panel_callbacks(
         }
     });
     ui.on_choose_working_folder({
+        let app_state = Arc::clone(&app_state);
         let ui_handle = ui.as_weak();
         let console_model = console_model.clone();
         move || {
@@ -275,6 +276,9 @@ pub fn setup_panel_callbacks(
                 );
 
                 if let Some(dir) = crate::io::file_operations::open_folder_dialog() {
+                    if let Ok(mut state) = app_state.write() {
+                        state.current_browsed_folder = Some(dir.clone());
+                    }
                     crate::ui::load_thumbnails_for_directory(
                         ui.as_weak(),
                         &dir,
@@ -453,6 +457,20 @@ pub fn setup_panel_callbacks(
                 ui_handle.clone(),
                 app_state.clone(),
                 console_model.clone(),
+            );
+        }
+    });
+
+    ui.on_thumbnail_size_changed({
+        let ui_handle = ui.as_weak();
+        let app_state = Arc::clone(&app_state);
+        let console_model = console_model.clone();
+        move |level: i32| {
+            crate::ui::browser_handlers::handle_thumbnail_size_changed(
+                ui_handle.clone(),
+                app_state.clone(),
+                console_model.clone(),
+                level,
             );
         }
     });
