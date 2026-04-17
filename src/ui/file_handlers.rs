@@ -95,8 +95,8 @@ pub fn handle_open_exr_from_path(
                 // Save file path
                 if let Ok(mut state) = app_state.write() {
                     state.current_file_path = Some(path.clone());
+                    ui.set_current_file_path(path.display().to_string().into());
                 }
-                ui.set_current_file_path(path.display().to_string().into());
 
                 // Asynchronous loading: FULL vs LAZY path selection
                 let file_size_bytes = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
