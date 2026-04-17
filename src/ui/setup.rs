@@ -428,6 +428,32 @@ pub fn setup_panel_callbacks(
             }
         }
     });
+
+    ui.on_copy_current_path({
+        let ui_handle = ui.as_weak();
+        let app_state = Arc::clone(&app_state);
+        let console_model = console_model.clone();
+        move || {
+            crate::ui::browser_handlers::handle_copy_current_path(
+                ui_handle.clone(),
+                app_state.clone(),
+                console_model.clone(),
+            );
+        }
+    });
+
+    ui.on_copy_current_file_to_location({
+        let ui_handle = ui.as_weak();
+        let app_state = Arc::clone(&app_state);
+        let console_model = console_model.clone();
+        move || {
+            crate::ui::browser_handlers::handle_copy_current_file_to(
+                ui_handle.clone(),
+                app_state.clone(),
+                console_model.clone(),
+            );
+        }
+    });
 }
 
 /// Main UI callbacks setup - coordinates all other setup functions
