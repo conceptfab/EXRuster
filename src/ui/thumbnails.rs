@@ -84,8 +84,8 @@ pub fn load_thumbnails_for_directory(
                 )),
             );
 
-            // Generate thumbnails in separate thread - use GPU if available
-            let thumbnail_works = match crate::io::thumbnails::generate_thumbnails_gpu_raw(
+            // Generate thumbnails in separate thread (CPU path)
+            let thumbnail_works = match crate::io::thumbnails::generate_thumbnails_cpu_raw(
                 files,
                 THUMBNAIL_HEIGHT,
                 exposure,

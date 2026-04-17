@@ -77,19 +77,6 @@ impl ColorConfig {
 }
 
 /// Generuje miniaturki używając CPU (nowa, wydajna implementacja) - zwraca ExrThumbWork
-/// CUDA-accelerated thumbnail generation (safe fallback version)
-pub fn generate_thumbnails_gpu_raw(
-    files: Vec<PathBuf>,
-    thumb_height: u32,
-    exposure: f32,
-    gamma: f32,
-    tonemap_mode: i32,
-    progress: Option<&dyn ProgressSink>,
-) -> anyhow::Result<Vec<ExrThumbWork>> {
-    // CPU-only processing
-    generate_thumbnails_cpu_raw(files, thumb_height, exposure, gamma, tonemap_mode, progress)
-}
-
 pub fn generate_thumbnails_cpu_raw(
     files: Vec<PathBuf>,
     thumb_height: u32,
