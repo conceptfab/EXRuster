@@ -1,5 +1,6 @@
 use crate::io::progress_reader::ProgressReader;
 use crate::io::selective_layer_reader::read_single_layer_by_name;
+use crate::log_info;
 use crate::ui::progress::ProgressSink;
 use crate::utils::split_layer_and_short;
 use anyhow::Context;
@@ -66,7 +67,7 @@ impl LazyExrLoader {
                     // but for typical EXR usage this is acceptable risk for performance
                     if let Ok(map) = unsafe { Mmap::map(&file) } {
                         mmap = Some(Arc::new(map));
-                        println!("[lazy] Using memory mapping for large file: {}", path.display());
+                        log_info!("[lazy] Using memory mapping for large file: {}", path.display());
                     }
                 }
             }
@@ -151,7 +152,7 @@ impl LazyExrLoader {
             }
         }
 
-        println!(
+        log_info!(
             "[lazy] Loaded metadata for {} layers from {}",
             metadata.len(),
             path.display()
@@ -191,7 +192,7 @@ impl LazyExrLoader {
             if let Some((evicted_key, _)) =
                 cache.push(layer_name.to_string(), layer_data.clone())
             {
-                println!("[lazy] Evicted layer from cache: {}", evicted_key);
+                log_info!("[lazy] Evicted layer from cache: {}", evicted_key);
             }
         }
 
@@ -301,7 +302,7 @@ impl LazyExrLoader {
         };
 
         let loaded_mb = (pixel_count * channel_names.len() * 4) / (1024 * 1024);
-        println!(
+        log_info!(
             "[lazy] Loaded {} MB for layer: {} ({} channels)",
             loaded_mb, layer_name, channel_names.len()
         );

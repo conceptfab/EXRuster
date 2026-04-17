@@ -1,3 +1,4 @@
+use crate::log_info;
 use crate::processing::channel_classification::{
     ChannelGroupConfig, FallbackNames, GroupDefinition,
 };
@@ -46,7 +47,7 @@ pub fn load_channel_config() -> Result<ChannelGroupConfig> {
     let config_path = get_channel_config_path()?;
 
     if !config_path.exists() {
-        println!(
+        log_info!(
             "Creating default channel groups config file: {}",
             config_path.display()
         );

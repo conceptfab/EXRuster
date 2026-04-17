@@ -1,3 +1,4 @@
+use crate::log_error;
 use crate::ui::progress::{ProgressSink, UiProgress};
 use crate::ui::ui_handlers::{push_console, ConsoleModel};
 use crate::utils::human_size;
@@ -95,7 +96,7 @@ pub fn load_thumbnails_for_directory(
             ) {
                 Ok(works) => works,
                 Err(e) => {
-                    eprintln!("Failed to generate thumbnails: {}", e);
+                    log_error!("Failed to generate thumbnails: {}", e);
                     let ui_weak_clone = ui_weak.clone();
                     slint::invoke_from_event_loop(move || {
                         if let Some(ui) = ui_weak_clone.upgrade() {

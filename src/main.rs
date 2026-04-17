@@ -17,8 +17,8 @@ use ui::SharedAppState;
 fn main() -> Result<(), slint::PlatformError> {
     // Ustaw obsługę panic aby aplikacja nie znikała
     std::panic::set_hook(Box::new(|panic_info| {
-        eprintln!("PANIC: {}", panic_info);
-        eprintln!("Aplikacja przechodzi w tryb awaryjny...");
+        log_error!("PANIC: {}", panic_info);
+        log_error!("Aplikacja przechodzi w tryb awaryjny...");
     }));
 
     // Ustaw Rayon thread pool na podstawie CPU cores
@@ -57,7 +57,7 @@ fn main() -> Result<(), slint::PlatformError> {
         );
     }
 
-    println!("Application running in CPU-only mode");
+    log_info!("Application running in CPU-only mode");
 
     let app_state: SharedAppState = create_shared_app_state();
 

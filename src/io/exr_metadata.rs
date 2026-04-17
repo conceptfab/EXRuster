@@ -1,4 +1,5 @@
 use crate::io::fast_exr_metadata::read_exr_metadata_ultra_fast;
+use crate::log_warn;
 use crate::processing::channel_classification::group_channels_parallel;
 use crate::utils::channel_config::{get_fallback_config, load_channel_config};
 use crate::utils::human_size;
@@ -36,7 +37,7 @@ pub fn read_and_group_metadata(path: &Path) -> anyhow::Result<ExrMetadata> {
     match read_and_group_metadata_fast(path) {
         Ok(metadata) => return Ok(metadata),
         Err(e) => {
-            eprintln!(
+            log_warn!(
                 "Fast metadata reading failed, falling back to standard method: {}",
                 e
             );
@@ -85,8 +86,8 @@ fn read_and_group_metadata_fast(path: &Path) -> anyhow::Result<ExrMetadata> {
 
     // Grupowanie kanałów z użyciem słownika z pliku JSON
     let config = load_channel_config().unwrap_or_else(|e| {
-        eprintln!(
-            "Warning: Failed to load channel config: {}. Using fallback.",
+        log_warn!(
+            "Failed to load channel config: {}. Using fallback.",
             e
         );
         get_fallback_config()

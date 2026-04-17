@@ -1,3 +1,4 @@
+use crate::log_info;
 use ::exr::meta::attribute::AttributeValue;
 use glam::{DMat3, DVec3, Mat3};
 use lru::LruCache;
@@ -172,7 +173,7 @@ pub fn compute_rgb_to_srgb_matrix_from_file_for_layer_cached(
     // Use peek() instead of get() to avoid needing mutable access for LRU update
     if let Ok(cache) = COLOR_MATRIX_CACHE.read() {
         if let Some(&matrix) = cache.peek(&key) {
-            println!(
+            log_info!(
                 "Color matrix cache HIT for {}:{}",
                 path.display(),
                 layer_name
@@ -182,7 +183,7 @@ pub fn compute_rgb_to_srgb_matrix_from_file_for_layer_cached(
     }
 
     // Cache miss - oblicz nową macierz
-    println!(
+    log_info!(
         "Color matrix cache MISS for {}:{}, computing...",
         path.display(),
         layer_name

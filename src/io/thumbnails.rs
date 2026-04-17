@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
+use crate::log_info;
 use crate::processing::tone_mapping::ToneMapMode;
 use crate::ui::progress::ProgressSink;
 use lru::LruCache;
@@ -150,7 +151,7 @@ pub fn generate_thumbnails_cpu_raw(
     let load_time = timing_stats.get_load_time();
     let save_time = timing_stats.get_save_time();
     let processing_time = timing_stats.get_total_time();
-    println!(
+    log_info!(
         "Thumbnail generation timing: Load: {:.2}ms, Save: {:.2}ms, Total: {:.2}ms",
         load_time.as_millis(),
         save_time.as_millis(),
@@ -342,7 +343,7 @@ pub fn clear_thumb_cache() {
     if let Ok(mut cache) = get_thumb_cache().lock() {
         cache.clear();
     }
-    println!("Thumbnail cache cleared - forcing regeneration");
+    log_info!("Thumbnail cache cleared - forcing regeneration");
 }
 
 pub fn c_get(

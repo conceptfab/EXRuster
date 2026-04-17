@@ -1,5 +1,6 @@
 pub mod channel_config;
 pub mod error_handling;
+pub mod logging;
 pub mod utils;
 
 // Re-export specific functions that are needed by other modules

@@ -1,4 +1,5 @@
 use crate::io::fast_exr_metadata::ChannelInfo;
+use crate::log_info;
 use crate::ui::progress::ProgressSink;
 use crate::utils::split_layer_and_short;
 use rayon::prelude::*;
@@ -81,7 +82,7 @@ impl ImageCache {
         path: &Path,
         full_cache: Arc<FullExrCacheData>,
     ) -> anyhow::Result<Self> {
-        println!(
+        log_info!(
             "=== ImageCache::new_with_full_cache START === {}",
             path.display()
         );
@@ -120,7 +121,7 @@ impl ImageCache {
         path: &Path,
         lazy_loader: Arc<LazyExrLoader>,
     ) -> anyhow::Result<Self> {
-        println!(
+        log_info!(
             "=== ImageCache::new_with_lazy_loader START === {}",
             path.display()
         );
@@ -177,7 +178,7 @@ impl ImageCache {
         layer_name: &str,
         progress: Option<&dyn ProgressSink>,
     ) -> anyhow::Result<()> {
-        println!("=== ImageCache::load_layer START === layer: {}", layer_name);
+        log_info!("=== ImageCache::load_layer START === layer: {}", layer_name);
 
         // Load layer data based on data source
         let layer_channels = match &self.data_source {
@@ -212,7 +213,7 @@ impl ImageCache {
         let mut histogram = crate::processing::histogram::HistogramData::new(256);
         histogram.compute_from_rgba_pixels(&self.raw_pixels)?;
         self.histogram = Some(Arc::new(histogram));
-        println!(
+        log_info!(
             "Histogram updated: {} pixels processed",
             self.histogram.as_ref().unwrap().total_pixels
         );
@@ -224,17 +225,17 @@ impl ImageCache {
     }
 
     pub fn process_to_image(&self, exposure: f32, gamma: f32, tonemap_mode: i32) -> Image {
-        println!(
+        log_info!(
             "=== PROCESS_TO_IMAGE START === {}x{}",
             self.width, self.height
         );
 
-        println!("Using CPU-only processing");
+        log_info!("Using CPU-only processing");
 
         // GPU processing removed - using CPU processing only
 
         // Fallback CPU (SIMD + Rayon)
-        println!("Using CPU processing for {}x{}", self.width, self.height);
+        log_info!("Using CPU processing for {}x{}", self.width, self.height);
         let mut buffer = SharedPixelBuffer::<Rgba8Pixel>::new(self.width, self.height);
         let out_slice = buffer.make_mut_slice();
 
@@ -250,7 +251,7 @@ impl ImageCache {
             color_m,
         );
 
-        println!("=== PROCESS_TO_IMAGE END - CPU completed ===");
+        log_info!("=== PROCESS_TO_IMAGE END - CPU completed ===");
         Image::from_rgba8(buffer)
     }
 

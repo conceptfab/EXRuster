@@ -3,6 +3,7 @@ use crate::io::file_operations::{get_file_name, open_file_dialog};
 use crate::io::full_exr_cache::build_full_exr_cache;
 use crate::io::image_cache::{ImageCache, LayerInfo};
 use crate::io::lazy_exr_loader::LazyExrLoader;
+use crate::log_warn;
 use crate::ui::progress::{schedule_progress_finish_with_reset, UiProgress};
 use crate::ui::state::SharedAppState;
 use crate::ui::ui_handlers::{lock_or_recover, push_console, ConsoleModel};
@@ -442,7 +443,7 @@ pub fn create_layers_model(
             c
         } else {
             let c = load_channel_config().unwrap_or_else(|e| {
-                eprintln!("Warning: Failed to load channel config for UI: {}. Using fallback.", e);
+                log_warn!("Failed to load channel config for UI: {}. Using fallback.", e);
                 get_fallback_config()
             });
             if let Ok(mut state) = app_state.write() {
@@ -505,7 +506,7 @@ pub fn create_layers_model(
         let state_guard = match app_state.read() {
             Ok(guard) => guard,
             Err(_) => {
-                eprintln!("Warning: Failed to acquire read lock on app_state");
+                log_warn!("Failed to acquire read lock on app_state");
                 return (
                     ModelRc::new(VecModel::from(items)),
                     ModelRc::new(VecModel::from(colors)),
