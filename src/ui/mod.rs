@@ -1,3 +1,4 @@
+pub mod browser_handlers;
 pub mod export_handlers;
 pub mod file_handlers;
 pub mod image_controls;
