@@ -14,7 +14,7 @@ pub struct FullLayer {
     // Lista krótkich nazw kanałów w stabilnej kolejności (zgodnie z kolejnością w pliku)
     pub channel_names: Vec<String>,
     // Dane pikseli w układzie planarnym: [ch0(0..N), ch1(0..N), ...]
-    pub channel_data: Vec<f32>,
+    pub channel_data: std::sync::Arc<[f32]>,
 }
 
 #[derive(Clone, Debug)]
@@ -95,7 +95,7 @@ pub fn build_full_exr_cache(
                 width: w,
                 height: h,
                 channel_names,
-                channel_data,
+                channel_data: std::sync::Arc::from(channel_data.into_boxed_slice()),
             });
         }
     }

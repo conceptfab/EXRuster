@@ -475,7 +475,7 @@ pub(crate) fn load_all_channels_for_layer_from_full(
             }
             let channel_names = layer.channel_names.clone();
 
-            let channel_data = Arc::from(layer.channel_data.as_slice());
+            let channel_data = Arc::clone(&layer.channel_data);
             if let Some(p) = _progress {
                 p.finish(Some("Layer channels loaded"));
             }
