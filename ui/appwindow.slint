@@ -10,6 +10,7 @@ import { ConsoleWindow } from "console_window.slint";
 import { MetaWindow } from "meta_window.slint";
 import { ParameterSlider } from "ParameterSlider.slint";
 import { HistogramWindow } from "components/HistogramWindow.slint";
+import { FolderTree } from "components/FolderTree.slint";
 
 
 // Miniaturki folderu roboczego
@@ -941,6 +942,25 @@ export component AppWindow inherits Window {
                          width: 28px;
                          highlighted: root.thumbnail-size-level == 3;
                          clicked => { root.thumbnail-size-level = 3; root.thumbnail-size-changed(3); }
+                     }
+                 }
+
+                 // Folder tree container (takes remaining vertical space)
+                 Rectangle {
+                     width: parent.width;
+                     height: 300px;
+                     background: Kolory.przezroczysty;
+                     border-color: Kolory.linia_podzialu;
+                     border-width: 1px;
+
+                     FolderTree {
+                         width: parent.width - 2px;
+                         height: parent.height - 2px;
+                         x: 1px;
+                         y: 1px;
+                         entries: root.folder-tree;
+                         row-clicked(p) => { root.folder-tree-row-clicked(p); }
+                         toggle-clicked(p) => { root.folder-tree-toggle(p); }
                      }
                  }
 

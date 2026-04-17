@@ -1,0 +1,82 @@
+import { ScrollView, VerticalBox } from "std-widgets.slint";
+import { Kolory } from "../colors.slint";
+
+export struct FolderEntry {
+    display_name: string,
+    path: string,
+    depth: int,
+    has_children: bool,
+    expanded: bool,
+    is_current: bool,
+}
+
+export component FolderTree inherits Rectangle {
+    in property <[FolderEntry]> entries: [];
+    callback row-clicked(string);
+    callback toggle-clicked(string);
+
+    background: Kolory.przezroczysty;
+    clip: true;
+
+    ScrollView {
+        width: parent.width;
+        height: parent.height;
+
+        VerticalBox {
+            spacing: 1px;
+            alignment: start;
+            padding: 0px;
+
+            for entry[idx] in root.entries: Rectangle {
+                height: 18px;
+                clip: true;
+                background: entry.is_current ? Kolory.hover
+                            : (row_hover.has-hover ? Kolory.suwak_tlo : Kolory.przezroczysty);
+
+                // Toggle arrow (only if has-children)
+                Rectangle {
+                    x: (entry.depth * 10px) + 2px;
+                    y: 0px;
+                    width: 12px;
+                    height: parent.height;
+                    Text {
+                        text: entry.has_children ? (entry.expanded ? "▼" : "▶") : " ";
+                        color: Kolory.tekst_slabszy;
+                        font-size: 9px;
+                        font-family: "Geist";
+                        vertical-alignment: center;
+                        horizontal-alignment: center;
+                        width: parent.width;
+                        height: parent.height;
+                    }
+                    TouchArea {
+                        width: parent.width;
+                        height: parent.height;
+                        clicked => { if (entry.has_children) { root.toggle-clicked(entry.path); } }
+                    }
+                }
+
+                // Folder name + icon
+                Text {
+                    text: "📂 " + entry.display_name;
+                    color: entry.is_current ? Kolory.tekst_silny : Kolory.tekst;
+                    font-size: 11px;
+                    font-family: "Geist";
+                    font-weight: entry.is_current ? 700 : 400;
+                    vertical-alignment: center;
+                    horizontal-alignment: left;
+                    x: (entry.depth * 10px) + 18px;
+                    width: parent.width - self.x - 4px;
+                    wrap: no-wrap;
+                }
+
+                row_hover := TouchArea {
+                    x: (entry.depth * 10px) + 16px;
+                    width: parent.width - self.x;
+                    height: parent.height;
+                    clicked => { root.row-clicked(entry.path); }
+                }
+            }
+        }
+    }
+}
