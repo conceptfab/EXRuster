@@ -50,7 +50,6 @@ pub struct LayerChannels {
     pub channel_data: Arc<[f32]>, // Zmieniono z Vec<f32> na Arc<[f32]>
 }
 
-#[allow(dead_code)]
 pub enum ExrDataSource {
     /// Full cache mode: all data in memory (high RAM usage, fast access)
     Full(Arc<FullExrCacheData>),
@@ -755,11 +754,4 @@ impl ImageCache {
         Image::from_rgba8(buffer)
     }
 
-    /// Clear cached data to free memory (only works in lazy mode)
-    #[allow(dead_code)]
-    pub fn clear_data_cache(&self) {
-        if let ExrDataSource::Lazy(loader) = &self.data_source {
-            loader.clear_cache();
-        }
-    }
 }

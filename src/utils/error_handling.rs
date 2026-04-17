@@ -15,9 +15,6 @@ pub trait UiErrorReporter {
         error: impl std::fmt::Display,
     );
 
-    /// Reports a simple message without error formatting
-    #[allow(dead_code)]
-    fn report_info(&self, console: &ConsoleModel, context: &str, message: &str);
 }
 
 impl UiErrorReporter for AppWindow {
@@ -42,10 +39,6 @@ impl UiErrorReporter for AppWindow {
         self.set_status_text(status_msg.into());
     }
 
-    fn report_info(&self, console: &ConsoleModel, context: &str, message: &str) {
-        let info_msg = format!("[{}] {}", context, message);
-        push_console(self, console, info_msg);
-    }
 }
 
 /// Macro for standard error handling pattern with UI updates

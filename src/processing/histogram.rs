@@ -220,7 +220,7 @@ impl HistogramData {
 }
 
 #[derive(Debug, Clone, Copy)]
-#[allow(dead_code)]
+#[allow(dead_code)] // Red/Green/Blue are public API surface, only Luminance used today
 pub enum HistogramChannel {
     Red,
     Green,

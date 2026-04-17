@@ -45,7 +45,6 @@ pub struct LazyExrLoader {
     mmap: Option<Arc<Mmap>>,
 }
 
-#[allow(dead_code)]
 impl LazyExrLoader {
     /// Create a new lazy loader - loads only metadata, not pixel data
     pub fn new(
@@ -304,31 +303,6 @@ impl LazyExrLoader {
         Ok(data)
     }
 
-    /// Get cache statistics for monitoring
-    pub fn get_cache_stats(&self) -> (usize, usize, usize) {
-        let cache = self.data_cache.read().unwrap();
-        let cached_count = cache.len();
-        let total_layers = self.metadata.len();
-        let cached_memory_mb = cache
-            .values()
-            .map(|data| {
-                (data.metadata.width as usize)
-                    * (data.metadata.height as usize)
-                    * data.metadata.channel_names.len()
-                    * 4
-            })
-            .sum::<usize>()
-            / (1024 * 1024);
-
-        (cached_count, total_layers, cached_memory_mb)
-    }
-
-    /// Clear all cached data to free memory
-    pub fn clear_cache(&self) {
-        let mut cache = self.data_cache.write().unwrap();
-        cache.clear();
-        println!("[lazy] Cache cleared");
-    }
 }
 
 // Compatibility layer for existing FullExrCacheData API
