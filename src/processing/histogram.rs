@@ -4,10 +4,12 @@ use rayon::prelude::*;
 /// Luminance weighting standards for color-to-grayscale conversion
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[allow(dead_code)] // Rec601 is used in tests and may be used by external code
+#[derive(Default)]
 pub enum LuminanceWeights {
     /// ITU-R BT.601 (NTSC/PAL) - older standard
     Rec601,
     /// ITU-R BT.709 (sRGB/HDTV) - more accurate for modern displays
+    #[default]
     Rec709,
 }
 
@@ -28,12 +30,6 @@ impl LuminanceWeights {
     }
 }
 
-impl Default for LuminanceWeights {
-    fn default() -> Self {
-        // Use Rec.709 as default - more accurate for sRGB content
-        Self::Rec709
-    }
-}
 
 #[derive(Debug, Clone)]
 pub struct HistogramData {
@@ -70,7 +66,7 @@ impl HistogramData {
     pub fn compute_from_rgba_pixels(&mut self, pixels: &[f32]) -> anyhow::Result<()> {
         self.reset();
 
-        if pixels.len() % 4 != 0 {
+        if !pixels.len().is_multiple_of(4) {
             return Err(anyhow::anyhow!("Invalid RGBA pixel data"));
         }
 
@@ -247,7 +243,7 @@ mod tests {
         assert_eq!(hist.total_pixels, 3);
 
         let p50 = hist.get_percentile(HistogramChannel::Red, 0.5);
-        assert!(p50 >= 0.0 && p50 <= 1.0);
+        assert!((0.0..=1.0).contains(&p50));
     }
 
     #[test]

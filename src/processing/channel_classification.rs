@@ -296,7 +296,7 @@ pub fn group_channels_parallel(
 
         channel_groups
             .entry(group_name)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(channel.name.clone());
     });
 

@@ -223,7 +223,7 @@ fn read_and_group_metadata_standard(path: &Path) -> anyhow::Result<ExrMetadata> 
         // let channel_groups: Vec<LayerChannelsGroup> = groups.into_sorted_vec();
 
         // Nazwa warstwy (pusta dla warstwy bazowej)
-        let layer_name = base_layer_name.unwrap_or_else(|| "".to_string());
+        let layer_name = base_layer_name.unwrap_or_default();
         // Atrybuty warstwy: preferuj typowane wartości, fallback do Debug
         // Pre-allocate based on estimated number of attributes
         let mut layer_items: Vec<(String, String)> =

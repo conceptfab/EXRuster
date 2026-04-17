@@ -10,6 +10,7 @@ pub struct UiState {
     pub expanded_groups: HashMap<String, bool>,
 }
 
+#[derive(Default)]
 pub struct AppState {
     pub image_cache: Option<ImageCache>,
     pub current_file_path: Option<PathBuf>,
@@ -18,17 +19,6 @@ pub struct AppState {
     pub channel_config: Option<ChannelGroupConfig>,
 }
 
-impl Default for AppState {
-    fn default() -> Self {
-        Self {
-            image_cache: None,
-            current_file_path: None,
-            full_exr_cache: None,
-            ui_state: UiState::default(),
-            channel_config: None,
-        }
-    }
-}
 
 impl UiState {
     pub fn new() -> Self {

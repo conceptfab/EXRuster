@@ -98,7 +98,7 @@ pub fn handle_parameter_changed_throttled(
                 let final_exposure = exposure.unwrap_or_else(|| ui.get_exposure_value());
                 let final_gamma = gamma.unwrap_or_else(|| ui.get_gamma_value());
 
-                let tonemap_mode = ui.get_tonemap_mode() as i32;
+                let tonemap_mode = ui.get_tonemap_mode();
                 let image = update_preview_image(
                     &ui,
                     cache,
@@ -140,9 +140,9 @@ pub fn update_preview_image(
 ) -> slint::Image {
     // Use thumbnail for real-time preview if image is large, but don't go below 1:1 relative to widget
     // Consider HiDPI and image-fit: contain (aspect fitting)
-    let preview_w = ui.get_preview_area_width() as f32;
-    let preview_h = ui.get_preview_area_height() as f32;
-    let dpr = ui.window().scale_factor() as f32;
+    let preview_w = ui.get_preview_area_width();
+    let preview_h = ui.get_preview_area_height();
+    let dpr = ui.window().scale_factor();
     let img_w = cache.width as f32;
     let img_h = cache.height as f32;
     let container_ratio = if preview_h > 0.0 {

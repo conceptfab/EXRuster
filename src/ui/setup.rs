@@ -224,7 +224,7 @@ pub fn setup_image_control_callbacks(
                     if let Some(ref cache) = state.image_cache {
                         let exposure = ui.get_exposure_value();
                         let gamma = ui.get_gamma_value();
-                        let mode = ui.get_tonemap_mode() as i32;
+                        let mode = ui.get_tonemap_mode();
                         let image =
                             crate::ui::update_preview_image(&ui, cache, exposure, gamma, mode, &console);
                         ui.set_exr_image(image);

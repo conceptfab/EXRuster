@@ -630,7 +630,7 @@ impl ImageCache {
             // Preferuj dokładnie "Z"; w razie braku wybierz kanał zawierający "DEPTH" albo "DISTANCE"
             find_channel_index("Z").or_else(|| {
                 layer_cache.channel_names.iter().position(|k| {
-                    k.to_ascii_uppercase().contains("DEPTH") || k.to_ascii_uppercase() == "DISTANCE"
+                    k.to_ascii_uppercase().contains("DEPTH") || k.eq_ignore_ascii_case("DISTANCE")
                 })
             })
         } else {

@@ -97,11 +97,11 @@ pub fn handle_layer_tree_click(
                 if let Some(ref path) = state.current_file_path.clone() {
                     if let Some(ref mut cache) = state.image_cache {
                         let _prog = patterns::processing(ui.as_weak(), "Loading layer");
-                        match cache.load_layer(&path, &real_layer_name, Some(_prog.inner())) {
+                        match cache.load_layer(path, &real_layer_name, Some(_prog.inner())) {
                             Ok(()) => {
                                 let exposure = ui.get_exposure_value();
                                 let gamma = ui.get_gamma_value();
-                                let tonemap_mode = ui.get_tonemap_mode() as i32;
+                                let tonemap_mode = ui.get_tonemap_mode();
                                 let image =
                                     cache.process_to_composite(exposure, gamma, tonemap_mode, true);
                                 ui.set_exr_image(image);
@@ -219,7 +219,7 @@ pub fn handle_layer_tree_click(
 
                         let _prog = patterns::processing(ui.as_weak(), "Loading channel");
                         match cache.load_channel(
-                            &path,
+                            path,
                             &active_layer,
                             &channel_short,
                             Some(_prog.inner()),

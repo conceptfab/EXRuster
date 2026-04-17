@@ -110,7 +110,7 @@ fn create_export_params(ui: &AppWindow, config: &UiExportConfig) -> Result<Expor
         (
             ui.get_exposure_value(),
             ui.get_gamma_value(),
-            ToneMapModeId::from(ui.get_tonemap_mode() as i32),
+            ToneMapModeId::from(ui.get_tonemap_mode()),
         )
     } else {
         // Use explicit parameters
@@ -193,7 +193,7 @@ pub fn create_export_config_from_ui(
             tonemap_mode: if !apply_corrections {
                 ToneMapModeId::from(2)
             } else {
-                ToneMapModeId::from(ui.get_tonemap_mode() as i32)
+                ToneMapModeId::from(ui.get_tonemap_mode())
             },
         })
     } else {

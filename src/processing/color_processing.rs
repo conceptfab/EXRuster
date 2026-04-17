@@ -28,7 +28,7 @@ pub fn compute_rgb_to_srgb_matrix_from_file_for_layer(
             .layer_name
             .as_ref()
             .map(|t| t.to_string());
-        let lname = base_name.unwrap_or_else(|| "".to_string());
+        let lname = base_name.unwrap_or_default();
         let lname_lower = lname.to_lowercase();
         let matches = (wanted_lower.is_empty() && lname_lower.is_empty())
             || (!wanted_lower.is_empty() && lname_lower.contains(&wanted_lower));
@@ -122,7 +122,7 @@ fn rgb_to_xyz_from_primaries(
 fn xyz_to_srgb_matrix() -> Mat3 {
     // Stała macierz XYZ→sRGB (D65)
     Mat3::from_cols_array(&[
-        3.2404542, -0.9692660, 0.0556434, -1.5371385, 1.8760108, -0.2040259, -0.4985314, 0.0415560,
+        3.2404542, -0.969_266, 0.0556434, -1.5371385, 1.8760108, -0.2040259, -0.4985314, 0.0415560,
         1.0572252,
     ])
 }

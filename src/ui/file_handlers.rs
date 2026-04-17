@@ -115,7 +115,7 @@ pub fn handle_open_exr_from_path(
                 // Get current processing parameters
                 let exposure0 = ui.get_exposure_value();
                 let gamma0 = ui.get_gamma_value();
-                let tonemap_mode0 = ui.get_tonemap_mode() as i32;
+                let tonemap_mode0 = ui.get_tonemap_mode();
 
                 let ui_weak = ui.as_weak();
                 let app_state_c = app_state.clone();

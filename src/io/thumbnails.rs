@@ -132,10 +132,9 @@ pub fn generate_thumbnails_cpu_raw(
                 &color_config,
                 &timing_stats,
             )
-            .map(|work| {
+            .inspect(|work| {
                 // Zapisz do cache
-                put_thumb_cache(&work, thumb_height, exposure, gamma, tonemap_mode);
-                work
+                put_thumb_cache(work, thumb_height, exposure, gamma, tonemap_mode);
             });
             let n = completed.fetch_add(1, Ordering::Relaxed) + 1;
             if let Some(p) = progress {
@@ -150,10 +149,7 @@ pub fn generate_thumbnails_cpu_raw(
                     )),
                 );
             }
-            match res {
-                Ok(work) => Some(work),
-                Err(_e) => None,
-            }
+            res.ok()
         })
         .collect();
 

@@ -113,7 +113,7 @@ pub fn load_thumbnails_for_directory(
             prog.set(0.9, Some("📊 Sorting thumbnails alphabetically..."));
             let mut sorted_works = thumbnail_works;
             sorted_works
-                .sort_by(|a, b| a.file_name.to_lowercase().cmp(&b.file_name.to_lowercase()));
+                .sort_by_key(|a| a.file_name.to_lowercase());
 
             let count = sorted_works.len();
             let ms = t0.elapsed().as_millis();
