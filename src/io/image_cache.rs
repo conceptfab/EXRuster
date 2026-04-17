@@ -376,75 +376,30 @@ pub(crate) fn extract_layers_info(path: &Path) -> anyhow::Result<Vec<LayerInfo>>
 }
 
 pub(crate) fn find_best_layer(layers_info: &[LayerInfo]) -> String {
-    // Use metadata approach for better layer selection based on channels
-    use crate::io::metadata_traits::{
-        utils::find_best_layer as unified_find_best, LayerDescriptor, MetadataLayerInfo,
+    // Pick the first layer with RGBA channels, then fall back to RGB,
+    // then to the first layer. Previously this function routed through
+    // crate::io::metadata_traits::utils::find_best_layer via a throwaway
+    // MetadataLayerInfo wrapper; the fallback code after that wrapper was
+    // unreachable because the wrapper returned Some as long as any layer
+    // existed. Inlined here with the same observable behaviour.
+    let has_channel = |layer: &LayerInfo, wanted: &str| -> bool {
+        layer.channels.iter().any(|c| c.name == wanted)
     };
 
-    // Convert to metadata format for layer selection logic
-    let metadata_layers: Vec<MetadataLayerInfo> = layers_info
-        .iter()
-        .map(|l| MetadataLayerInfo::new(l.name.clone(), l.channels.clone(), 0, 0))
-        .collect();
-
-    if let Some(best_layer) = unified_find_best(&metadata_layers) {
-        return best_layer.name().to_string();
-    }
-
-    // Fallback to original logic if needed
-    if let Some(layer) = layers_info.iter().find(|l| l.name.is_empty()) {
-        let mut has_r = false;
-        let mut has_g = false;
-        let mut has_b = false;
-        for ch in &layer.channels {
-            let n = ch.name.trim().to_ascii_uppercase();
-            if n == "R" {
-                has_r = true;
-            } else if n == "G" {
-                has_g = true;
-            } else if n == "B" {
-                has_b = true;
-            }
-        }
-        if has_r && has_g && has_b {
-            return layer.name.clone();
-        }
-    }
-
-    let priority_names = ["beauty", "rgba", "default", "combined"];
-
-    for priority_name in &priority_names {
-        if let Some(layer) = layers_info.iter().find(|l| {
-            let name_bytes = l.name.as_bytes();
-            let pat_bytes = priority_name.as_bytes();
-            // ASCII case-insensitive contains without allocation
-            name_bytes.windows(pat_bytes.len()).any(|w| w.eq_ignore_ascii_case(pat_bytes))
-        }) {
-            return layer.name.clone();
-        }
-    }
-
-    for layer in layers_info {
-        let mut has_r = false;
-        let mut has_g = false;
-        let mut has_b = false;
-        for ch in &layer.channels {
-            let n = ch.name.trim().to_ascii_uppercase();
-            if n == "R" {
-                has_r = true;
-            } else if n == "G" {
-                has_g = true;
-            } else if n == "B" {
-                has_b = true;
-            }
-        }
-        if has_r && has_g && has_b {
-            return layer.name.clone();
-        }
-    }
-
     layers_info
-        .first()
+        .iter()
+        .find(|l| {
+            has_channel(l, "R")
+                && has_channel(l, "G")
+                && has_channel(l, "B")
+                && has_channel(l, "A")
+        })
+        .or_else(|| {
+            layers_info
+                .iter()
+                .find(|l| has_channel(l, "R") && has_channel(l, "G") && has_channel(l, "B"))
+        })
+        .or_else(|| layers_info.first())
         .map(|l| l.name.clone())
         .unwrap_or_else(|| "Layer 1".to_string())
 }
