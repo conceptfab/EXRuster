@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(RUSTFLAGS=\"-W dead_code -W unused_imports -W unused_variables\" cargo check --all-targets --message-format=short)",
+      "Bash(tee target/clippy-baseline.txt)"
+    ]
+  }
+}

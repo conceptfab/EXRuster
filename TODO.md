@@ -1,0 +1,5 @@
+Chce dodac do aplikacji funkcjonalność przegladania katalogów i podgladów plików exr.W tym celu trzeba rozbudować prawy panel.
+Pod przyciskam Export Lights ma pojawic się separator i przycisk z funkcją kopiowania ścieżki do aktualnie otwierane pliku - (pełna ścieżka do pliku), pod nim przycisk umożliwiający kopiowanie aktualnie ogladanego pliku do wybranej lokalizacji.
+Potem etykieta Exr browser i poniżej 3 kwadratowe przycisku - okresljące wielkości wyświetlanych thumbs - aktualny widok to najmniejsza wielkość, potem x 2 i ostarni x3.
+Pod tymi przyciskami drzwewo katalogów umożliwiające poruszanie się po katalogach.
+Panel z miniaturkami-thumbs musi mieć możlość powiększenia - maksymalnie to krawędzi pliku wyświetlanego w podglądzie. Miniaturki mają sie teraz wyswietlac w formie siatki - ilość kolumn siatki ma być dopasowana do aktualnej wielkości okna aplikacji. Drzewp folderów ma stylistycznie nawiązywać do drzewa warstw w lewej kolumnie (tam już sa ikony folderów). W drzewie folderów ma być widoczna aktualnie przegladana lokalizacja.
