@@ -295,20 +295,6 @@ pub fn apply_tonemap_simd(
 }
 
 /// SIMD: ekspozycja → tone-map → gamma/sRGB dla 4 pikseli naraz
-/// New type-safe API using ToneMapModeId  
-#[allow(dead_code)]
-#[inline]
-pub fn tone_map_and_gamma_simd_safe(
-    r: f32x4,
-    g: f32x4,
-    b: f32x4,
-    exposure: f32,
-    gamma: f32,
-    tonemap_mode: ToneMapModeId,
-) -> (f32x4, f32x4, f32x4) {
-    tone_map_and_gamma_simd(r, g, b, exposure, gamma, tonemap_mode.as_i32())
-}
-
 /// SIMD: ekspozycja → tone-map → gamma/sRGB dla 4 pikseli naraz
 #[inline]
 pub fn tone_map_and_gamma_simd(
@@ -352,22 +338,6 @@ pub fn tone_map_and_gamma_simd(
             apply_gamma_lut_simd(tm_b, gamma_inv),
         )
     }
-}
-
-/// Scalar version: ekspozycja → tone-map → gamma/sRGB  
-/// Zwraca wartości w [0, 1] po korekcji gamma.
-/// New type-safe API using ToneMapModeId
-#[allow(dead_code)]
-#[inline]
-pub fn tone_map_and_gamma_safe(
-    r: f32,
-    g: f32,
-    b: f32,
-    exposure: f32,
-    gamma: f32,
-    tonemap_mode: ToneMapModeId,
-) -> (f32, f32, f32) {
-    tone_map_and_gamma(r, g, b, exposure, gamma, tonemap_mode.inner())
 }
 
 /// Scalar version: ekspozycja → tone-map → gamma/sRGB
@@ -462,25 +432,6 @@ mod tests {
         assert_eq!(ToneMapModeId::ACES.as_i32(), 0);
         assert_eq!(ToneMapModeId::REINHARD.as_i32(), 1);
         assert_eq!(ToneMapModeId::LINEAR.as_i32(), 2);
-    }
-
-    #[test]
-    fn test_safe_api_consistency() {
-        // Test że bezpieczne API daje identyczne wyniki jak unsafe
-        let test_r = 2.0;
-        let test_g = 1.5;
-        let test_b = 0.8;
-        let exposure = 1.0;
-        let gamma = 2.2;
-
-        let unsafe_result =
-            tone_map_and_gamma(test_r, test_g, test_b, exposure, gamma, ToneMapMode::ACES);
-        let safe_result =
-            tone_map_and_gamma_safe(test_r, test_g, test_b, exposure, gamma, ToneMapModeId::ACES);
-
-        assert!((unsafe_result.0 - safe_result.0).abs() < 1e-6);
-        assert!((unsafe_result.1 - safe_result.1).abs() < 1e-6);
-        assert!((unsafe_result.2 - safe_result.2).abs() < 1e-6);
     }
 
     #[test]
