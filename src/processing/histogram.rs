@@ -112,56 +112,70 @@ impl HistogramData {
         let range = self.max_value - self.min_value;
         self.total_pixels = pixel_count as u32;
 
-        // Compute histograms równolegle
+        // Compute histograms równolegle — reuse per-thread bins via fold/reduce
+        // (avoids re-allocating 4 Vec<u32> per chunk).
         let chunk_size = (pixel_count / rayon::current_num_threads()).max(1024);
-        let results: Vec<_> = pixels
-            .par_chunks_exact(4)
-            .chunks(chunk_size)
-            .map(|chunk| {
-                let mut local_r = vec![0u32; self.bin_count];
-                let mut local_g = vec![0u32; self.bin_count];
-                let mut local_b = vec![0u32; self.bin_count];
-                let mut local_lum = vec![0u32; self.bin_count];
+        let bin_count = self.bin_count;
+        let min_value = self.min_value;
+        let max_value = self.max_value;
+        let luminance_standard = self.luminance_standard;
 
-                for rgba in chunk {
-                    let r = rgba[0].clamp(self.min_value, self.max_value);
-                    let g = rgba[1].clamp(self.min_value, self.max_value);
-                    let b = rgba[2].clamp(self.min_value, self.max_value);
+        let init = || {
+            (
+                vec![0u32; bin_count],
+                vec![0u32; bin_count],
+                vec![0u32; bin_count],
+                vec![0u32; bin_count],
+            )
+        };
 
-                    let r_norm = (r - self.min_value) / range;
-                    let g_norm = (g - self.min_value) / range;
-                    let b_norm = (b - self.min_value) / range;
-                    let lum = self.luminance_standard.luminance(r, g, b);
-                    let lum_norm = (lum - self.min_value) / range;
+        let (total_r, total_g, total_b, total_lum) = pixels
+            .par_chunks(chunk_size * 4)
+            .fold(init, |mut acc, chunk| {
+                let (local_r, local_g, local_b, local_lum) = &mut acc;
+                for rgba in chunk.chunks_exact(4) {
+                    let r = rgba[0].clamp(min_value, max_value);
+                    let g = rgba[1].clamp(min_value, max_value);
+                    let b = rgba[2].clamp(min_value, max_value);
 
-                    let r_bin = ((r_norm * (self.bin_count - 1) as f32).round() as usize)
-                        .min(self.bin_count - 1);
-                    let g_bin = ((g_norm * (self.bin_count - 1) as f32).round() as usize)
-                        .min(self.bin_count - 1);
-                    let b_bin = ((b_norm * (self.bin_count - 1) as f32).round() as usize)
-                        .min(self.bin_count - 1);
-                    let lum_bin = ((lum_norm.clamp(0.0, 1.0) * (self.bin_count - 1) as f32).round()
+                    let r_norm = (r - min_value) / range;
+                    let g_norm = (g - min_value) / range;
+                    let b_norm = (b - min_value) / range;
+                    let lum = luminance_standard.luminance(r, g, b);
+                    let lum_norm = (lum - min_value) / range;
+
+                    let r_bin = ((r_norm * (bin_count - 1) as f32).round() as usize)
+                        .min(bin_count - 1);
+                    let g_bin = ((g_norm * (bin_count - 1) as f32).round() as usize)
+                        .min(bin_count - 1);
+                    let b_bin = ((b_norm * (bin_count - 1) as f32).round() as usize)
+                        .min(bin_count - 1);
+                    let lum_bin = ((lum_norm.clamp(0.0, 1.0) * (bin_count - 1) as f32).round()
                         as usize)
-                        .min(self.bin_count - 1);
+                        .min(bin_count - 1);
 
                     local_r[r_bin] += 1;
                     local_g[g_bin] += 1;
                     local_b[b_bin] += 1;
                     local_lum[lum_bin] += 1;
                 }
-
-                (local_r, local_g, local_b, local_lum)
+                acc
             })
-            .collect();
+            .reduce(init, |(mut ar, mut ag, mut ab, mut al), (br, bg, bb, bl)| {
+                for i in 0..bin_count {
+                    ar[i] += br[i];
+                    ag[i] += bg[i];
+                    ab[i] += bb[i];
+                    al[i] += bl[i];
+                }
+                (ar, ag, ab, al)
+            });
 
-        // Merge results
-        for (local_r, local_g, local_b, local_lum) in results {
-            for i in 0..self.bin_count {
-                self.red_bins[i] += local_r[i];
-                self.green_bins[i] += local_g[i];
-                self.blue_bins[i] += local_b[i];
-                self.luminance_bins[i] += local_lum[i];
-            }
+        for i in 0..self.bin_count {
+            self.red_bins[i] += total_r[i];
+            self.green_bins[i] += total_g[i];
+            self.blue_bins[i] += total_b[i];
+            self.luminance_bins[i] += total_lum[i];
         }
 
         Ok(())
@@ -264,6 +278,33 @@ mod tests {
             duration
         );
         assert!(duration.as_millis() < 100); // Should be under 100ms for 2MP
+    }
+
+    #[test]
+    fn histogram_matches_reference() {
+        // Pin semantics of the fold/reduce rewrite: total bin count stays
+        // equal to pixel count and min/max track the input range.
+        let pixel_count = 1_000usize;
+        let pixels: Vec<f32> = (0..pixel_count)
+            .flat_map(|i| {
+                let v = i as f32 / pixel_count as f32;
+                [v, v, v, 1.0]
+            })
+            .collect();
+
+        let mut hist = HistogramData::new(10);
+        hist.compute_from_rgba_pixels(&pixels).unwrap();
+
+        let red_sum: u32 = hist.red_bins.iter().sum();
+        let green_sum: u32 = hist.green_bins.iter().sum();
+        let blue_sum: u32 = hist.blue_bins.iter().sum();
+        let lum_sum: u32 = hist.luminance_bins.iter().sum();
+        assert_eq!(red_sum as usize, pixel_count);
+        assert_eq!(green_sum as usize, pixel_count);
+        assert_eq!(blue_sum as usize, pixel_count);
+        assert_eq!(lum_sum as usize, pixel_count);
+        assert!(hist.min_value <= 0.0);
+        assert!(hist.max_value >= 0.999);
     }
 
     #[test]
