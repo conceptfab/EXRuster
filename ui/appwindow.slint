@@ -23,6 +23,16 @@ export struct ThumbItem {
   height: int, // rzeczywista wysokość miniaturki
 }
 
+// Folder tree entry
+export struct FolderEntry {
+    display_name: string,
+    path: string,
+    depth: int,
+    has_children: bool,
+    expanded: bool,
+    is_current: bool,
+}
+
 export component AppWindow inherits Window {
     in-out property <[ThumbItem]> thumbnails: [];
     in-out property <string> app-version: "0.0.0";
@@ -161,6 +171,11 @@ export component AppWindow inherits Window {
      // 1 = small (130), 2 = medium (260), 3 = large (390)
      in-out property <int> thumbnail-size-level: 1;
      callback thumbnail-size-changed(int);
+
+     // Folder tree state
+     in-out property <[FolderEntry]> folder-tree: [];
+     callback folder-tree-row-clicked(string);  // path
+     callback folder-tree-toggle(string);       // path
 
      // Histogram callback
      callback histogram-requested();
