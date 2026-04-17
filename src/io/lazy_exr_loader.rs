@@ -7,11 +7,13 @@ use ::exr::image::read::layers::ReadChannels;
 use ::exr::image::read::image::ReadLayers;
 use exr::prelude as exr;
 use memmap2::Mmap;
+use lru::LruCache;
 use std::collections::HashMap;
+use std::num::NonZeroUsize;
 use std::fs::File;
 use std::io::{BufReader, Cursor};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex};
 
 /// Lazy EXR loader that loads only metadata initially and pixel data on demand
 /// Significantly reduces RAM usage for large EXR files with multiple layers
@@ -35,12 +37,10 @@ pub struct LazyLayerData {
 pub struct LazyExrLoader {
     path: PathBuf,
     metadata: Vec<LazyLayerMetadata>,
-    // Cache for loaded layer data with LRU eviction
-    data_cache: RwLock<HashMap<String, LazyLayerData>>,
+    // LRU cache for loaded layer data
+    data_cache: Mutex<LruCache<String, LazyLayerData>>,
     // Mutex for file access (exr library may not be thread-safe for concurrent reads)
     file_access: Mutex<()>,
-    // Maximum number of layers to keep in memory simultaneously
-    max_cached_layers: usize,
     // Optional memory mapping for large files
     mmap: Option<Arc<Mmap>>,
 }
@@ -75,9 +75,10 @@ impl LazyExrLoader {
         Ok(LazyExrLoader {
             path,
             metadata,
-            data_cache: RwLock::new(HashMap::with_capacity(max_cached_layers)),
+            data_cache: Mutex::new(LruCache::new(
+                NonZeroUsize::new(max_cached_layers.max(1)).unwrap(),
+            )),
             file_access: Mutex::new(()),
-            max_cached_layers,
             mmap,
         })
     }
@@ -159,9 +160,9 @@ impl LazyExrLoader {
         layer_name: &str,
         progress: Option<&dyn ProgressSink>,
     ) -> anyhow::Result<LazyLayerData> {
-        // Fast path: check if already cached
+        // Fast path: check if already cached (also updates LRU recency)
         {
-            let cache = self.data_cache.read().unwrap();
+            let mut cache = self.data_cache.lock().unwrap();
             if let Some(cached) = cache.get(layer_name) {
                 return Ok(cached.clone());
             }
@@ -174,20 +175,14 @@ impl LazyExrLoader {
 
         let layer_data = self.load_layer_from_disk(layer_name, progress)?;
 
-        // Cache the loaded data with LRU eviction
+        // Cache the loaded data — lru::LruCache handles eviction internally.
         {
-            let mut cache = self.data_cache.write().unwrap();
-
-            // Simple LRU: if cache is full, remove oldest entry
-            if cache.len() >= self.max_cached_layers {
-                // Remove arbitrary entry (in a full implementation we'd track access order)
-                if let Some(key_to_remove) = cache.keys().next().cloned() {
-                    cache.remove(&key_to_remove);
-                    println!("[lazy] Evicted layer from cache: {}", key_to_remove);
-                }
+            let mut cache = self.data_cache.lock().unwrap();
+            if let Some((evicted_key, _)) =
+                cache.push(layer_name.to_string(), layer_data.clone())
+            {
+                println!("[lazy] Evicted layer from cache: {}", evicted_key);
             }
-
-            cache.insert(layer_name.to_string(), layer_data.clone());
         }
 
         if let Some(p) = progress {
