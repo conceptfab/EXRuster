@@ -152,6 +152,11 @@ export component AppWindow inherits Window {
      
      
      
+     // File action state
+     in-out property <string> current-file-path: "";
+     callback copy-current-path();
+     callback copy-current-file-to-location();
+
      // Histogram callback
      callback histogram-requested();
 
@@ -832,11 +837,48 @@ export component AppWindow inherits Window {
                          }
                      }
                  }
-                
-                
+
+                 // Separator
+                 Rectangle {
+                     width: parent.width - controls_inset*2;
+                     height: 1px;
+                     background: Kolory.linia_podzialu;
+                 }
+
+                 Rectangle { height: 6px; }
+
+                 // File action buttons
+                 Rectangle {
+                     width: parent.width;
+                     height: 60px;
+                     VerticalBox {
+                         width: parent.width;
+                         height: parent.height;
+                         spacing: 4px;
+                         alignment: start;
+
+                         PrzyciskAkcji {
+                             text: "Copy File Path";
+                             enabled: root.current-file-path != "";
+                             height: 26px;
+                             width: parent.width - controls_inset*2;
+                             clicked => { root.copy-current-path(); }
+                         }
+
+                         PrzyciskAkcji {
+                             text: "Copy File To...";
+                             enabled: root.current-file-path != "";
+                             height: 26px;
+                             width: parent.width - controls_inset*2;
+                             clicked => { root.copy-current-file-to-location(); }
+                         }
+                     }
+                 }
+
+
             }
-                
-                
+
+
 
             // Nakładka maskująca prawą krawędź, aby uniknąć podwójnego obramowania przy krawędzi okna
             Rectangle {
