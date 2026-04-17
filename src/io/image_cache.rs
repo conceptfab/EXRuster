@@ -4,7 +4,7 @@ use crate::utils::split_layer_and_short;
 use rayon::prelude::*;
 use slint::{Image, Rgba8Pixel, SharedPixelBuffer};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::Path;
 use crate::io::full_exr_cache::FullExrCacheData;
 use crate::io::lazy_exr_loader::LazyExrLoader;
 use glam::Mat3;
@@ -79,7 +79,7 @@ pub struct ImageCache {
 
 impl ImageCache {
     pub fn new_with_full_cache(
-        path: &PathBuf,
+        path: &Path,
         full_cache: Arc<FullExrCacheData>,
     ) -> anyhow::Result<Self> {
         println!(
@@ -118,7 +118,7 @@ impl ImageCache {
     }
 
     pub fn new_with_lazy_loader(
-        path: &PathBuf,
+        path: &Path,
         lazy_loader: Arc<LazyExrLoader>,
     ) -> anyhow::Result<Self> {
         println!(
@@ -174,7 +174,7 @@ impl ImageCache {
 
     pub fn load_layer(
         &mut self,
-        path: &PathBuf,
+        path: &Path,
         layer_name: &str,
         progress: Option<&dyn ProgressSink>,
     ) -> anyhow::Result<()> {
@@ -303,6 +303,7 @@ impl ImageCache {
         Image::from_rgba8(buffer)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn process_rgba_chunks_composite_optimized(
         &self,
         input: &[f32],
@@ -331,7 +332,7 @@ impl ImageCache {
 
 // GPU functions removed - using CPU-only processing
 
-pub(crate) fn extract_layers_info(path: &PathBuf) -> anyhow::Result<Vec<LayerInfo>> {
+pub(crate) fn extract_layers_info(path: &Path) -> anyhow::Result<Vec<LayerInfo>> {
     // Odczytaj jedynie meta-dane (nagłówki) bez pikseli
     let meta = ::exr::meta::MetaData::read_from_file(path, /*pedantic=*/ false)?;
 
@@ -570,7 +571,7 @@ impl ImageCache {
     /// Wczytuje jeden wskazany kanał z danej warstwy i zapisuje go jako grayscale (R=G=B=val, A=1)
     pub fn load_channel(
         &mut self,
-        path: &PathBuf,
+        path: &Path,
         layer_name: &str,
         channel_short: &str,
         progress: Option<&dyn ProgressSink>,

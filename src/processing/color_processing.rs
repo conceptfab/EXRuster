@@ -87,6 +87,7 @@ pub fn compute_rgb_to_srgb_matrix_from_file_for_layer(
     Ok(m)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn rgb_to_xyz_from_primaries(
     rx: f64,
     ry: f64,

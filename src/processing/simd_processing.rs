@@ -382,6 +382,7 @@ pub fn process_scalar_pixels(
 
 /// Unified SIMD processing function - consolidates patterns from image_cache.rs
 /// Handles both parallel and sequential processing with consistent SIMD optimization
+#[allow(clippy::too_many_arguments)]
 pub fn process_rgba_chunk_optimized(
     input: &[f32],
     output: &mut [Rgba8Pixel],

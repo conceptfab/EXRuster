@@ -1,5 +1,5 @@
 use rfd::FileDialog;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Otwiera dialog wyboru pliku i zwraca wybraną ścieżkę
 ///
@@ -20,7 +20,7 @@ pub fn open_file_dialog() -> Option<PathBuf> {
 ///
 /// # Returns
 /// * `String` - nazwa pliku lub "Nieznany plik" jeśli nie można pobrać nazwy
-pub fn get_file_name(path: &PathBuf) -> String {
+pub fn get_file_name(path: &Path) -> String {
     path.file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("Nieznany plik")

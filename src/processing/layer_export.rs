@@ -5,7 +5,7 @@ use crate::utils::channel_config::load_channel_config;
 use crate::processing::tone_mapping::{tone_map_and_gamma, ToneMapMode};
 use anyhow::Result;
 use rayon::prelude::*;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// Export format configuration
@@ -488,7 +488,7 @@ impl LayerExporter {
     /// Generate output file path
     fn generate_output_path(
         &self,
-        output_dir: &PathBuf,
+        output_dir: &Path,
         base_filename: &str,
         layer_name: &str,
         format: &ExportFormat,
