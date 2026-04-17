@@ -559,7 +559,7 @@ fn compose_composite_into_buffer(layer_channels: &LayerChannels, out: &mut Vec<f
     }
 }
 
-fn compose_composite_from_channels(layer_channels: &LayerChannels) -> Vec<f32> {
+pub(crate) fn compose_composite_from_channels(layer_channels: &LayerChannels) -> Vec<f32> {
     let pixel_count = (layer_channels.width as usize) * (layer_channels.height as usize);
     let mut out = Vec::with_capacity(pixel_count * 4);
     compose_composite_into_buffer(layer_channels, &mut out);

@@ -185,8 +185,9 @@ impl LayerExporter {
     fn process_layer_to_pixels(&self, layer_channels: &LayerChannels) -> Result<ProcessedPixels> {
         let pixel_count = (layer_channels.width * layer_channels.height) as usize;
 
-        // Compose RGB from channels
-        let rgb_pixels = self.compose_rgb_from_channels(layer_channels);
+        // Compose RGB from channels (shared helper — identical semantics to the
+        // cache-side compositor, including RGB fallback for cryptomatte/etc layers).
+        let rgb_pixels = crate::io::image_cache::compose_composite_from_channels(layer_channels);
 
         // All layers use the same processing pipeline with global default parameters
 
@@ -216,145 +217,6 @@ impl LayerExporter {
             height: layer_channels.height,
             channels,
         })
-    }
-
-    /// Compose RGB from layer channels (highly optimized version)
-    fn compose_rgb_from_channels(&self, layer_channels: &LayerChannels) -> Vec<f32> {
-        let pixel_count = (layer_channels.width * layer_channels.height) as usize;
-
-        // Allocate buffer for RGB composition
-        let buffer_size = pixel_count * 4;
-        let mut rgb_pixels = Vec::with_capacity(buffer_size);
-
-        // Use same logic as image_cache.rs compose_composite_from_channels()
-        let pick_exact_index = |name: &str| -> Option<usize> {
-            layer_channels.channel_names.iter().position(|n| n == name)
-        };
-        let pick_prefix_index = |prefix: char| -> Option<usize> {
-            let prefix = prefix.to_ascii_uppercase();
-            layer_channels
-                .channel_names
-                .iter()
-                .position(|n| n.to_ascii_uppercase().starts_with(prefix))
-        };
-
-        // Check if layer has RGB channels - if not, use first 3 available channels
-        let r_idx_opt = pick_exact_index("R").or_else(|| pick_prefix_index('R'));
-        let g_idx_opt = pick_exact_index("G").or_else(|| pick_prefix_index('G'));
-        let b_idx_opt = pick_exact_index("B").or_else(|| pick_prefix_index('B'));
-
-        let has_any_rgb = r_idx_opt.is_some() || g_idx_opt.is_some() || b_idx_opt.is_some();
-
-        let (r_idx, g_idx, b_idx) = if has_any_rgb {
-            // We have at least one of R, G, B channels
-            let r_idx = r_idx_opt.unwrap_or_else(|| g_idx_opt.or(b_idx_opt).unwrap_or(0));
-            let g_idx = g_idx_opt.unwrap_or(r_idx);
-            let b_idx = b_idx_opt.unwrap_or(g_idx);
-            (r_idx, g_idx, b_idx)
-        } else {
-            // For layers without RGB (e.g. cryptomatte) - use first 3 channels
-            let num_channels = layer_channels.channel_names.len();
-            let r_idx = 0;
-            let g_idx = if num_channels > 1 { 1 } else { 0 };
-            let b_idx = if num_channels > 2 { 2 } else { g_idx };
-            (r_idx, g_idx, b_idx)
-        };
-
-        let a_idx = pick_exact_index("A").or_else(|| pick_prefix_index('A'));
-
-        // Extract channel slices with bounds checking
-        let channel_data = &layer_channels.channel_data;
-        let r_slice = &channel_data[r_idx * pixel_count..(r_idx + 1) * pixel_count];
-        let g_slice = &channel_data[g_idx * pixel_count..(g_idx + 1) * pixel_count];
-        let b_slice = &channel_data[b_idx * pixel_count..(b_idx + 1) * pixel_count];
-        let a_slice = a_idx.map(|idx| &channel_data[idx * pixel_count..(idx + 1) * pixel_count]);
-
-        // High-performance SIMD composition when available
-        #[cfg(feature = "unified_simd")]
-        {
-            self.compose_rgb_simd_optimized(
-                &mut rgb_pixels,
-                r_slice,
-                g_slice,
-                b_slice,
-                a_slice,
-                pixel_count,
-            );
-        }
-
-        #[cfg(not(feature = "unified_simd"))]
-        {
-            // Fallback to safe parallel composition
-            rgb_pixels.resize(buffer_size, 0.0);
-            rgb_pixels
-                .par_chunks_exact_mut(4)
-                .enumerate()
-                .for_each(|(i, chunk)| {
-                    chunk[0] = r_slice[i];
-                    chunk[1] = g_slice[i];
-                    chunk[2] = b_slice[i];
-                    chunk[3] = a_slice.map_or(1.0, |a| a[i]);
-                });
-        }
-
-        rgb_pixels
-    }
-
-    #[cfg(feature = "unified_simd")]
-    /// SIMD-optimized RGB composition for maximum performance
-    fn compose_rgb_simd_optimized(
-        &self,
-        rgb_pixels: &mut Vec<f32>,
-        r_slice: &[f32],
-        g_slice: &[f32],
-        b_slice: &[f32],
-        a_slice: Option<&[f32]>,
-        pixel_count: usize,
-    ) {
-        use std::simd::{f32x4, Simd};
-
-        let buffer_size = pixel_count * 4;
-        unsafe {
-            rgb_pixels.set_len(buffer_size);
-        }
-
-        let chunks = pixel_count / 4;
-        let remainder = pixel_count % 4;
-
-        // Process in SIMD chunks of 4 pixels
-        for chunk_idx in 0..chunks {
-            let base_pixel = chunk_idx * 4;
-            let base_output = base_pixel * 4;
-
-            // Load 4 values from each channel
-            let r_chunk = f32x4::from_slice(&r_slice[base_pixel..base_pixel + 4]);
-            let g_chunk = f32x4::from_slice(&g_slice[base_pixel..base_pixel + 4]);
-            let b_chunk = f32x4::from_slice(&b_slice[base_pixel..base_pixel + 4]);
-            let a_chunk = if let Some(a) = a_slice {
-                f32x4::from_slice(&a[base_pixel..base_pixel + 4])
-            } else {
-                f32x4::splat(1.0)
-            };
-
-            // Interleave RGBA data efficiently
-            for i in 0..4 {
-                rgb_pixels[base_output + i * 4] = r_chunk[i];
-                rgb_pixels[base_output + i * 4 + 1] = g_chunk[i];
-                rgb_pixels[base_output + i * 4 + 2] = b_chunk[i];
-                rgb_pixels[base_output + i * 4 + 3] = a_chunk[i];
-            }
-        }
-
-        // Handle remaining pixels
-        for i in 0..remainder {
-            let pixel_idx = chunks * 4 + i;
-            let output_idx = pixel_idx * 4;
-
-            rgb_pixels[output_idx] = r_slice[pixel_idx];
-            rgb_pixels[output_idx + 1] = g_slice[pixel_idx];
-            rgb_pixels[output_idx + 2] = b_slice[pixel_idx];
-            rgb_pixels[output_idx + 3] = a_slice.map_or(1.0, |a| a[pixel_idx]);
-        }
     }
 
     /// Process grayscale pixels with tone mapping
