@@ -97,7 +97,13 @@ impl LazyExrLoader {
         let meta = ::exr::meta::MetaData::read_from_unbuffered(reader, /*pedantic=*/ false)
             .with_context(|| format!("Failed to read EXR metadata: {}", path.display()))?;
 
-        let mut layer_map: HashMap<String, LazyLayerMetadata> = HashMap::new();
+        struct LayerBuild {
+            width: u32,
+            height: u32,
+            channel_names: Vec<String>,
+        }
+
+        let mut layer_map: HashMap<String, LayerBuild> = HashMap::new();
         let mut layer_order: Vec<String> = Vec::new();
 
         for header in meta.headers.iter() {
@@ -118,26 +124,30 @@ impl LazyExrLoader {
 
                 let entry = layer_map.entry(layer_name.clone()).or_insert_with(|| {
                     layer_order.push(layer_name.clone());
-                    LazyLayerMetadata {
-                        name: layer_name.clone(),
+                    LayerBuild {
                         width,
                         height,
-                        channel_names: Arc::new(Vec::new()),
+                        channel_names: Vec::new(),
                     }
                 });
 
                 // Verify dimensions match (skip conflicting channels)
                 if entry.width == width && entry.height == height {
-                    Arc::make_mut(&mut entry.channel_names).push(short_channel_name);
+                    entry.channel_names.push(short_channel_name);
                 }
             }
         }
 
-        // Build ordered list of metadata
+        // Build ordered list of metadata, wrapping channel_names in Arc once per layer
         let mut metadata: Vec<LazyLayerMetadata> = Vec::with_capacity(layer_map.len());
         for name in layer_order {
-            if let Some(meta) = layer_map.remove(&name) {
-                metadata.push(meta);
+            if let Some(build) = layer_map.remove(&name) {
+                metadata.push(LazyLayerMetadata {
+                    name,
+                    width: build.width,
+                    height: build.height,
+                    channel_names: Arc::new(build.channel_names),
+                });
             }
         }
 
