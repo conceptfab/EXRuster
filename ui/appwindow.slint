@@ -157,6 +157,11 @@ export component AppWindow inherits Window {
      callback copy-current-path();
      callback copy-current-file-to-location();
 
+     // EXR browser state
+     // 1 = small (130), 2 = medium (260), 3 = large (390)
+     in-out property <int> thumbnail-size-level: 1;
+     callback thumbnail-size-changed(int);
+
      // Histogram callback
      callback histogram-requested();
 
@@ -872,6 +877,55 @@ export component AppWindow inherits Window {
                              width: parent.width - controls_inset*2;
                              clicked => { root.copy-current-file-to-location(); }
                          }
+                     }
+                 }
+
+                 Rectangle { height: 10px; }
+
+                 // EXR Browser label
+                 Rectangle {
+                     width: parent.width;
+                     height: 20px;
+                     Text {
+                         text: "EXR Browser";
+                         x: 5px;
+                         y: 3px;
+                         width: parent.width;
+                         height: parent.height;
+                         color: Kolory.tekst;
+                         font-size: 13px;
+                         font-family: "Geist";
+                         font-weight: 300;
+                         horizontal-alignment: left;
+                         vertical-alignment: center;
+                     }
+                 }
+
+                 // Size buttons row (3 square buttons)
+                 tb_size_row := HorizontalBox {
+                     width: parent.width;
+                     height: 28px;
+                     spacing: 6px;
+                     PrzyciskAkcji {
+                         text: "×1";
+                         height: 28px;
+                         width: 28px;
+                         highlighted: root.thumbnail-size-level == 1;
+                         clicked => { root.thumbnail-size-level = 1; root.thumbnail-size-changed(1); }
+                     }
+                     PrzyciskAkcji {
+                         text: "×2";
+                         height: 28px;
+                         width: 28px;
+                         highlighted: root.thumbnail-size-level == 2;
+                         clicked => { root.thumbnail-size-level = 2; root.thumbnail-size-changed(2); }
+                     }
+                     PrzyciskAkcji {
+                         text: "×3";
+                         height: 28px;
+                         width: 28px;
+                         highlighted: root.thumbnail-size-level == 3;
+                         clicked => { root.thumbnail-size-level = 3; root.thumbnail-size-changed(3); }
                      }
                  }
 
