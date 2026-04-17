@@ -105,6 +105,7 @@ fn main() -> Result<(), slint::PlatformError> {
                                 ui.as_weak(),
                                 dir,
                                 console_model.clone(),
+                                130,
                             );
                         }
                     }

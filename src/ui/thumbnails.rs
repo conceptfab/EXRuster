@@ -7,9 +7,6 @@ use slint::{ComponentHandle, Image, ModelRc, Rgba8Pixel, SharedPixelBuffer, VecM
 use std::path::Path;
 use std::time::Instant;
 
-// Thumbnail height constant - adjust here to change resolution
-const THUMBNAIL_HEIGHT: u32 = 130;
-
 /// Common function for loading thumbnails for the specified directory and updating UI.
 /// Used both at application startup (after file argument) and after folder selection from UI.
 /// Now works asynchronously in a separate thread to avoid blocking UI.
@@ -17,6 +14,7 @@ pub fn load_thumbnails_for_directory(
     ui_handle: Weak<AppWindow>,
     directory: &Path,
     console: ConsoleModel,
+    thumbnail_height: u32,
 ) {
     if let Some(ui) = ui_handle.upgrade() {
         push_console(
@@ -88,7 +86,7 @@ pub fn load_thumbnails_for_directory(
             // Generate thumbnails in separate thread (CPU path)
             let thumbnail_works = match crate::io::thumbnails::generate_thumbnails_cpu_raw(
                 files,
-                THUMBNAIL_HEIGHT,
+                thumbnail_height,
                 exposure,
                 gamma,
                 tonemap_mode,

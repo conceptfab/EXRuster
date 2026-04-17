@@ -279,6 +279,7 @@ pub fn setup_panel_callbacks(
                         ui.as_weak(),
                         &dir,
                         console_model.clone(),
+                        130,
                     );
                 } else {
                     push_console(
@@ -412,6 +413,7 @@ pub fn setup_panel_callbacks(
                                     ui.as_weak(),
                                     dir,
                                     console_model.clone(),
+                                    130,
                                 );
                             }
                         }
