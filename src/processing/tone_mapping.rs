@@ -254,19 +254,40 @@ pub fn apply_tonemap_simd(
     }
 }
 
-/// SIMD: ekspozycja → tone-map → gamma/sRGB dla 4 pikseli naraz
+/// Frame-level precomputed parameters for tone mapping + gamma.
+/// Callers should build this once per frame and pass it into the
+/// per-pixel / per-chunk functions to avoid repeated powf / branching.
+#[derive(Clone, Copy)]
+pub struct ToneMapParams {
+    pub exposure_multiplier: f32,
+    pub gamma_inv: f32,
+    pub use_srgb: bool,
+    pub mode: ToneMapMode,
+}
+
+impl ToneMapParams {
+    #[inline]
+    pub fn new(exposure: f32, gamma: f32, tonemap_mode: i32) -> Self {
+        Self {
+            exposure_multiplier: 2.0_f32.powf(exposure),
+            gamma_inv: 1.0 / gamma.max(1e-4),
+            use_srgb: (gamma - 2.2).abs() < 0.2 || (gamma - 2.4).abs() < 0.2,
+            mode: ToneMapMode::from(tonemap_mode),
+        }
+    }
+}
+
 /// SIMD: ekspozycja → tone-map → gamma/sRGB dla 4 pikseli naraz
 #[inline]
 pub fn tone_map_and_gamma_simd(
     r: f32x4,
     g: f32x4,
     b: f32x4,
-    exposure: f32,
-    gamma: f32,
-    tonemap_mode: i32,
+    exposure_multiplier: f32x4, // precomputed Simd::splat(2^exposure)
+    gamma_inv: f32,             // precomputed 1.0 / gamma.max(1e-4)
+    use_srgb: bool,             // precomputed sRGB detection
+    mode: ToneMapMode,          // precomputed ToneMapMode::from(i32)
 ) -> (f32x4, f32x4, f32x4) {
-    let exposure_multiplier = Simd::splat(2.0_f32.powf(exposure));
-
     // Sprawdzenie NaN/Inf i clamp do sensownych wartości
     let zero = Simd::splat(0.0);
     let safe_r = r.is_finite().select(r, zero).simd_max(zero);
@@ -279,11 +300,9 @@ pub fn tone_map_and_gamma_simd(
     let exposed_b = safe_b * exposure_multiplier;
 
     // Tone mapping używając skonsolidowanej funkcji
-    let mode = ToneMapMode::from(tonemap_mode);
     let (tm_r, tm_g, tm_b) = apply_tonemap_simd(exposed_r, exposed_g, exposed_b, mode);
 
     // Gamma: preferuj sRGB OETF
-    let use_srgb = (gamma - 2.2).abs() < 0.2 || (gamma - 2.4).abs() < 0.2;
     if use_srgb {
         (
             srgb_oetf_simd(tm_r),
@@ -291,7 +310,6 @@ pub fn tone_map_and_gamma_simd(
             srgb_oetf_simd(tm_b),
         )
     } else {
-        let gamma_inv = 1.0 / gamma.max(1e-4);
         (
             apply_gamma_lut_simd(tm_r, gamma_inv),
             apply_gamma_lut_simd(tm_g, gamma_inv),
@@ -307,12 +325,11 @@ pub fn tone_map_and_gamma(
     r: f32,
     g: f32,
     b: f32,
-    exposure: f32,
-    gamma: f32,
+    exposure_multiplier: f32, // precomputed 2^exposure
+    gamma_inv: f32,           // precomputed 1.0 / gamma.max(1e-4)
+    use_srgb: bool,           // precomputed sRGB detection
     tonemap_mode: ToneMapMode,
 ) -> (f32, f32, f32) {
-    let exposure_multiplier = 2.0_f32.powf(exposure);
-
     // Sprawdzenie NaN/Inf i clamp do sensownych wartości
     let safe_r = if r.is_finite() { r.max(0.0) } else { 0.0 };
     let safe_g = if g.is_finite() { g.max(0.0) } else { 0.0 };
@@ -327,11 +344,9 @@ pub fn tone_map_and_gamma(
     let (tm_r, tm_g, tm_b) = apply_tonemap_scalar(exposed_r, exposed_g, exposed_b, tonemap_mode);
 
     // Korekcja wyjściowa: preferuj prawdziwą krzywą sRGB (OETF) dla gamma ~2.2/2.4
-    let use_srgb = (gamma - 2.2).abs() < 0.2 || (gamma - 2.4).abs() < 0.2;
     if use_srgb {
         (srgb_oetf(tm_r), srgb_oetf(tm_g), srgb_oetf(tm_b))
     } else {
-        let gamma_inv = 1.0 / gamma.max(1e-4);
         (
             apply_gamma_lut(tm_r, gamma_inv),
             apply_gamma_lut(tm_g, gamma_inv),

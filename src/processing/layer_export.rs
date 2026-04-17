@@ -361,15 +361,22 @@ impl LayerExporter {
     fn process_grayscale_pixels(&self, pixels: &[f32], pixel_count: usize) -> Result<Vec<u16>> {
         let mut processed = Vec::with_capacity(pixel_count * 3);
 
+        let exposure_multiplier = 2.0_f32.powf(self.export_params.exposure);
+        let gamma_inv = 1.0 / self.export_params.gamma.max(1e-4);
+        let use_srgb = (self.export_params.gamma - 2.2).abs() < 0.2
+            || (self.export_params.gamma - 2.4).abs() < 0.2;
+        let mode = self.export_params.tonemap_mode;
+
         for chunk in pixels.chunks_exact(4) {
             let gray_value = chunk[0];
             let (processed_gray, _, _) = tone_map_and_gamma(
                 gray_value,
                 gray_value,
                 gray_value,
-                self.export_params.exposure,
-                self.export_params.gamma,
-                self.export_params.tonemap_mode,
+                exposure_multiplier,
+                gamma_inv,
+                use_srgb,
+                mode,
             );
 
             let u16_value = (processed_gray.clamp(0.0, 1.0) * 65535.0).round() as u16;
@@ -397,14 +404,21 @@ impl LayerExporter {
 
         #[cfg(not(feature = "unified_simd"))]
         {
+            let exposure_multiplier = 2.0_f32.powf(self.export_params.exposure);
+            let gamma_inv = 1.0 / self.export_params.gamma.max(1e-4);
+            let use_srgb = (self.export_params.gamma - 2.2).abs() < 0.2
+                || (self.export_params.gamma - 2.4).abs() < 0.2;
+            let mode = self.export_params.tonemap_mode;
+
             for chunk in pixels.chunks_exact(4) {
                 let (r, g, b) = tone_map_and_gamma(
                     chunk[0],
                     chunk[1],
                     chunk[2],
-                    self.export_params.exposure,
-                    self.export_params.gamma,
-                    self.export_params.tonemap_mode,
+                    exposure_multiplier,
+                    gamma_inv,
+                    use_srgb,
+                    mode,
                 );
 
                 let r_u16 = (r.clamp(0.0, 1.0) * 65535.0).round() as u16;
@@ -429,7 +443,10 @@ impl LayerExporter {
         use std::simd::{f32x4, u16x4, Simd, SimdFloat, SimdUint};
 
         let exposure_multiplier = 2.0f32.powf(self.export_params.exposure);
-        let gamma_inv = 1.0 / self.export_params.gamma;
+        let gamma_inv = 1.0 / self.export_params.gamma.max(1e-4);
+        let use_srgb = (self.export_params.gamma - 2.2).abs() < 0.2
+            || (self.export_params.gamma - 2.4).abs() < 0.2;
+        let mode = self.export_params.tonemap_mode;
 
         // Process pixels in SIMD chunks of 4
         pixels
@@ -455,14 +472,15 @@ impl LayerExporter {
                     let b = exposed[2];
                     let a = exposed[3];
 
-                    // Apply tone mapping (scalar for now, could be vectorized further)
+                    // Apply tone mapping (exposure already applied)
                     let (tone_r, tone_g, tone_b) = tone_map_and_gamma(
                         r,
                         g,
                         b,
-                        0.0, // exposure already applied
-                        self.export_params.gamma,
-                        self.export_params.tonemap_mode,
+                        1.0,
+                        gamma_inv,
+                        use_srgb,
+                        mode,
                     );
 
                     // Convert to u16

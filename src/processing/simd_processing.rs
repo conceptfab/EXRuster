@@ -15,20 +15,27 @@ use crate::processing::tone_mapping::ToneMapMode;
 mod unified_processing {
     use super::*;
 
-    /// Parameters for pixel processing operations
+    /// Parameters for pixel processing operations (precomputed for hot-loop use)
     #[derive(Clone, Copy)]
     pub struct ProcessParams {
-        pub exposure: f32,
-        pub gamma: f32,
+        pub exposure_multiplier: f32,
+        pub gamma_inv: f32,
+        pub use_srgb: bool,
         pub tonemap_mode: ToneMapMode,
     }
 
     impl ProcessParams {
-        pub fn new(exposure: f32, gamma: f32, tonemap_mode: i32) -> Self {
+        pub fn from_precomputed(
+            exposure_multiplier: f32,
+            gamma_inv: f32,
+            use_srgb: bool,
+            mode: ToneMapMode,
+        ) -> Self {
             Self {
-                exposure,
-                gamma,
-                tonemap_mode: ToneMapMode::from(tonemap_mode),
+                exposure_multiplier,
+                gamma_inv,
+                use_srgb,
+                tonemap_mode: mode,
             }
         }
     }
@@ -114,8 +121,6 @@ mod unified_processing {
         a: f32,
         params: &ProcessParams,
     ) -> (f32, f32, f32, f32) {
-        let exposure_multiplier = 2.0_f32.powf(params.exposure);
-
         // Clean up inputs (handle NaN/Inf)
         let clean_r = processor.select_finite(r, 0.0);
         let clean_g = processor.select_finite(g, 0.0);
@@ -123,22 +128,19 @@ mod unified_processing {
         let clean_a = processor.select_finite(a, 1.0);
 
         // Apply exposure
-        let exposed_r = processor.apply_exposure(clean_r, exposure_multiplier);
-        let exposed_g = processor.apply_exposure(clean_g, exposure_multiplier);
-        let exposed_b = processor.apply_exposure(clean_b, exposure_multiplier);
+        let exposed_r = processor.apply_exposure(clean_r, params.exposure_multiplier);
+        let exposed_g = processor.apply_exposure(clean_g, params.exposure_multiplier);
+        let exposed_b = processor.apply_exposure(clean_b, params.exposure_multiplier);
 
         // Apply tone mapping
         let tone_mapped_r = processor.apply_tonemap(exposed_r, params.tonemap_mode);
         let tone_mapped_g = processor.apply_tonemap(exposed_g, params.tonemap_mode);
         let tone_mapped_b = processor.apply_tonemap(exposed_b, params.tonemap_mode);
 
-        // Apply gamma correction
-        let use_srgb = (params.gamma - 2.2).abs() < 0.2 || (params.gamma - 2.4).abs() < 0.2;
-        let gamma_inv = 1.0 / params.gamma.max(1e-4);
-
-        let final_r = processor.apply_gamma(tone_mapped_r, gamma_inv, use_srgb);
-        let final_g = processor.apply_gamma(tone_mapped_g, gamma_inv, use_srgb);
-        let final_b = processor.apply_gamma(tone_mapped_b, gamma_inv, use_srgb);
+        // Apply gamma correction (precomputed)
+        let final_r = processor.apply_gamma(tone_mapped_r, params.gamma_inv, params.use_srgb);
+        let final_g = processor.apply_gamma(tone_mapped_g, params.gamma_inv, params.use_srgb);
+        let final_b = processor.apply_gamma(tone_mapped_b, params.gamma_inv, params.use_srgb);
         let final_a = processor.clamp_unit(clean_a);
 
         (final_r, final_g, final_b, final_a)
@@ -156,9 +158,10 @@ pub const SIMD_PIXEL_COUNT: usize = 4; // Process 4 pixels per SIMD operation
 pub fn process_simd_chunk_rgba(
     input: &[f32],
     output: &mut [Rgba8Pixel],
-    exposure: f32,
-    gamma: f32,
-    tonemap_mode: i32,
+    exposure_mult_splat: f32x4,
+    gamma_inv: f32,
+    use_srgb: bool,
+    mode: crate::processing::tone_mapping::ToneMapMode,
     color_matrix: Option<Mat3>,
 ) {
     // Load RGBA channels into SIMD registers
@@ -174,9 +177,10 @@ pub fn process_simd_chunk_rgba(
         r,
         g,
         b,
-        exposure,
-        gamma,
-        tonemap_mode,
+        exposure_mult_splat,
+        gamma_inv,
+        use_srgb,
+        mode,
     );
     let a8 = a.simd_clamp(Simd::splat(0.0), Simd::splat(1.0));
 
@@ -189,9 +193,10 @@ pub fn process_simd_chunk_rgba(
 pub fn process_simd_chunk_grayscale(
     input: &[f32],
     output: &mut [Rgba8Pixel],
-    exposure: f32,
-    gamma: f32,
-    tonemap_mode: i32,
+    exposure_mult_splat: f32x4,
+    gamma_inv: f32,
+    use_srgb: bool,
+    mode: crate::processing::tone_mapping::ToneMapMode,
     color_matrix: Option<Mat3>,
 ) {
     let (mut r, mut g, mut b, a) = load_rgba_simd(input);
@@ -204,9 +209,10 @@ pub fn process_simd_chunk_grayscale(
         r,
         g,
         b,
-        exposure,
-        gamma,
-        tonemap_mode,
+        exposure_mult_splat,
+        gamma_inv,
+        use_srgb,
+        mode,
     );
 
     // Convert to grayscale using Rec.709 luminance weights
@@ -287,12 +293,14 @@ fn store_grayscale_simd(gray: f32x4, a: f32x4, output: &mut [Rgba8Pixel]) {
 }
 
 /// Scalar processing for remainder pixels that don't fit in SIMD chunks
+#[allow(clippy::too_many_arguments)]
 pub fn process_scalar_pixels(
     input: &[f32],
     output: &mut [Rgba8Pixel],
-    exposure: f32,
-    gamma: f32,
-    tonemap_mode: i32,
+    exposure_multiplier: f32,
+    gamma_inv: f32,
+    use_srgb: bool,
+    mode: crate::processing::tone_mapping::ToneMapMode,
     color_matrix: Option<Mat3>,
     grayscale: bool,
 ) {
@@ -301,7 +309,7 @@ pub fn process_scalar_pixels(
     {
         use unified_processing::{process_pixel_unified, ProcessParams, ScalarProcessor};
         let processor = ScalarProcessor;
-        let params = ProcessParams::new(exposure, gamma, tonemap_mode);
+        let params = ProcessParams::from_precomputed(exposure_multiplier, gamma_inv, use_srgb, mode);
 
         let pixel_count = input.len() / 4;
         for i in 0..pixel_count {
@@ -362,7 +370,7 @@ pub fn process_scalar_pixels(
         }
 
         if grayscale {
-            let px = process_pixel(r, g, b, a0, exposure, gamma, tonemap_mode);
+            let px = process_pixel(r, g, b, a0, exposure_multiplier, gamma_inv, use_srgb, mode);
             let rr = (px.r as f32) / 255.0;
             let gg = (px.g as f32) / 255.0;
             let bb = (px.b as f32) / 255.0;
@@ -375,7 +383,7 @@ pub fn process_scalar_pixels(
                 a: px.a,
             };
         } else {
-            output[i] = process_pixel(r, g, b, a0, exposure, gamma, tonemap_mode);
+            output[i] = process_pixel(r, g, b, a0, exposure_multiplier, gamma_inv, use_srgb, mode);
         }
     }
 }
@@ -397,6 +405,13 @@ pub fn process_rgba_chunk_optimized(
     let simd_pixels = (total_pixels / SIMD_PIXEL_COUNT) * SIMD_PIXEL_COUNT;
     let simd_elements = simd_pixels * 4;
 
+    // Frame-constant precomputes hoisted out of the chunk loop
+    let params = crate::processing::tone_mapping::ToneMapParams::new(exposure, gamma, tonemap_mode);
+    let exposure_mult_splat = Simd::splat(params.exposure_multiplier);
+    let gamma_inv = params.gamma_inv;
+    let use_srgb = params.use_srgb;
+    let mode = params.mode;
+
     // Process SIMD chunks - parallel or sequential
     if simd_pixels > 0 {
         if parallel {
@@ -410,18 +425,20 @@ pub fn process_rgba_chunk_optimized(
                         process_simd_chunk_grayscale(
                             in_chunk,
                             out_chunk,
-                            exposure,
-                            gamma,
-                            tonemap_mode,
+                            exposure_mult_splat,
+                            gamma_inv,
+                            use_srgb,
+                            mode,
                             color_matrix,
                         );
                     } else {
                         process_simd_chunk_rgba(
                             in_chunk,
                             out_chunk,
-                            exposure,
-                            gamma,
-                            tonemap_mode,
+                            exposure_mult_splat,
+                            gamma_inv,
+                            use_srgb,
+                            mode,
                             color_matrix,
                         );
                     }
@@ -436,18 +453,20 @@ pub fn process_rgba_chunk_optimized(
                         process_simd_chunk_grayscale(
                             in_chunk,
                             out_chunk,
-                            exposure,
-                            gamma,
-                            tonemap_mode,
+                            exposure_mult_splat,
+                            gamma_inv,
+                            use_srgb,
+                            mode,
                             color_matrix,
                         );
                     } else {
                         process_simd_chunk_rgba(
                             in_chunk,
                             out_chunk,
-                            exposure,
-                            gamma,
-                            tonemap_mode,
+                            exposure_mult_splat,
+                            gamma_inv,
+                            use_srgb,
+                            mode,
                             color_matrix,
                         );
                     }
@@ -460,9 +479,10 @@ pub fn process_rgba_chunk_optimized(
         process_scalar_pixels(
             &input[simd_elements..],
             &mut output[simd_pixels..],
-            exposure,
-            gamma,
-            tonemap_mode,
+            params.exposure_multiplier,
+            gamma_inv,
+            use_srgb,
+            mode,
             color_matrix,
             grayscale,
         );
@@ -490,7 +510,16 @@ mod tests {
             a: 0,
         }; 4];
 
-        process_simd_chunk_rgba(&input, &mut output, 0.0, 2.2, 0, None);
+        let params = crate::processing::tone_mapping::ToneMapParams::new(0.0, 2.2, 0);
+        process_simd_chunk_rgba(
+            &input,
+            &mut output,
+            Simd::splat(params.exposure_multiplier),
+            params.gamma_inv,
+            params.use_srgb,
+            params.mode,
+            None,
+        );
 
         // Verify all pixels were processed (non-zero values)
         for pixel in &output {
