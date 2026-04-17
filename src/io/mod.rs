@@ -2,6 +2,7 @@ pub mod exr_metadata;
 pub mod fast_exr_metadata;
 pub mod progress_reader;
 pub mod file_operations;
+pub mod folder_tree;
 pub mod full_exr_cache;
 pub mod image_cache;
 pub mod lazy_exr_loader;
