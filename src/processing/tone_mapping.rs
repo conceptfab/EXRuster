@@ -45,39 +45,6 @@ pub enum ToneMapMode {
     Local = 5,
 }
 
-/// Type-safe wrapper for ToneMapMode to prevent parameter confusion and improve API safety
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ToneMapModeId(ToneMapMode);
-
-#[allow(dead_code)]
-impl ToneMapModeId {
-    pub const ACES: Self = Self(ToneMapMode::ACES);
-    pub const REINHARD: Self = Self(ToneMapMode::Reinhard);
-    pub const LINEAR: Self = Self(ToneMapMode::Linear);
-    pub const FILMIC: Self = Self(ToneMapMode::Filmic);
-    pub const HABLE: Self = Self(ToneMapMode::Hable);
-    pub const LOCAL: Self = Self(ToneMapMode::Local);
-
-    /// Extract the inner ToneMapMode enum value
-    #[inline]
-    pub fn inner(self) -> ToneMapMode {
-        self.0
-    }
-
-    /// Convert to i32 for backward compatibility
-    #[inline]
-    pub fn as_i32(self) -> i32 {
-        self.0 as i32
-    }
-}
-
-impl From<ToneMapMode> for ToneMapModeId {
-    #[inline]
-    fn from(mode: ToneMapMode) -> Self {
-        Self(mode)
-    }
-}
-
 impl From<i32> for ToneMapMode {
     fn from(value: i32) -> Self {
         match value {
@@ -89,13 +56,6 @@ impl From<i32> for ToneMapMode {
             5 => Self::Local,
             _ => Self::Linear, // Default changed from ACES to Linear
         }
-    }
-}
-
-impl From<i32> for ToneMapModeId {
-    #[inline]
-    fn from(value: i32) -> Self {
-        Self(ToneMapMode::from(value))
     }
 }
 
@@ -411,27 +371,6 @@ mod tests {
         let (r, g, b) = apply_tonemap_scalar(2.0, 1.5, 0.5, ToneMapMode::ACES);
         assert!(r <= 1.0 && g <= 1.0 && b <= 1.0);
         assert!(r >= 0.0 && g >= 0.0 && b >= 0.0);
-    }
-
-    #[test]
-    fn test_tonemap_mode_id_conversion() {
-        // Test ToneMapModeId constants
-        assert_eq!(ToneMapModeId::ACES.inner(), ToneMapMode::ACES);
-        assert_eq!(ToneMapModeId::REINHARD.inner(), ToneMapMode::Reinhard);
-        assert_eq!(ToneMapModeId::LINEAR.inner(), ToneMapMode::Linear);
-        assert_eq!(ToneMapModeId::FILMIC.inner(), ToneMapMode::Filmic);
-        assert_eq!(ToneMapModeId::HABLE.inner(), ToneMapMode::Hable);
-        assert_eq!(ToneMapModeId::LOCAL.inner(), ToneMapMode::Local);
-
-        // Test i32 conversion
-        assert_eq!(ToneMapModeId::from(0).inner(), ToneMapMode::ACES);
-        assert_eq!(ToneMapModeId::from(1).inner(), ToneMapMode::Reinhard);
-        assert_eq!(ToneMapModeId::from(999).inner(), ToneMapMode::Linear); // Default
-
-        // Test as_i32 conversion
-        assert_eq!(ToneMapModeId::ACES.as_i32(), 0);
-        assert_eq!(ToneMapModeId::REINHARD.as_i32(), 1);
-        assert_eq!(ToneMapModeId::LINEAR.as_i32(), 2);
     }
 
     #[test]

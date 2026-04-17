@@ -6,7 +6,7 @@ use slint::Rgba8Pixel;
 use std::simd::prelude::SimdFloat;
 
 #[cfg(feature = "unified_simd")]
-use crate::processing::tone_mapping::{ToneMapMode, ToneMapModeId};
+use crate::processing::tone_mapping::ToneMapMode;
 
 /// Optimized SIMD processing functions for image processing
 /// Separates SIMD and scalar code paths for better performance
@@ -20,7 +20,7 @@ mod unified_processing {
     pub struct ProcessParams {
         pub exposure: f32,
         pub gamma: f32,
-        pub tonemap_mode: ToneMapModeId,
+        pub tonemap_mode: ToneMapMode,
     }
 
     impl ProcessParams {
@@ -28,7 +28,7 @@ mod unified_processing {
             Self {
                 exposure,
                 gamma,
-                tonemap_mode: ToneMapModeId::from(tonemap_mode),
+                tonemap_mode: ToneMapMode::from(tonemap_mode),
             }
         }
     }

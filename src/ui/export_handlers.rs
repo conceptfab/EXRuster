@@ -1,5 +1,5 @@
 use crate::processing::layer_export::{ExportFormat, ExportParams, LayerExporter};
-use crate::processing::tone_mapping::ToneMapModeId;
+use crate::processing::tone_mapping::ToneMapMode;
 use crate::ui::progress::patterns;
 use crate::ui::state::SharedAppState;
 use crate::ui::ui_handlers::{push_console, ConsoleModel};
@@ -17,7 +17,7 @@ pub struct UiExportConfig {
     pub use_current_params: bool,
     pub exposure: f32,
     pub gamma: f32,
-    pub tonemap_mode: ToneMapModeId,
+    pub tonemap_mode: ToneMapMode,
 }
 
 /// Export type enumeration
@@ -110,14 +110,12 @@ fn create_export_params(ui: &AppWindow, config: &UiExportConfig) -> Result<Expor
         (
             ui.get_exposure_value(),
             ui.get_gamma_value(),
-            ToneMapModeId::from(ui.get_tonemap_mode()),
+            ToneMapMode::from(ui.get_tonemap_mode()),
         )
     } else {
         // Use explicit parameters
         (config.exposure, config.gamma, config.tonemap_mode)
     };
-
-    let tonemap_mode = tonemap_mode.inner();
 
     // IMPORTANT: All exported layers should use gamma 2.2 as default for consistency
     // This ensures cryptomatte and other layers match the expected appearance
@@ -191,9 +189,9 @@ pub fn create_export_config_from_ui(
                 ui.get_gamma_value()
             },
             tonemap_mode: if !apply_corrections {
-                ToneMapModeId::from(2)
+                ToneMapMode::from(2)
             } else {
-                ToneMapModeId::from(ui.get_tonemap_mode())
+                ToneMapMode::from(ui.get_tonemap_mode())
             },
         })
     } else {
