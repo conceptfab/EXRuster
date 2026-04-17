@@ -101,6 +101,9 @@ fn main() -> Result<(), slint::PlatformError> {
                             .count();
 
                         if exr_count > 1 {
+                            if let Ok(mut state) = app_state.write() {
+                                state.current_browsed_folder = Some(dir.to_path_buf());
+                            }
                             crate::ui::load_thumbnails_for_directory(
                                 ui.as_weak(),
                                 dir,
