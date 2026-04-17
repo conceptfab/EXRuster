@@ -1,7 +1,7 @@
 use crate::io::full_exr_cache::FullExrCacheData;
 use crate::io::image_cache::ImageCache;
 use crate::processing::channel_classification::ChannelGroupConfig;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
@@ -18,6 +18,8 @@ pub struct AppState {
     pub ui_state: UiState,
     pub channel_config: Option<ChannelGroupConfig>,
     pub current_browsed_folder: Option<PathBuf>,
+    pub folder_tree_root: Option<PathBuf>,
+    pub folder_tree_expanded: HashSet<PathBuf>,
 }
 
 

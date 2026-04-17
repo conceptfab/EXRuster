@@ -1,7 +1,7 @@
 use crate::ui::state::SharedAppState;
 use crate::ui::ui_handlers::{push_console, ConsoleModel};
 use crate::{log_error, log_warn, AppWindow};
-use slint::{ComponentHandle, Weak};
+use slint::{ComponentHandle, ModelRc, SharedString, VecModel, Weak};
 use std::path::PathBuf;
 
 /// Copy the absolute path of the currently open EXR to the system clipboard.
@@ -145,4 +145,39 @@ pub fn handle_thumbnail_size_changed(
         format!("[browser] thumbnail size -> {}px ({})", height, folder.display()),
     );
     crate::ui::load_thumbnails_for_directory(ui.as_weak(), &folder, console, height);
+}
+
+/// Rebuild the Slint `folder-tree` model from the current `AppState`.
+/// Safe to call from the main thread at any time.
+pub fn refresh_folder_tree(ui: &AppWindow, app_state: &SharedAppState) {
+    let (root, expanded, current) = {
+        let Ok(s) = app_state.read() else {
+            ui.set_folder_tree(ModelRc::new(VecModel::from(Vec::<crate::FolderEntry>::new())));
+            return;
+        };
+        (
+            s.folder_tree_root.clone(),
+            s.folder_tree_expanded.clone(),
+            s.current_browsed_folder.clone(),
+        )
+    };
+
+    let Some(root) = root else {
+        ui.set_folder_tree(ModelRc::new(VecModel::from(Vec::<crate::FolderEntry>::new())));
+        return;
+    };
+
+    let nodes = crate::io::folder_tree::build_flat_tree(&root, &expanded);
+    let entries: Vec<crate::FolderEntry> = nodes
+        .into_iter()
+        .map(|n| crate::FolderEntry {
+            display_name: SharedString::from(n.display_name),
+            path: SharedString::from(n.path.display().to_string()),
+            depth: n.depth,
+            has_children: n.has_children,
+            expanded: expanded.contains(&n.path),
+            is_current: current.as_deref() == Some(n.path.as_path()),
+        })
+        .collect();
+    ui.set_folder_tree(ModelRc::new(VecModel::from(entries)));
 }
