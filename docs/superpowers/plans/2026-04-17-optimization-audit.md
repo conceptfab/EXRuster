@@ -10,6 +10,36 @@
 
 ---
 
+## Session Progress (2026-04-17)
+
+**Work stopped at the end of Task 3.4 per user request.** All completed tasks
+are committed on branch `_NEXT`. Resume by picking up Task 3.5.
+
+**Phase status:**
+
+- Phase 1 — Clippy Auto-Fixes: Tasks 1.1, 1.2, 1.3 done.
+- Phase 2 — Dead Code Removal: Tasks 2.1, 2.2, 2.3, 2.4, 2.5 done.
+- Phase 3 — Hot-Path Perf: Tasks 3.1, 3.2, 3.3, 3.4 done. **Task 3.5 is the resume point.**
+- Phase 4 — De-duplication: Tasks 4.1, 4.2, 4.3 pending.
+- Phase 5 — Code Quality: Tasks 5.1, 5.2 pending.
+
+**Key commits from this session (newest first):**
+
+- `9518fa1` perf(lazy-loader): replace fake LRU in lazy_exr_loader with lru::LruCache
+- `e488530` perf(histogram): reuse per-thread bin buffers via fold/reduce
+- `183c1ec` perf(tone-mapping): hoist frame-invariant params out of hot loops
+
+**Test status at stop point:** 23 passed, 1 pre-existing failure
+(`processing::tone_mapping::tests::test_simd_gamma_lut_optimization` — known
+SIMD gamma LUT correctness bug, stable across all commits in this session).
+
+**Resume point:** Task 3.5 ("Preallocate `Arc<Vec<String>>` in lazy loader",
+line ~596). The `lazy_exr_loader.rs` file was just modified in Task 3.4, so
+re-read it before editing to confirm the current shape of the affected
+`Arc::make_mut` call site.
+
+---
+
 ## Findings Summary (from audit — 2026-04-17)
 
 - `cargo clippy` reports 41 warnings, 23 auto-fixable.
