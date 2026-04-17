@@ -12,10 +12,16 @@ pub fn handle_copy_current_path(
 ) {
     let Some(ui) = ui_handle.upgrade() else { return; };
 
-    let path_opt = app_state
-        .read()
-        .ok()
-        .and_then(|s| s.current_file_path.clone());
+    let state = match app_state.read() {
+        Ok(s) => s,
+        Err(e) => {
+            log_error!("App state lock poisoned: {}", e);
+            ui.set_status_text("Internal error: app state inaccessible".into());
+            return;
+        }
+    };
+    let path_opt = state.current_file_path.clone();
+    drop(state); // release lock before doing I/O
 
     let Some(path) = path_opt else {
         ui.set_status_text("No file open — nothing to copy".into());
@@ -44,13 +50,20 @@ pub fn handle_copy_current_file_to(
 ) {
     let Some(ui) = ui_handle.upgrade() else { return; };
 
-    let src_opt: Option<PathBuf> = app_state
-        .read()
-        .ok()
-        .and_then(|s| s.current_file_path.clone());
+    let state = match app_state.read() {
+        Ok(s) => s,
+        Err(e) => {
+            log_error!("App state lock poisoned: {}", e);
+            ui.set_status_text("Internal error: app state inaccessible".into());
+            return;
+        }
+    };
+    let src_opt: Option<PathBuf> = state.current_file_path.clone();
+    drop(state); // release lock before doing I/O
 
     let Some(src) = src_opt else {
         ui.set_status_text("No file open — nothing to copy".into());
+        push_console(&ui, &console, "[copy-file] no file open".to_string());
         return;
     };
 
@@ -70,6 +83,16 @@ pub fn handle_copy_current_file_to(
         }
     };
     let dest = dest_dir.join(&file_name);
+
+    if dest.exists() {
+        ui.set_status_text(format!("Destination already exists: {}", dest.display()).into());
+        push_console(
+            &ui,
+            &console,
+            format!("[copy-file] refused: destination exists {}", dest.display()),
+        );
+        return;
+    }
 
     match std::fs::copy(&src, &dest) {
         Ok(bytes) => {
