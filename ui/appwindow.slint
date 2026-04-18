@@ -1084,34 +1084,34 @@ export component AppWindow inherits Window {
             x: 6px;
             y: 6px;
             width: parent.width - 12px;
-            height: parent.height - 12px - thumbs_panel.thumbs_bar_height - 4px;
+            height: parent.height - 12px;
             clip: true;
 
             scroll_view := ScrollView {
                 width: parent.width;
                 height: parent.height;
-                // Włącz poziomy scroll, wyłącz pionowy
-                viewport-width: thumbs_content.preferred-width;
-                viewport-height: parent.height;
+                // Vertical scroll for grid layout
+                viewport-width: parent.width;
+                viewport-height: grid_container.preferred-height;
 
+                grid_container := Rectangle {
+                    width: parent.width;
+                    // cell size driven by thumbnail-size-level (1=small, 2=medium, 3=large)
+                    property <length> cell_size:
+                        root.thumbnail-size-level == 3 ? 240px
+                        : (root.thumbnail-size-level == 2 ? 180px : 130px);
+                    property <length> cell_pad: 36px; // room for file name + size/layers text below image
+                    property <length> cell_spacing: 12px;
+                    property <int>    cols: Math.max(1, Math.floor((parent.width + cell_spacing) / (cell_size + cell_spacing)));
+                    property <length> cell_h: cell_size + cell_pad;
 
-                thumbs_content := HorizontalLayout {
-                    width: self.preferred-width; // Pozwól na rozszerzanie
-                    height: parent.height;
-                    spacing: 24px;
+                    preferred-height: Math.ceil((root.thumbnails.length * 1.0) / cols) * (cell_h + cell_spacing);
 
                     for t[index] in root.thumbnails: Rectangle {
-                        // licznik opóźnienia dla konkretnego kafelka
-                        property <int> hover_ticks: 0;
-                        // licznik do long-press (otwarcie menu kontekstowego)
-                        property <int> press_ticks: 0;
-                        // Uzbrajanie dwukliku (true po pierwszym kliku do czasu wygaśnięcia timera)
-                        property <bool> dbl_arm: false;
-                        // Jednorazowy timer okna dwukliku
-                        dbl_timer := Timer { interval: 350ms; running: false; triggered => { parent.dbl_arm = false; } }
-                        width: max(0px, viewport.height - 12px - desc.height - 1.6px)
-                                  * ((t.width * 1.0) / (t.height * 1.0));
-                        height: viewport.height - 12px;
+                        x: Math.mod(index, grid_container.cols) * (grid_container.cell_size + grid_container.cell_spacing) + grid_container.cell_spacing / 2;
+                        y: Math.floor(index / grid_container.cols) * (grid_container.cell_h + grid_container.cell_spacing) + grid_container.cell_spacing / 2;
+                        width: grid_container.cell_size;
+                        height: grid_container.cell_h;
                         background: Kolory.przezroczysty;
 
                         VerticalBox {
@@ -1122,7 +1122,7 @@ export component AppWindow inherits Window {
 
                             image_frame := Rectangle {
                                 width: parent.width;
-                                height: max(0px, viewport.height - 12px - desc.height - 1.6px);
+                                height: grid_container.cell_size;
                                 background: Kolory.przezroczysty;
                                 border-width: (root.opened-thumbnail-path == t.path) ? 2px : (click_area.has-hover ? 2px : 0px);
                                 border-color: (root.opened-thumbnail-path == t.path) ? #ffffff : root.hover;
@@ -1136,8 +1136,7 @@ export component AppWindow inherits Window {
                                     horizontal-alignment: center;
                                     vertical-alignment: center;
                                 }
-                                
-                                // TouchArea z dwoma funkcjami: klik + scroll wheel
+
                                 click_area := TouchArea {
                                     width: parent.width;
                                     height: parent.height;
@@ -1145,15 +1144,6 @@ export component AppWindow inherits Window {
                                     clicked => {
                                         root.opened-thumbnail-path = t.path;
                                         root.open-thumbnail(t.path);
-                                    }
-                                    scroll-event(event) => {
-                                        // Poprawiona obsługa przewijania kółkiem myszki z naturalnym mapowaniem
-                                        // Adaptacyjna prędkość: 15% szerokości viewport, minimum 30px
-                                        scroll_view.viewport-x = max(0px, min(
-                                            scroll_view.viewport-x + event.delta-y / 1px * max(30px, scroll_view.viewport-width * 0.15),
-                                            max(0px, thumbs_content.width - scroll_view.viewport-width)
-                                        ));
-                                        return EventResult.accept;
                                     }
                                 }
                             }
@@ -1173,9 +1163,6 @@ export component AppWindow inherits Window {
                                 }
                             }
                         }
-                        
-                        // USUNIĘTO TouchArea - blokuje scroll wheel!
-                        // USUNIĘTO Timer - był powiązany z TouchArea
                     }
                 }
             }
@@ -1251,54 +1238,7 @@ export component AppWindow inherits Window {
             triggered => { thumbs_panel.ctx_visible = false; self.running = false; }
         }
 
-        thumbs_bar := Rectangle {
-            x: 6px;
-            y: 6px + viewport.height + 2px;
-            width: parent.width - 12px;
-            height: thumbs_panel.thumbs_bar_height;
-            visible: scroll_view.viewport-width < thumbs_content.width;
-            background: Kolory.suwak_tlo;
-            border-radius: 4px;
-            border-width: 1px;
-            border-color: Kolory.menu_obramowanie;
-
-            hover_area := TouchArea {
-                width: parent.width;
-                height: parent.height;
-            }
-
-            handle := Rectangle {
-                property <length> content_w: max(1px, thumbs_content.width);
-                property <length> viewport_w: scroll_view.viewport-width;
-                width: max(20px, (viewport_w / content_w) * thumbs_bar.width);
-                height: hover_area.has-hover || drag.pressed ? parent.height : 4px;
-                y: (parent.height - self.height) / 2;
-                animate height { duration: 200ms; easing: ease-in-out; }
-                animate y { duration: 200ms; easing: ease-in-out; }
-
-                x: (content_w > viewport_w)
-                   ? (scroll_view.viewport-x / (content_w - viewport_w)) * (thumbs_bar.width - self.width)
-                   : 0px;
-                background: Kolory.suwak_tor;
-                border-radius: 4px;
-                Rectangle { x: 0px; y: 0px; width: parent.width; height: 1px; background: #80808040; }
-
-                drag := TouchArea {
-                    width: parent.width;
-                    height: parent.height;
-                    moved => {
-                        if (self.pressed) {
-                            scroll_view.viewport-x = ((max(0px, min(thumbs_bar.width - handle.width, handle.x + (self.mouse-x - self.pressed-x)))) / max(1px, thumbs_bar.width - handle.width)) * (content_w - viewport_w);
-                        }
-                    }
-                    clicked => {
-                        scroll_view.viewport-x = ((max(0px, min(thumbs_bar.width - handle.width, self.mouse-x - handle.width/2))) / max(1px, thumbs_bar.width - handle.width)) * (content_w - viewport_w);
-                    }
-                }
-            }
-        }
-
-        // Top-right drag handle for resizing thumbnail panel  
+        // Top-right drag handle for resizing thumbnail panel
         Rectangle {
             x: parent.width - 4px;
             y: 0px; 
