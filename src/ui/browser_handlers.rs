@@ -181,3 +181,49 @@ pub fn refresh_folder_tree(ui: &AppWindow, app_state: &SharedAppState) {
         .collect();
     ui.set_folder_tree(ModelRc::new(VecModel::from(entries)));
 }
+
+pub fn handle_folder_toggle(
+    ui_handle: Weak<AppWindow>,
+    app_state: SharedAppState,
+    path_str: String,
+) {
+    let path = PathBuf::from(&path_str);
+    if let Ok(mut s) = app_state.write() {
+        if s.folder_tree_expanded.contains(&path) {
+            s.folder_tree_expanded.remove(&path);
+        } else {
+            s.folder_tree_expanded.insert(path);
+        }
+    }
+    if let Some(ui) = ui_handle.upgrade() {
+        refresh_folder_tree(&ui, &app_state);
+    }
+}
+
+pub fn handle_folder_row_click(
+    ui_handle: Weak<AppWindow>,
+    app_state: SharedAppState,
+    console: ConsoleModel,
+    path_str: String,
+) {
+    let Some(ui) = ui_handle.upgrade() else { return; };
+    let path = PathBuf::from(&path_str);
+    if !path.is_dir() {
+        return;
+    }
+
+    {
+        let mut s = match app_state.write() {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        s.current_browsed_folder = Some(path.clone());
+        s.folder_tree_expanded.insert(path.clone());
+    }
+
+    refresh_folder_tree(&ui, &app_state);
+
+    let level = ui.get_thumbnail_size_level();
+    let height = size_level_to_height(level);
+    crate::ui::load_thumbnails_for_directory(ui.as_weak(), &path, console, height);
+}

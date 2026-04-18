@@ -276,14 +276,24 @@ pub fn setup_panel_callbacks(
                 );
 
                 if let Some(dir) = crate::io::file_operations::open_folder_dialog() {
+                    // Root the folder tree at the chosen folder's parent (so
+                    // siblings are visible for navigation). Fall back to the
+                    // chosen folder itself when no parent exists.
+                    let tree_root = dir.parent().map(|p| p.to_path_buf()).unwrap_or(dir.clone());
                     if let Ok(mut state) = app_state.write() {
                         state.current_browsed_folder = Some(dir.clone());
+                        state.folder_tree_root = Some(tree_root);
+                        state.folder_tree_expanded.insert(dir.clone());
                     }
+                    crate::ui::browser_handlers::refresh_folder_tree(&ui, &app_state);
+
+                    let level = ui.get_thumbnail_size_level();
+                    let height = crate::ui::browser_handlers::size_level_to_height(level);
                     crate::ui::load_thumbnails_for_directory(
                         ui.as_weak(),
                         &dir,
                         console_model.clone(),
-                        130,
+                        height,
                     );
                 } else {
                     push_console(
@@ -471,6 +481,32 @@ pub fn setup_panel_callbacks(
                 app_state.clone(),
                 console_model.clone(),
                 level,
+            );
+        }
+    });
+
+    ui.on_folder_tree_toggle({
+        let ui_handle = ui.as_weak();
+        let app_state = Arc::clone(&app_state);
+        move |path: slint::SharedString| {
+            crate::ui::browser_handlers::handle_folder_toggle(
+                ui_handle.clone(),
+                app_state.clone(),
+                path.to_string(),
+            );
+        }
+    });
+
+    ui.on_folder_tree_row_clicked({
+        let ui_handle = ui.as_weak();
+        let app_state = Arc::clone(&app_state);
+        let console_model = console_model.clone();
+        move |path: slint::SharedString| {
+            crate::ui::browser_handlers::handle_folder_row_click(
+                ui_handle.clone(),
+                app_state.clone(),
+                console_model.clone(),
+                path.to_string(),
             );
         }
     });
