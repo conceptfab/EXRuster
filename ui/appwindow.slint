@@ -1058,19 +1058,6 @@ export component AppWindow inherits Window {
              }
          }
 
-        property <length> thumbs_bar_height: 10px;
-        // Tooltip state (panel-level)
-        property <bool> tt_visible: false;
-        property <string> tt_text: "";
-        property <length> tt_x: 0px;
-        property <length> tt_y: 0px;
-        // Opóźnienie wyświetlania tooltipa w tickach timera (tick = 80ms)
-        property <int> tt_delay_ticks: 3;
-        // Który kafelek aktualnie kontroluje tooltip (ścieżka)
-        property <string> tt_owner_path: "";
-        
-
-
         // Context menu state (panel-level)
         property <bool> ctx_visible: false;
         property <string> ctx_path: "";
@@ -1165,34 +1152,6 @@ export component AppWindow inherits Window {
                         }
                     }
                 }
-            }
-        }
-
-        // Overlay tooltip for the whole thumbnails panel
-        panel_tooltip := Rectangle {
-            visible: thumbs_panel.tt_visible;
-            width: max(100px, min(parent.width - 8px, tooltip_text.preferred-width + 12px));
-            height: max(20px, min(parent.height - 8px, tooltip_text.preferred-height + 8px));
-            x: min(parent.width - self.width - 4px, max(4px, thumbs_panel.tt_x));
-            y: min(parent.height - self.height - 4px, max(4px, thumbs_panel.tt_y));
-            background: Kolory.tlo;
-            // border-color: #000000;
-            // border-width: 2px;
-            border-radius: 10px;
-            opacity: 0.8;
-            z: 10000;
-
-            tooltip_text := Text {
-                // Ogranicz maksymalną szerokość, a rozmiar wynikowy pobierz z preferred-size
-                max-width: 420px;
-                text: thumbs_panel.tt_text;
-                wrap: word-wrap;
-                color: Kolory.tekst;
-                font-size: 10px;
-                font-family: "Geist";
-                horizontal-alignment: left;
-                x: 6px;
-                y: 4px;
             }
         }
 
