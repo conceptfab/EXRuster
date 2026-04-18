@@ -423,6 +423,26 @@ class RustBuilder:
                 
         return success
 
+    def prompt_for_version(self, current_version: Optional[str]) -> Optional[str]:
+        """Interaktywnie pyta o nowy numer wersji. ENTER = zachowaj aktualną."""
+        current_str = current_version or "(nieznana)"
+        print("\n" + "="*60)
+        print(f"  🔖 NUMER WERSJI")
+        print("="*60)
+        print(f"   Aktualna wersja w Cargo.toml: {current_str}")
+        print(f"   Podaj nowy numer semver (np. 0.3.6) lub ENTER, aby zachować aktualną.")
+        while True:
+            try:
+                response = input("   Nowa wersja: ").strip()
+            except EOFError:
+                return None
+            if not response:
+                print(f"   ↪ Zachowuję aktualną wersję: {current_str}")
+                return None
+            if self._is_valid_semver(response):
+                return response
+            print(f"   ❌ Niepoprawny format '{response}'. Użyj semver (np. 0.3.6 lub 1.2.3-alpha.1).")
+
     def build_final(self, bin_name: str = "EXruster", out_name: str = "EXruster", out_dir: str = "dist", clean: bool = False, verbose: bool = False, jobs: Optional[int] = None, set_version: Optional[str] = None, force_downgrade: bool = False) -> bool:
         """Buduje finalną wersję binarki w trybie release i kopiuje do katalogu out_dir bez uruchamiania."""
         self.print_header("🚀 FINALNY BUILD APLIKACJI")
@@ -431,11 +451,15 @@ class RustBuilder:
         print(f"🔧 Binarka (Cargo): {bin_name}")
         print(f"📦 Docelowa nazwa pliku: {out_name}")
         print(f"📤 Katalog wyjściowy: {out_dir}")
-        if set_version:
-            print(f"🔖 Nowa wersja do ustawienia: {set_version}")
 
         if not self.check_cargo_project():
             return False
+
+        if set_version is None:
+            set_version = self.prompt_for_version(self._read_package_version())
+
+        if set_version:
+            print(f"🔖 Nowa wersja do ustawienia: {set_version}")
 
         # Stan rollbacku: jeśli zmieniamy wersję, zachowaj oryginalne pliki
         cargo_toml_backup: Optional[str] = None

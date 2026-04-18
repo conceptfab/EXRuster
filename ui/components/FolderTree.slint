@@ -56,16 +56,29 @@ export component FolderTree inherits Rectangle {
                     }
                 }
 
-                // Folder name + icon
+                // Folder icon (outline, switches open/closed)
+                Image {
+                    source: entry.expanded
+                        ? @image-url("../../resources/img/folder-open.svg")
+                        : @image-url("../../resources/img/folder.svg");
+                    colorize: entry.is_current ? Kolory.tekst_silny : Kolory.tekst_slabszy;
+                    width: 14px;
+                    height: 14px;
+                    x: (entry.depth * 10px) + 18px;
+                    y: (parent.height - self.height) / 2;
+                    image-fit: contain;
+                }
+
+                // Folder name
                 Text {
-                    text: "📁 " + entry.display_name;
+                    text: entry.display_name;
                     color: entry.is_current ? Kolory.tekst_silny : Kolory.tekst;
                     font-size: 11px;
                     font-family: "Geist";
                     font-weight: entry.is_current ? 700 : 400;
                     vertical-alignment: center;
                     horizontal-alignment: left;
-                    x: (entry.depth * 10px) + 18px;
+                    x: (entry.depth * 10px) + 36px;
                     width: parent.width - self.x - 4px;
                     wrap: no-wrap;
                 }

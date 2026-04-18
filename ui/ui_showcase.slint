@@ -1,0 +1,473 @@
+// EXRuster UI Showcase
+//
+// Zbiera wszystkie elementy UI (kolory, typografia, komponenty) w jednym miejscu.
+// Służy do podglądu spójności designu oraz testowania zmian wizualnych.
+//
+// Podgląd:
+//   slint-viewer ui/ui_showcase.slint
+//
+// Ten plik NIE jest kompilowany do binarki — jest narzędziem deweloperskim.
+
+import { ScrollView, VerticalBox, HorizontalBox } from "std-widgets.slint";
+import { Kolory } from "colors.slint";
+import { PrzyciskAkcji } from "components/PrzyciskAkcji.slint";
+import { PozycjaMenu } from "components/PozycjaMenu.slint";
+import { FolderTree, FolderEntry } from "components/FolderTree.slint";
+import { ParameterSlider } from "ParameterSlider.slint";
+
+// ============================================================
+// Próbka koloru z etykietą — używana w sekcji palety
+// ============================================================
+component ColorSwatch inherits Rectangle {
+    in property <color> swatch-color;
+    in property <string> name;
+    in property <string> hex;
+
+    width: 180px;
+    height: 54px;
+    background: Kolory.panel_tlo;
+    border-color: Kolory.obramowanie;
+    border-width: 1px;
+    border-radius: 3px;
+
+    HorizontalBox {
+        padding: 6px;
+        spacing: 8px;
+        alignment: start;
+
+        Rectangle {
+            width: 42px;
+            height: 42px;
+            background: root.swatch-color;
+            border-color: Kolory.obramowanie;
+            border-width: 1px;
+            border-radius: 2px;
+        }
+
+        VerticalBox {
+            padding: 0px;
+            spacing: 2px;
+            alignment: center;
+
+            Text {
+                text: root.name;
+                color: Kolory.tekst;
+                font-size: 11px;
+                font-family: "Geist";
+                font-weight: 500;
+            }
+            Text {
+                text: root.hex;
+                color: Kolory.tekst_slabszy;
+                font-size: 10px;
+                font-family: "Geist";
+            }
+        }
+    }
+}
+
+// ============================================================
+// Nagłówek sekcji
+// ============================================================
+component SekcjaNaglowek inherits Rectangle {
+    in property <string> title;
+
+    height: 32px;
+    horizontal-stretch: 1;
+    background: Kolory.przezroczysty;
+
+    Rectangle {
+        x: 0px;
+        y: parent.height - 1px;
+        width: parent.width;
+        height: 1px;
+        background: Kolory.linia_podzialu;
+    }
+
+    Text {
+        text: root.title;
+        color: Kolory.tekst_silny;
+        font-size: 14px;
+        font-family: "Geist";
+        font-weight: 600;
+        x: 4px;
+        y: 8px;
+        height: parent.height - 8px;
+        vertical-alignment: center;
+    }
+}
+
+// ============================================================
+// Główne okno showcase
+// ============================================================
+export component UiShowcase inherits Window {
+    title: "EXRuster — UI Showcase";
+    preferred-width: 920px;
+    preferred-height: 820px;
+    background: Kolory.tlo;
+    default-font-family: "Geist";
+
+    // Stan lokalny do interaktywnych demo
+    in-out property <float> demo-exposure: 0.0;
+    in-out property <float> demo-gamma: 2.2;
+    in-out property <int> demo-size-level: 2;
+    in-out property <bool> demo-toggle-enabled: true;
+
+    // Przykładowe dane drzewa folderów
+    in-out property <string> last-click: "(brak)";
+
+    in-out property <[FolderEntry]> demo-tree: [
+        { display_name: "Projects", path: "/projects", depth: 0, has_children: true, expanded: true, is_current: false },
+        { display_name: "Base",     path: "/projects/base", depth: 1, has_children: true, expanded: true, is_current: false },
+        { display_name: "Beauty",   path: "/projects/base/beauty", depth: 2, has_children: false, expanded: false, is_current: true },
+        { display_name: "Depth",    path: "/projects/base/depth", depth: 2, has_children: false, expanded: false, is_current: false },
+        { display_name: "HDRI",     path: "/projects/hdri", depth: 1, has_children: true, expanded: false, is_current: false },
+        { display_name: "Archive",  path: "/projects/archive", depth: 1, has_children: false, expanded: false, is_current: false },
+    ];
+
+    ScrollView {
+        width: parent.width;
+        height: parent.height;
+
+        VerticalBox {
+            width: root.width;
+            padding: 16px;
+            spacing: 12px;
+            alignment: start;
+
+            // ---------- Tytuł ----------
+            Text {
+                text: "EXRuster — UI Showcase";
+                color: Kolory.tekst_silny;
+                font-size: 20px;
+                font-family: "Geist";
+                font-weight: 700;
+            }
+            Text {
+                text: "Wszystkie komponenty UI w jednym miejscu — palety, typografia, kontrolki, drzewo folderów.";
+                color: Kolory.tekst_slabszy;
+                font-size: 11px;
+                font-family: "Geist";
+            }
+
+            // ---------- Paleta kolorów ----------
+            SekcjaNaglowek { title: "Paleta kolorów"; }
+
+            Rectangle {
+                width: parent.width;
+                height: 250px;
+                background: Kolory.przezroczysty;
+
+                VerticalBox {
+                    padding: 0px;
+                    spacing: 8px;
+                    alignment: start;
+
+                    HorizontalBox {
+                        padding: 0px;
+                        spacing: 8px;
+                        alignment: start;
+                        ColorSwatch { swatch-color: Kolory.tlo;            name: "tlo";           hex: "#242532"; }
+                        ColorSwatch { swatch-color: Kolory.panel_tlo;      name: "panel_tlo";     hex: "#242532"; }
+                        ColorSwatch { swatch-color: Kolory.menu_tlo;       name: "menu_tlo";      hex: "#242532"; }
+                        ColorSwatch { swatch-color: Kolory.suwak_tlo;      name: "suwak_tlo";     hex: "#242532"; }
+                    }
+                    HorizontalBox {
+                        padding: 0px;
+                        spacing: 8px;
+                        alignment: start;
+                        ColorSwatch { swatch-color: Kolory.obramowanie;    name: "obramowanie";   hex: "#1e1f28"; }
+                        ColorSwatch { swatch-color: Kolory.linia_podzialu; name: "linia_podzialu"; hex: "#1e1f28"; }
+                        ColorSwatch { swatch-color: Kolory.hover;          name: "hover";         hex: "#717171"; }
+                        ColorSwatch { swatch-color: Kolory.suwak_tor;      name: "suwak_tor";     hex: "#606060"; }
+                    }
+                    HorizontalBox {
+                        padding: 0px;
+                        spacing: 8px;
+                        alignment: start;
+                        ColorSwatch { swatch-color: Kolory.tekst;          name: "tekst";         hex: "#cccccc"; }
+                        ColorSwatch { swatch-color: Kolory.tekst_silny;    name: "tekst_silny";   hex: "#ffffff"; }
+                        ColorSwatch { swatch-color: Kolory.tekst_slabszy;  name: "tekst_slabszy"; hex: "#717171"; }
+                        ColorSwatch { swatch-color: Kolory.grupa;          name: "grupa";         hex: "#4a5f8a"; }
+                    }
+                    HorizontalBox {
+                        padding: 0px;
+                        spacing: 8px;
+                        alignment: start;
+                        ColorSwatch { swatch-color: Kolory.progress_fill;          name: "progress_fill"; hex: "#af4cac"; }
+                        ColorSwatch { swatch-color: Kolory.ekspozycja_galka_hover; name: "exp_galka_hover"; hex: "#8080ff"; }
+                        ColorSwatch { swatch-color: Kolory.gamma_galka_hover;      name: "gamma_galka_hover"; hex: "#ff8080"; }
+                    }
+                    HorizontalBox {
+                        padding: 0px;
+                        spacing: 8px;
+                        alignment: start;
+                        ColorSwatch { swatch-color: Kolory.kanal_r; name: "kanal_r"; hex: "#ff8181"; }
+                        ColorSwatch { swatch-color: Kolory.kanal_g; name: "kanal_g"; hex: "#b0ffb0"; }
+                        ColorSwatch { swatch-color: Kolory.kanal_b; name: "kanal_b"; hex: "#92d2ff"; }
+                    }
+                }
+            }
+
+            // ---------- Typografia ----------
+            SekcjaNaglowek { title: "Typografia (Geist)"; }
+
+            Rectangle {
+                width: parent.width;
+                height: 140px;
+                background: Kolory.przezroczysty;
+
+                VerticalBox {
+                    padding: 0px;
+                    spacing: 6px;
+                    alignment: start;
+
+                    Text { text: "Heading 20 / 700 — tekst_silny"; color: Kolory.tekst_silny; font-size: 20px; font-weight: 700; }
+                    Text { text: "Subheading 14 / 600 — tekst_silny"; color: Kolory.tekst_silny; font-size: 14px; font-weight: 600; }
+                    Text { text: "Body 13 / 300 — tekst (domyślny tekst etykiet)"; color: Kolory.tekst; font-size: 13px; font-weight: 300; }
+                    Text { text: "Small 11 / 400 — tekst (małe napisy)"; color: Kolory.tekst; font-size: 11px; font-weight: 400; }
+                    Text { text: "Caption 10 / 400 — tekst_slabszy (pomocnicze)"; color: Kolory.tekst_slabszy; font-size: 10px; font-weight: 400; }
+                }
+            }
+
+            // ---------- Przyciski akcji ----------
+            SekcjaNaglowek { title: "PrzyciskAkcji"; }
+
+            Rectangle {
+                width: parent.width;
+                height: 90px;
+                background: Kolory.przezroczysty;
+
+                VerticalBox {
+                    padding: 0px;
+                    spacing: 8px;
+                    alignment: start;
+
+                    HorizontalBox {
+                        padding: 0px;
+                        spacing: 8px;
+                        alignment: start;
+
+                        PrzyciskAkcji { text: "Normal";        width: 120px; height: 26px; }
+                        PrzyciskAkcji { text: "Highlighted";   width: 120px; height: 26px; highlighted: true; }
+                        PrzyciskAkcji { text: "Disabled";      width: 120px; height: 26px; enabled: false; }
+                    }
+
+                    HorizontalBox {
+                        padding: 0px;
+                        spacing: 6px;
+                        alignment: start;
+
+                        PrzyciskAkcji { text: "×1"; width: 28px; height: 28px; highlighted: root.demo-size-level == 1;
+                                        clicked => { root.demo-size-level = 1; } }
+                        PrzyciskAkcji { text: "×2"; width: 28px; height: 28px; highlighted: root.demo-size-level == 2;
+                                        clicked => { root.demo-size-level = 2; } }
+                        PrzyciskAkcji { text: "×3"; width: 28px; height: 28px; highlighted: root.demo-size-level == 3;
+                                        clicked => { root.demo-size-level = 3; } }
+                        Text {
+                            text: "Aktywny: ×" + root.demo-size-level;
+                            color: Kolory.tekst_slabszy;
+                            font-size: 11px;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+
+            // ---------- Pozycja menu ----------
+            SekcjaNaglowek { title: "PozycjaMenu"; }
+
+            Rectangle {
+                width: parent.width;
+                height: 100px;
+                background: Kolory.przezroczysty;
+
+                Rectangle {
+                    width: 200px;
+                    height: 86px;
+                    background: Kolory.menu_tlo;
+                    border-color: Kolory.menu_obramowanie;
+                    border-width: 1px;
+                    border-radius: 3px;
+
+                    VerticalBox {
+                        padding: 0px;
+                        spacing: 0px;
+                        alignment: start;
+
+                        PozycjaMenu { text: "Otwórz..."; width: 198px; }
+                        PozycjaMenu { text: "Zapisz jako..."; width: 198px; }
+                        PozycjaMenu { text: "Zamknij"; width: 198px; }
+                    }
+                }
+            }
+
+            // ---------- Parameter Slider ----------
+            SekcjaNaglowek { title: "ParameterSlider"; }
+
+            Rectangle {
+                width: parent.width;
+                height: 140px;
+                background: Kolory.przezroczysty;
+
+                VerticalBox {
+                    padding: 0px;
+                    spacing: 4px;
+                    alignment: start;
+
+                    ParameterSlider {
+                        label-text: "Exposure:";
+                        slider-width: 400px;
+                        min-value: -5.0;
+                        max-value: 5.0;
+                        value: root.demo-exposure;
+                        value-changed(v) => { root.demo-exposure = v; }
+                    }
+                    ParameterSlider {
+                        label-text: "Gamma:";
+                        slider-width: 400px;
+                        min-value: 0.5;
+                        max-value: 4.5;
+                        value: root.demo-gamma;
+                        value-changed(v) => { root.demo-gamma = v; }
+                    }
+                }
+            }
+
+            // ---------- Folder Tree ----------
+            SekcjaNaglowek { title: "FolderTree + ikony folderów"; }
+
+            Rectangle {
+                width: parent.width;
+                height: 220px;
+                background: Kolory.przezroczysty;
+
+                HorizontalBox {
+                    padding: 0px;
+                    spacing: 12px;
+                    alignment: start;
+
+                    // Lewa: samo drzewo
+                    Rectangle {
+                        width: 320px;
+                        height: 200px;
+                        background: Kolory.panel_tlo;
+                        border-color: Kolory.linia_podzialu;
+                        border-width: 1px;
+
+                        FolderTree {
+                            width: parent.width - 2px;
+                            height: parent.height - 2px;
+                            x: 1px;
+                            y: 1px;
+                            entries: root.demo-tree;
+                            // Showcase jest statyczny — kliknięcia nie mutują modelu.
+                            row-clicked(p) => { root.last-click = "row: " + p; }
+                            toggle-clicked(p) => { root.last-click = "toggle: " + p; }
+                        }
+                    }
+
+                    // Prawa: pojedyncze ikony w dwóch stanach
+                    VerticalBox {
+                        padding: 8px;
+                        spacing: 10px;
+                        alignment: start;
+
+                        Text { text: "Ikony folderów:"; color: Kolory.tekst; font-size: 11px; }
+
+                        HorizontalBox {
+                            padding: 0px;
+                            spacing: 8px;
+                            alignment: start;
+
+                            Image {
+                                source: @image-url("../resources/img/folder.svg");
+                                colorize: Kolory.tekst_slabszy;
+                                width: 24px;
+                                height: 24px;
+                                image-fit: contain;
+                            }
+                            Text { text: "folder.svg (zamknięty)"; color: Kolory.tekst_slabszy; font-size: 11px; vertical-alignment: center; }
+                        }
+                        HorizontalBox {
+                            padding: 0px;
+                            spacing: 8px;
+                            alignment: start;
+
+                            Image {
+                                source: @image-url("../resources/img/folder-open.svg");
+                                colorize: Kolory.tekst_silny;
+                                width: 24px;
+                                height: 24px;
+                                image-fit: contain;
+                            }
+                            Text { text: "folder-open.svg (otwarty)"; color: Kolory.tekst_silny; font-size: 11px; vertical-alignment: center; }
+                        }
+
+                        Text { text: "Kliknij ▶/▼ w drzewie po lewej, aby zobaczyć przełączanie."; color: Kolory.tekst_slabszy; font-size: 10px; wrap: word-wrap; width: 260px; }
+                    }
+                }
+            }
+
+            // ---------- Primitywy kontenerowe ----------
+            SekcjaNaglowek { title: "Panele / kontenery (referencja)"; }
+
+            Rectangle {
+                width: parent.width;
+                height: 110px;
+                background: Kolory.przezroczysty;
+
+                HorizontalBox {
+                    padding: 0px;
+                    spacing: 8px;
+                    alignment: start;
+
+                    // Panel domyślny
+                    Rectangle {
+                        width: 180px;
+                        height: 90px;
+                        background: Kolory.panel_tlo;
+                        border-color: Kolory.linia_podzialu;
+                        border-width: 1px;
+                        Text { text: "panel_tlo\n+ linia_podzialu 1px"; color: Kolory.tekst; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; width: parent.width; height: parent.height; }
+                    }
+
+                    // Pole kontrolki
+                    Rectangle {
+                        width: 180px;
+                        height: 90px;
+                        background: Kolory.suwak_tlo;
+                        border-color: Kolory.suwak_tor;
+                        border-width: 1px;
+                        border-radius: 3px;
+                        Text { text: "suwak_tlo\n+ suwak_tor 1px\n+ radius 3px"; color: Kolory.tekst; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; width: parent.width; height: parent.height; }
+                    }
+
+                    // Stan hover
+                    Rectangle {
+                        width: 180px;
+                        height: 90px;
+                        background: Kolory.hover;
+                        border-color: Kolory.suwak_tor;
+                        border-width: 1px;
+                        border-radius: 3px;
+                        Text { text: "hover\n(przycisk podświetlony)"; color: Kolory.tekst_silny; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; width: parent.width; height: parent.height; }
+                    }
+                }
+            }
+
+            // ---------- Stopka ----------
+            Rectangle { height: 24px; background: Kolory.przezroczysty; }
+            Text {
+                text: "Ostatnie kliknięcie w drzewie: " + root.last-click;
+                color: Kolory.tekst_slabszy;
+                font-size: 10px;
+            }
+            Text {
+                text: "Zmiany w komponentach powinny pojawić się tutaj automatycznie — jeśli nie, odśwież slint-viewer.";
+                color: Kolory.tekst_slabszy;
+                font-size: 10px;
+            }
+        }
+    }
+}

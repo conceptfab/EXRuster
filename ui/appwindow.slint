@@ -948,10 +948,12 @@ export component AppWindow inherits Window {
                  // Folder tree container (takes remaining vertical space)
                  Rectangle {
                      width: parent.width;
-                     height: 300px;
+                     min-height: 80px;
+                     vertical-stretch: 1;
                      background: Kolory.przezroczysty;
                      border-color: Kolory.linia_podzialu;
                      border-width: 1px;
+                     clip: true;
 
                      FolderTree {
                          width: parent.width - 2px;

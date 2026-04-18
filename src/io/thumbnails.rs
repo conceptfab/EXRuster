@@ -338,14 +338,6 @@ pub fn get_thumb_cache() -> &'static Mutex<LruCache<ThumbKey, ThumbValue>> {
     THUMB_CACHE.get_or_init(|| Mutex::new(LruCache::new(std::num::NonZeroUsize::new(256).unwrap())))
 }
 
-/// Czyści cache miniaturek (force regeneration)
-pub fn clear_thumb_cache() {
-    if let Ok(mut cache) = get_thumb_cache().lock() {
-        cache.clear();
-    }
-    log_info!("Thumbnail cache cleared - forcing regeneration");
-}
-
 pub fn c_get(
     path: &Path,
     thumb_h: u32,

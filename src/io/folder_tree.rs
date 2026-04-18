@@ -38,10 +38,6 @@ pub fn list_subdirs(dir: &Path) -> Vec<PathBuf> {
     out
 }
 
-pub fn has_subdirs(dir: &Path) -> bool {
-    list_subdirs(dir).into_iter().next().is_some()
-}
-
 fn display_name(p: &Path) -> String {
     p.file_name()
         .and_then(|n| n.to_str())
