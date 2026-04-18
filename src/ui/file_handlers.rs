@@ -173,6 +173,7 @@ pub fn handle_open_exr_from_path(
                                                     let (
                                                         layers_model,
                                                         layers_colors,
+                                                        layers_kinds,
                                                         layers_font_sizes,
                                                     ) = create_layers_model(
                                                         &layers_info_vec,
@@ -181,6 +182,7 @@ pub fn handle_open_exr_from_path(
                                                     );
                                                     ui2.set_layers_model(layers_model);
                                                     ui2.set_layers_colors(layers_colors);
+                                                    ui2.set_layers_kinds(layers_kinds);
                                                     ui2.set_layers_font_sizes(layers_font_sizes);
                                                 }
 
@@ -295,6 +297,7 @@ pub fn handle_open_exr_from_path(
                                                     let (
                                                         layers_model,
                                                         layers_colors,
+                                                        layers_kinds,
                                                         layers_font_sizes,
                                                     ) = create_layers_model(
                                                         &layers_info_vec,
@@ -303,6 +306,7 @@ pub fn handle_open_exr_from_path(
                                                     );
                                                     ui2.set_layers_model(layers_model);
                                                     ui2.set_layers_colors(layers_colors);
+                                                    ui2.set_layers_kinds(layers_kinds);
                                                     ui2.set_layers_font_sizes(layers_font_sizes);
                                                 }
                                                 let mut log = ui2.get_console_text().to_string();
@@ -428,11 +432,21 @@ pub fn load_metadata(
 
 /// Creates layers model for UI from LayerInfo, grouped by channel types from config.
 /// The new hierarchy is Group -> Layer -> Channel.
+/// Row kind for the layers tree UI.
+/// - 0 = group header (expanded)
+/// - 1 = group header (collapsed)
+/// - 2 = layer (under a group)
+/// - 3 = channel (leaf)
 pub fn create_layers_model(
     layers_info: &[LayerInfo],
     ui: &AppWindow,
     app_state: &crate::ui::state::SharedAppState,
-) -> (ModelRc<SharedString>, ModelRc<Color>, ModelRc<i32>) {
+) -> (
+    ModelRc<SharedString>,
+    ModelRc<Color>,
+    ModelRc<i32>,
+    ModelRc<i32>,
+) {
     use crate::processing::channel_classification::determine_channel_group_with_config;
     use crate::utils::channel_config::{get_fallback_config, load_channel_config};
     use std::collections::HashMap;
@@ -471,6 +485,7 @@ pub fn create_layers_model(
     let mut items: Vec<SharedString> = Vec::new();
     let mut colors: Vec<Color> = Vec::new();
     let mut font_sizes: Vec<i32> = Vec::new();
+    let mut kinds: Vec<i32> = Vec::new();
 
     lock_or_recover(&ITEM_TO_LAYER).clear();
     lock_or_recover(&DISPLAY_TO_REAL_LAYER).clear();
@@ -500,6 +515,7 @@ pub fn create_layers_model(
 
     // 3. Build the UI model from the new hierarchy
     // Reuse string buffer for formatting
+    use std::fmt::Write;
     let mut format_buffer = String::with_capacity(128);
 
     for (group_name, layers) in sorted_groups {
@@ -511,19 +527,17 @@ pub fn create_layers_model(
                 return (
                     ModelRc::new(VecModel::from(items)),
                     ModelRc::new(VecModel::from(colors)),
+                    ModelRc::new(VecModel::from(kinds)),
                     ModelRc::new(VecModel::from(font_sizes)),
                 );
             }
         };
         let is_expanded = state_guard.ui_state.is_group_expanded(&group_name);
-        let arrow = if is_expanded { "▼" } else { "▶" };
-        // Clean display without markers - use buffer to avoid allocation
-        format_buffer.clear();
-        use std::fmt::Write;
-        write!(&mut format_buffer, "{} 📁 {}", arrow, group_name).unwrap();
-        items.push(format_buffer.clone().into());
+        // Clean display — arrows and folder icon rendered by the UI layer from `kind`.
+        items.push(SharedString::from(group_name.as_str()));
         colors.push(ui.get_layers_color_group());
         font_sizes.push(12);
+        kinds.push(if is_expanded { 0 } else { 1 });
         drop(state_guard);
 
         // Show layers only if group is expanded
@@ -543,12 +557,11 @@ pub fn create_layers_model(
                     map.insert(display_name.clone(), layer.name.clone());
                 }
 
-                // Add layer header WITHOUT arrows (arrows only for groups) - use buffer
-                format_buffer.clear();
-                write!(&mut format_buffer, "  📁 {}", display_name).unwrap();
-                items.push(format_buffer.clone().into());
+                // Layer row — indentation handled by UI based on kind.
+                items.push(SharedString::from(display_name.as_str()));
                 colors.push(ui.get_layers_color_default());
                 font_sizes.push(11);
+                kinds.push(2);
 
                 // Add channels for the layer (always show all channels)
                 {
@@ -572,11 +585,11 @@ pub fn create_layers_model(
 
                     for ch_info in channels_to_sort {
                         let (_color, emoji, display_ch) = get_channel_info(&ch_info.name, ui);
-                        // Use buffer for nested loop - most critical hot path
+                        // Clean channel line — indentation handled by UI based on kind.
                         format_buffer.clear();
                         write!(
                             &mut format_buffer,
-                            "      {} {} @{}",
+                            "{} {} @{}",
                             emoji, display_ch, display_name
                         )
                         .unwrap();
@@ -587,6 +600,7 @@ pub fn create_layers_model(
                         items.push(line.into());
                         colors.push(_color);
                         font_sizes.push(10);
+                        kinds.push(3);
                     }
                 }
             }
@@ -596,6 +610,7 @@ pub fn create_layers_model(
     (
         ModelRc::new(VecModel::from(items)),
         ModelRc::new(VecModel::from(colors)),
+        ModelRc::new(VecModel::from(kinds)),
         ModelRc::new(VecModel::from(font_sizes)),
     )
 }

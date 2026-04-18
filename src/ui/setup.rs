@@ -122,11 +122,12 @@ pub fn setup_menu_callbacks(
             let ui_handle = ui.as_weak();
             let app_state = Arc::clone(&app_state);
             let console = console_model.clone();
-            move |clicked_item: slint::SharedString| {
+            move |clicked_item: slint::SharedString, kind: i32| {
                 crate::ui::handle_layer_tree_click(
                     ui_handle.clone(),
                     app_state.clone(),
                     clicked_item.to_string(),
+                    kind,
                     console.clone(),
                 );
             }

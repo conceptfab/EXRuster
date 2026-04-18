@@ -26,10 +26,11 @@ fn refresh_layer_model(ui_handle: Weak<AppWindow>, app_state: SharedAppState) {
 
         if !layers_info_vec.is_empty() {
             // Quick rebuild - this is unavoidable with current architecture
-            let (layers_model, layers_colors, layers_font_sizes) =
+            let (layers_model, layers_colors, layers_kinds, layers_font_sizes) =
                 crate::ui::file_handlers::create_layers_model(&layers_info_vec, &ui, &app_state);
             ui.set_layers_model(layers_model);
             ui.set_layers_colors(layers_colors);
+            ui.set_layers_kinds(layers_kinds);
             ui.set_layers_font_sizes(layers_font_sizes);
         }
     }
@@ -39,18 +40,15 @@ pub fn handle_layer_tree_click(
     ui_handle: Weak<AppWindow>,
     app_state: SharedAppState,
     clicked_item: String,
+    kind: i32,
     console: ConsoleModel,
 ) {
     let trimmed = clicked_item.trim();
 
-    // GRUPA - sprawdź czy zawiera strzałkę grupy
-    if (trimmed.starts_with("▼ 📁") || trimmed.starts_with("▶ 📁")) && !trimmed.starts_with("  📁") {
+    // GRUPA — kind 0 (rozwinięta) lub 1 (zwinięta)
+    if kind == 0 || kind == 1 {
         if let Some(ui) = ui_handle.upgrade() {
-            let group_name = trimmed
-                .trim_start_matches("▼ 📁")
-                .trim_start_matches("▶ 📁")
-                .trim()
-                .to_string();
+            let group_name = trimmed.to_string();
 
             // Toggle group expansion state
             if let Ok(mut state) = app_state.write() {
@@ -67,10 +65,10 @@ pub fn handle_layer_tree_click(
             );
         }
     }
-    // WARSTWA - kliknięcie w warstwę (📁) - zawsze load composite
-    else if trimmed.starts_with("📁") {
+    // WARSTWA — kind 2
+    else if kind == 2 {
         if let Some(ui) = ui_handle.upgrade() {
-            let layer_name = trimmed.trim_start_matches("📁 ").trim().to_string();
+            let layer_name = trimmed.to_string();
 
             let real_layer_name = {
                 let map = lock_or_recover(&crate::ui::file_handlers::DISPLAY_TO_REAL_LAYER);
@@ -142,9 +140,7 @@ pub fn handle_layer_tree_click(
                                 )
                                 .unwrap();
                                 ui.set_status_text(status_msg.into());
-                                console_buffer.clear();
-                                write!(&mut console_buffer, "  📁 {}", layer_name).unwrap();
-                                ui.set_selected_layer_item(console_buffer.into());
+                                ui.set_selected_layer_item(layer_name.clone().into());
                             }
                             Err(e) => {
                                 status_msg.clear();
@@ -162,8 +158,8 @@ pub fn handle_layer_tree_click(
             }
         }
     }
-    // KANAŁY - pozostała logika bez zmian
-    else {
+    // KANAŁY — kind 3
+    else if kind == 3 {
         let is_dot = trimmed.starts_with("• ");
         let is_rgba_emoji = trimmed.starts_with("🔴")
             || trimmed.starts_with("🟢")

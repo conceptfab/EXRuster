@@ -77,6 +77,9 @@ export component AppWindow inherits Window {
     in-out property <[string]> layers-model: [];
     in-out property <[color]> layers-colors: [];
     in-out property <[int]> layers-font-sizes: [];
+    // Rodzaj wiersza w drzewie warstw:
+    // 0 = grupa rozwinięta, 1 = grupa zwinięta, 2 = warstwa, 3 = kanał
+    in-out property <[int]> layers-kinds: [];
     in-out property <string> selected-layer-item: "";
     // konsola w oknie pływającym — model linii nieużywany tutaj
     in-out property <string> console-text: "";
@@ -143,7 +146,7 @@ export component AppWindow inherits Window {
     callback open-exr();
     callback exposure-changed(float);
     callback gamma-changed(float);
-    callback layer-tree-clicked(string);
+    callback layer-tree-clicked(string, int);
     callback choose-working-folder();
     callback open-thumbnail(string); // otwórz plik EXR z podanej ścieżki
     callback delete-thumbnail(string); // usuń plik na podstawie ścieżki
@@ -399,13 +402,19 @@ export component AppWindow inherits Window {
                         alignment: start;
 
                         for layer-item[index] in layers-model: Rectangle {
+                            property <int> kind: root.layers-kinds[index];
+                            property <bool> is-group: kind == 0 || kind == 1;
+                            property <bool> is-group-expanded: kind == 0;
+                            property <bool> is-layer: kind == 2;
+                            property <bool> show-folder-icon: is-group || is-layer;
+
                             height: 18px;
                             width: parent.width;
                             clip: true;
                             background: (root.selected-layer-item == layer-item) ? Kolory.hover
                                         : (layer-hover.has-hover ? Kolory.suwak_tlo : Kolory.przezroczysty);
 
-                            // Lewy znacznik wyboru - szerszy i bardziej widoczny
+                            // Lewy znacznik wyboru
                             Rectangle {
                                 x: 0px;
                                 width: (root.selected-layer-item == layer-item) ? 5px : 0px;
@@ -414,6 +423,35 @@ export component AppWindow inherits Window {
                                 border-radius: 2px;
                             }
 
+                            // Strzałka rozwijania — tylko dla grup
+                            if is-group: Text {
+                                text: is-group-expanded ? "▼" : "▶";
+                                color: root.layers-colors[index];
+                                font-size: 9px;
+                                font-family: "Geist";
+                                vertical-alignment: center;
+                                horizontal-alignment: center;
+                                x: 6px;
+                                y: 0px;
+                                width: 10px;
+                                height: parent.height;
+                            }
+
+                            // Ikona folderu (outline SVG) — grupy i warstwy; nie dla kanałów.
+                            // Grupa rozwinięta (kind 0) → folder-open, zwinięta (1) / warstwa (2) → folder.
+                            if show-folder-icon: Image {
+                                source: is-group-expanded
+                                    ? @image-url("../resources/img/folder-open.svg")
+                                    : @image-url("../resources/img/folder.svg");
+                                colorize: root.layers-colors[index];
+                                width: 12px;
+                                height: 12px;
+                                x: is-layer ? 22px : 18px;
+                                y: (parent.height - self.height) / 2;
+                                image-fit: contain;
+                            }
+
+                            // Nazwa/kanał
                             Text {
                                 text: layer-item;
                                 color: root.layers-colors[index];
@@ -421,8 +459,8 @@ export component AppWindow inherits Window {
                                 font-family: "Geist";
                                 vertical-alignment: center;
                                 horizontal-alignment: left;
-                                x: 4px;
-                                width: parent.width - 8px;
+                                x: is-group ? 34px : (is-layer ? 38px : 24px);
+                                width: parent.width - self.x - 4px;
                                 wrap: no-wrap;
                                 font-weight: (root.selected-layer-item == layer-item) ? 800 : 400;
                             }
@@ -431,8 +469,8 @@ export component AppWindow inherits Window {
                                 width: parent.width;
                                 height: parent.height;
                                 clicked => {
-                                    // Wywołaj callback z nazwą klikniętego elementu
-                                    layer-tree-clicked(layer-item);
+                                    // Wywołaj callback z nazwą i rodzajem klikniętego elementu
+                                    layer-tree-clicked(layer-item, kind);
                                 }
                             }
                         }
@@ -944,6 +982,9 @@ export component AppWindow inherits Window {
                          clicked => { root.thumbnail-size-level = 3; root.thumbnail-size-changed(3); }
                      }
                  }
+
+                 // Odstęp między przyciskami ×1/×2/×3 a drzewem folderów
+                 Rectangle { width: parent.width; height: 12px; background: Kolory.przezroczysty; }
 
                  // Folder tree container (takes remaining vertical space)
                  Rectangle {
