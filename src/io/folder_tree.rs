@@ -14,8 +14,8 @@ pub fn list_subdirs(dir: &Path) -> Vec<PathBuf> {
     let Ok(rd) = std::fs::read_dir(dir) else { return Vec::new(); };
     let mut out: Vec<PathBuf> = rd
         .filter_map(Result::ok)
-        .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
         .map(|e| e.path())
+        .filter(|p| std::fs::metadata(p).map(|m| m.is_dir()).unwrap_or(false))
         .filter(|p| {
             p.file_name()
                 .and_then(|n| n.to_str())

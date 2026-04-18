@@ -4,6 +4,7 @@ pub mod progress_reader;
 pub mod file_operations;
 pub mod folder_tree;
 pub mod full_exr_cache;
+pub mod hdr_loader;
 pub mod image_cache;
 pub mod lazy_exr_loader;
 pub mod selective_layer_reader;

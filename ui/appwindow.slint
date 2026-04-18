@@ -596,7 +596,7 @@ export component AppWindow inherits Window {
             VerticalBox {
                 padding: 4px;
                 spacing: 2px;
-                alignment: start;
+                alignment: stretch;
                 property <length> controls_inset: 12px;
 
                 // Unified left padding for labels and controls
@@ -604,6 +604,7 @@ export component AppWindow inherits Window {
                     alignment: start;
                     width: parent.width;
                     spacing: 0px;
+                    vertical-stretch: 0;
                     ParameterSlider {
                         label-text: "Exposure:";
                         value: root.exposure-value;
@@ -616,10 +617,11 @@ export component AppWindow inherits Window {
                         }
                     }
                 }
-                
+
                 HorizontalBox {
                     width: parent.width;
                     spacing: 0px;
+                    vertical-stretch: 0;
                     ParameterSlider {
                         label-text: "Gamma:";
                         value: root.gamma-value;
@@ -637,6 +639,7 @@ export component AppWindow inherits Window {
                  HorizontalBox {
                      width: parent.width;
                      spacing: 0px;
+                     vertical-stretch: 0;
                      Text {
                          text: "Tonemap:";
                          color: Kolory.tekst;

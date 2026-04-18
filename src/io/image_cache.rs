@@ -56,6 +56,8 @@ pub enum ExrDataSource {
     Full(Arc<FullExrCacheData>),
     /// Lazy mode: load data on demand (low RAM usage, slower access)
     Lazy(Arc<LazyExrLoader>),
+    /// Radiance HDR: single layer, one-shot load (no multi-layer switching)
+    Hdr,
 }
 
 pub struct ImageCache {
@@ -172,6 +174,64 @@ impl ImageCache {
         })
     }
 
+    pub fn new_from_hdr(path: &Path) -> anyhow::Result<Self> {
+        use crate::io::fast_exr_metadata::{ChannelInfo, SampleType};
+        log_info!("=== ImageCache::new_from_hdr START === {}", path.display());
+
+        let hdr = crate::io::hdr_loader::load_hdr(path)?;
+        let width = hdr.width;
+        let height = hdr.height;
+        let layer_name = "Beauty".to_string();
+
+        let make_channel = |name: &str| ChannelInfo {
+            name: name.to_string(),
+            sample_type: SampleType::Float,
+            sampling: (1, 1),
+            quantize_linearly: false,
+        };
+        let layers_info = vec![LayerInfo {
+            name: layer_name.clone(),
+            channels: vec![make_channel("R"), make_channel("G"), make_channel("B")],
+        }];
+
+        let pixel_count = (width as usize) * (height as usize);
+        let mut r = Vec::with_capacity(pixel_count);
+        let mut g = Vec::with_capacity(pixel_count);
+        let mut b = Vec::with_capacity(pixel_count);
+        for chunk in hdr.rgba.chunks_exact(4) {
+            r.push(chunk[0]);
+            g.push(chunk[1]);
+            b.push(chunk[2]);
+        }
+        let mut planar = Vec::with_capacity(pixel_count * 3);
+        planar.extend_from_slice(&r);
+        planar.extend_from_slice(&g);
+        planar.extend_from_slice(&b);
+
+        let layer_channels = LayerChannels {
+            layer_name: layer_name.clone(),
+            width,
+            height,
+            channel_names: vec!["R".to_string(), "G".to_string(), "B".to_string()],
+            channel_data: Arc::from(planar.into_boxed_slice()),
+        };
+
+        let raw_pixels = compose_composite_from_channels(&layer_channels);
+
+        Ok(ImageCache {
+            raw_pixels,
+            width,
+            height,
+            layers_info,
+            current_layer_name: layer_name,
+            color_matrix_rgb_to_srgb: None,
+            color_matrices: HashMap::new(),
+            current_layer_channels: Some(layer_channels),
+            data_source: ExrDataSource::Hdr,
+            histogram: None,
+        })
+    }
+
     pub fn load_layer(
         &mut self,
         path: &Path,
@@ -188,6 +248,9 @@ impl ImageCache {
             ExrDataSource::Lazy(lazy_loader) => {
                 let layer_data = lazy_loader.get_layer_data(layer_name, progress)?;
                 layer_data.to_layer_channels()
+            }
+            ExrDataSource::Hdr => {
+                return Ok(());
             }
         };
 

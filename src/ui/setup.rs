@@ -277,13 +277,10 @@ pub fn setup_panel_callbacks(
                 );
 
                 if let Some(dir) = crate::io::file_operations::open_folder_dialog() {
-                    // Root the folder tree at the chosen folder's parent (so
-                    // siblings are visible for navigation). Fall back to the
-                    // chosen folder itself when no parent exists.
-                    let tree_root = dir.parent().map(|p| p.to_path_buf()).unwrap_or(dir.clone());
+                    // Root the folder tree at the chosen folder itself.
                     if let Ok(mut state) = app_state.write() {
                         state.current_browsed_folder = Some(dir.clone());
-                        state.folder_tree_root = Some(tree_root);
+                        state.folder_tree_root = Some(dir.clone());
                         state.folder_tree_expanded.insert(dir.clone());
                     }
                     crate::ui::browser_handlers::refresh_folder_tree(&ui, &app_state);

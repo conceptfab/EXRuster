@@ -89,6 +89,16 @@ pub fn handle_open_exr_from_path(
             ),
         );
 
+        let is_hdr = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|s| s.eq_ignore_ascii_case("hdr"))
+            .unwrap_or(false);
+        if is_hdr {
+            handle_open_hdr_from_path(ui_handle, app_state, console, path);
+            return;
+        }
+
         // Load EXR file metadata and update UI
         match load_metadata(&ui, &path, &console) {
             Ok(()) => {
@@ -399,6 +409,104 @@ pub fn handle_open_exr_from_path(
             }
         }
     }
+}
+
+/// Handles opening a Radiance HDR (.hdr) file. Single layer, single-shot load.
+pub fn handle_open_hdr_from_path(
+    ui_handle: Weak<AppWindow>,
+    app_state: SharedAppState,
+    console: ConsoleModel,
+    path: PathBuf,
+) {
+    let Some(ui) = ui_handle.upgrade() else { return; };
+
+    if let Ok(mut state) = app_state.write() {
+        state.current_file_path = Some(path.clone());
+        ui.set_current_file_path(path.display().to_string().into());
+    }
+    ui.set_meta_text("".into());
+    ui.set_meta_table_keys(ModelRc::new(VecModel::from(Vec::<SharedString>::new())));
+    ui.set_meta_table_values(ModelRc::new(VecModel::from(Vec::<SharedString>::new())));
+    ui.set_status_text("Reading HDR...".into());
+    ui.set_progress_value(-1.0);
+
+    let exposure0 = ui.get_exposure_value();
+    let gamma0 = ui.get_gamma_value();
+    let tonemap_mode0 = ui.get_tonemap_mode();
+    let ui_weak = ui.as_weak();
+    let app_state_c = app_state.clone();
+    let path_c = path.clone();
+
+    rayon::spawn(move || {
+        let t_start = Instant::now();
+        let cache_res = ImageCache::new_from_hdr(&path_c);
+        match cache_res {
+            Ok(cache) => {
+                let _ = invoke_from_event_loop(move || {
+                    if let Some(ui2) = ui_weak.upgrade() {
+                        let (img, layers_info_vec) = {
+                            if let Ok(mut state) = app_state_c.write() {
+                                state.full_exr_cache = None;
+                                state.image_cache = Some(cache);
+                                let li = state
+                                    .image_cache
+                                    .as_ref()
+                                    .map(|c| c.layers_info.clone())
+                                    .unwrap_or_default();
+                                let img = state
+                                    .image_cache
+                                    .as_ref()
+                                    .map(|c| c.process_to_image(exposure0, gamma0, tonemap_mode0))
+                                    .unwrap_or_else(|| ui2.get_exr_image());
+                                (img, li)
+                            } else {
+                                (ui2.get_exr_image(), vec![])
+                            }
+                        };
+                        ui2.set_exr_image(img);
+                        apply_histogram_to_ui(&ui2, &app_state_c);
+                        if !layers_info_vec.is_empty() {
+                            let (layers_model, layers_colors, layers_kinds, layers_font_sizes) =
+                                create_layers_model(&layers_info_vec, &ui2, &app_state_c);
+                            ui2.set_layers_model(layers_model);
+                            ui2.set_layers_colors(layers_colors);
+                            ui2.set_layers_kinds(layers_kinds);
+                            ui2.set_layers_font_sizes(layers_font_sizes);
+                        }
+                        let mut log = ui2.get_console_text().to_string();
+                        if !log.is_empty() {
+                            log.push('\n');
+                        }
+                        log.push_str(&format!(
+                            "[hdr] loaded in {} ms",
+                            t_start.elapsed().as_millis()
+                        ));
+                        ui2.set_console_text(log.into());
+                        ui2.set_status_text("Loaded (HDR)".into());
+                        schedule_progress_finish_with_reset(ui2.as_weak());
+                    }
+                });
+            }
+            Err(e) => {
+                let _ = invoke_from_event_loop(move || {
+                    if let Some(ui2) = ui_weak.upgrade() {
+                        ui2.set_status_text(
+                            format!("Read error '{}': {}", get_file_name(&path_c), e).into(),
+                        );
+                        let mut log = ui2.get_console_text().to_string();
+                        if !log.is_empty() {
+                            log.push('\n');
+                        }
+                        log.push_str(&format!("[error] hdr open: {}", e));
+                        ui2.set_console_text(log.into());
+                        ui2.set_progress_value(0.0);
+                    }
+                });
+            }
+        }
+    });
+
+    push_console(&ui, &console, "[file] opening HDR file".to_string());
 }
 
 /// Loads EXR file metadata and updates UI

@@ -72,7 +72,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 let p = std::path::PathBuf::from(a);
                 if p.is_file() {
                     if let Some(ext) = p.extension().and_then(|e| e.to_str()) {
-                        if ext.eq_ignore_ascii_case("exr") {
+                        if ext.eq_ignore_ascii_case("exr") || ext.eq_ignore_ascii_case("hdr") {
                             return Some(p);
                         }
                     }
@@ -95,7 +95,7 @@ fn main() -> Result<(), slint::PlatformError> {
                             .filter(|p| {
                                 p.extension()
                                     .and_then(|e| e.to_str())
-                                    .map(|s| s.eq_ignore_ascii_case("exr"))
+                                    .map(|s| s.eq_ignore_ascii_case("exr") || s.eq_ignore_ascii_case("hdr"))
                                     .unwrap_or(false)
                             })
                             .count();
