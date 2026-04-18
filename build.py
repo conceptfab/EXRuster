@@ -7,6 +7,7 @@ Autor: Projekt rustExR - EXR File Viewer
 import subprocess
 import sys
 import os
+import re
 import time
 import argparse
 import shutil
@@ -41,6 +42,125 @@ class RustBuilder:
                 except Exception:
                     pass
         return None
+
+    @staticmethod
+    def _is_valid_semver(version: str) -> bool:
+        """Sprawdza czy wersja pasuje do formatu semver (np. 1.2.3, 1.2.3-alpha.1, 1.2.3+build)."""
+        pattern = r"^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$"
+        return bool(re.match(pattern, version))
+
+    @staticmethod
+    def _compare_semver(a: str, b: str) -> int:
+        """Porównuje major.minor.patch. Zwraca -1/0/1. Ignoruje suffiksy pre-release/build."""
+        def core(v: str) -> tuple:
+            base = re.split(r"[-+]", v, 1)[0]
+            return tuple(int(x) for x in base.split("."))
+        try:
+            pa, pb = core(a), core(b)
+        except ValueError:
+            return 0
+        return (pa > pb) - (pa < pb)
+
+    def set_cargo_version(self, new_version: str) -> bool:
+        """Aktualizuje pole version w sekcji [package] pliku Cargo.toml.
+
+        Podmienia tylko pierwsze wystąpienie 'version = "..."' w sekcji [package],
+        aby nie naruszyć innych sekcji (np. [dependencies]).
+        """
+        if not self._is_valid_semver(new_version):
+            print(f"❌ Niepoprawny format wersji: '{new_version}'")
+            print("   💡 Podpowiedź: Użyj semver np. 0.3.6 lub 1.2.3-alpha.1")
+            return False
+        try:
+            content = self.cargo_toml.read_text(encoding="utf-8")
+        except Exception as e:
+            print(f"❌ Nie można odczytać Cargo.toml: {e}")
+            return False
+
+        old_version = self._read_package_version()
+        if old_version == new_version:
+            print(f"ℹ️  Wersja w Cargo.toml jest już ustawiona na {new_version} — pomijam zapis")
+            return True
+
+        lines = content.splitlines(keepends=True)
+        in_package = False
+        replaced = False
+        version_re = re.compile(r'^(\s*version\s*=\s*")([^"]*)(".*)$')
+        for idx, raw in enumerate(lines):
+            stripped = raw.strip()
+            if stripped.startswith("[package]"):
+                in_package = True
+                continue
+            if in_package and stripped.startswith("["):
+                break
+            if in_package:
+                m = version_re.match(raw)
+                if m:
+                    lines[idx] = f'{m.group(1)}{new_version}{m.group(3)}'
+                    if not lines[idx].endswith("\n"):
+                        lines[idx] += "\n"
+                    replaced = True
+                    break
+        if not replaced:
+            print("❌ Nie znaleziono pola 'version' w sekcji [package] Cargo.toml")
+            return False
+        try:
+            self.cargo_toml.write_text("".join(lines), encoding="utf-8")
+        except Exception as e:
+            print(f"❌ Nie można zapisać Cargo.toml: {e}")
+            return False
+        print(f"📝 Zaktualizowano wersję w Cargo.toml: {old_version} → {new_version}")
+        print("   ℹ️  Cargo.lock zostanie automatycznie odświeżony podczas 'cargo build'")
+        return True
+
+    def read_cargo_lock_version(self, package_name: str) -> Optional[str]:
+        """Odczytuje wersję konkretnego pakietu z Cargo.lock.
+
+        Skanuje bloki [[package]] i zwraca wartość 'version' dla pasującej nazwy.
+        """
+        lock_path = self.project_dir / "Cargo.lock"
+        if not lock_path.exists():
+            return None
+        try:
+            content = lock_path.read_text(encoding="utf-8")
+        except Exception:
+            return None
+        try:
+            import tomllib  # type: ignore
+            data = tomllib.loads(content)
+            for pkg in data.get("package", []):
+                if pkg.get("name") == package_name:
+                    ver = pkg.get("version")
+                    if isinstance(ver, str):
+                        return ver.strip()
+        except Exception:
+            pass
+        # Fallback – prosty skan liniowy
+        name_re = re.compile(r'^\s*name\s*=\s*"([^"]+)"\s*$')
+        version_re = re.compile(r'^\s*version\s*=\s*"([^"]+)"\s*$')
+        current_name: Optional[str] = None
+        for raw in content.splitlines():
+            stripped = raw.strip()
+            if stripped == "[[package]]":
+                current_name = None
+                continue
+            m_name = name_re.match(raw)
+            if m_name:
+                current_name = m_name.group(1)
+                continue
+            m_ver = version_re.match(raw)
+            if m_ver and current_name == package_name:
+                return m_ver.group(1)
+        return None
+
+    def refresh_cargo_lock(self) -> bool:
+        """Synchronizuje Cargo.lock z Cargo.toml bez kompilacji (tylko pakiety workspace)."""
+        ok, _ = self.run_command(
+            ["cargo", "update", "--workspace"],
+            "Odświeżanie Cargo.lock (workspace)",
+            live_output=False,
+        )
+        return ok
 
     def detect_bin_name(self):
         """Wykrywa nazwę binarki na podstawie Cargo.toml.
@@ -303,7 +423,7 @@ class RustBuilder:
                 
         return success
 
-    def build_final(self, bin_name: str = "EXruster", out_name: str = "EXruster", out_dir: str = "dist", clean: bool = False, verbose: bool = False, jobs: Optional[int] = None) -> bool:
+    def build_final(self, bin_name: str = "EXruster", out_name: str = "EXruster", out_dir: str = "dist", clean: bool = False, verbose: bool = False, jobs: Optional[int] = None, set_version: Optional[str] = None, force_downgrade: bool = False) -> bool:
         """Buduje finalną wersję binarki w trybie release i kopiuje do katalogu out_dir bez uruchamiania."""
         self.print_header("🚀 FINALNY BUILD APLIKACJI")
         print(f"📁 Katalog projektu: {self.project_dir}")
@@ -311,67 +431,123 @@ class RustBuilder:
         print(f"🔧 Binarka (Cargo): {bin_name}")
         print(f"📦 Docelowa nazwa pliku: {out_name}")
         print(f"📤 Katalog wyjściowy: {out_dir}")
+        if set_version:
+            print(f"🔖 Nowa wersja do ustawienia: {set_version}")
 
         if not self.check_cargo_project():
             return False
 
-        # Zawsze spróbuj oczyścić katalog target przed finalnym buildem
-        self.print_step("0", "Czyszczenie katalogu 'target'")
-        cleaned_ok = self.clean_build(verbose=verbose)
-        if not cleaned_ok:
-            # Fallback: spróbuj ręcznie usunąć folder target (zignoruj błędy)
-            target_dir = self.project_dir / "target"
-            try:
-                if target_dir.exists():
-                    print(f"⚠️  cargo clean nie powiodło się – próba usunięcia: {target_dir}")
-                    shutil.rmtree(target_dir, ignore_errors=True)
-                    if target_dir.exists():
-                        print("⚠️  Nie udało się w pełni usunąć folderu 'target' (możliwe zablokowane pliki)")
-                    else:
-                        print("🗑️  Folder 'target' usunięty (fallback)")
-            except Exception as e:
-                print(f"⚠️  Fallback usunięcia 'target' nie powiódł się: {e}")
-
-        # Build release konkretnej binarki (build.rs doda datę kompilacji do wersji)
-        self.print_step("1", f"Kompilacja binarki '{bin_name}' w trybie release")
-        cmd = ["cargo", "build", "--release", "--bin", bin_name]
-        if jobs is not None:
-            cmd.extend(["-j", str(jobs)])
-        ok, _ = self.run_command(cmd, f"Kompilacja '{bin_name}' (release)", live_output=True)
-        if not ok:
-            return False
-
-        # Ścieżki artefaktów (zbudowany plik ma nazwę binarki z Cargo)
-        target_dir = self.project_dir / "target" / "release"
-        built_exe = f"{bin_name}.exe" if os.name == "nt" else bin_name
-        built_path = target_dir / built_exe
-        if not built_path.exists():
-            print(f"❌ Nie znaleziono skompilowanego pliku: {built_path}")
-            print(f"   💡 Podpowiedź: Sprawdź nazwę binarki (--bin {bin_name}) w Cargo.toml")
-            return False
-
-        # Przygotuj katalog wyjściowy (docelowa nazwa bez _nightly)
-        out_path = self.project_dir / out_dir
-        out_path.mkdir(parents=True, exist_ok=True)
-        final_exe = f"{out_name}.exe" if os.name == "nt" else out_name
-        final_path = out_path / final_exe
+        # Stan rollbacku: jeśli zmieniamy wersję, zachowaj oryginalne pliki
+        cargo_toml_backup: Optional[str] = None
+        success = False
 
         try:
-            shutil.copy2(built_path, final_path)
-        except Exception as e:
-            print(f"❌ Kopiowanie do {final_path} nie powiodło się: {e}")
-            print(f"   💡 Podpowiedź: Sprawdź uprawnienia i czy plik nie jest zablokowany przez inną aplikację")
-            return False
+            # Opcjonalnie: zmiana wersji w Cargo.toml przed kompilacją + fail-fast weryfikacja
+            if set_version:
+                self.print_step("0a", "Aktualizacja wersji w Cargo.toml")
+                old_version = self._read_package_version()
 
-        size_mb = final_path.stat().st_size / (1024 * 1024)
-        # Odczytaj wersję z Cargo.toml (build.rs dodał datę wewnątrz exe)
-        pkg_version = self._read_package_version()
-        build_datetime = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
-        version_str = f"{pkg_version} ({build_datetime})" if pkg_version else "?"
-        print(f"\n✅ Finalny plik: {final_path}")
-        print(f"   Rozmiar: {size_mb:.2f} MB")
-        print(f"   Wersja: {version_str}")
-        return True
+                # Ochrona przed downgrade'm
+                if old_version and self._compare_semver(set_version, old_version) < 0:
+                    if force_downgrade:
+                        print(f"⚠️  Downgrade {old_version} → {set_version} wymuszony przez --force-downgrade")
+                    else:
+                        print(f"❌ Próba downgrade'u: {old_version} → {set_version}")
+                        print("   💡 Podpowiedź: Jeśli to zamierzone, dodaj flagę --force-downgrade")
+                        return False
+
+                # Backup aktualnego Cargo.toml przed zapisem
+                try:
+                    cargo_toml_backup = self.cargo_toml.read_text(encoding="utf-8")
+                except Exception as e:
+                    print(f"❌ Nie można odczytać Cargo.toml do backupu: {e}")
+                    return False
+
+                if not self.set_cargo_version(set_version):
+                    return False
+
+                # Fail-fast: odśwież i zweryfikuj Cargo.lock zanim ruszymy z ciężką kompilacją
+                self.print_step("0b", "Odświeżanie i weryfikacja Cargo.lock")
+                if not self.refresh_cargo_lock():
+                    print("❌ Nie udało się odświeżyć Cargo.lock")
+                    return False
+                lock_version = self.read_cargo_lock_version(bin_name)
+                if lock_version != set_version:
+                    print(f"❌ Cargo.lock NIE pasuje do oczekiwanej wersji po odświeżeniu!")
+                    print(f"   Oczekiwano: {set_version}")
+                    print(f"   W Cargo.lock: {lock_version or '(brak wpisu)'}")
+                    return False
+                print(f"🔐 Cargo.lock zweryfikowany: {bin_name} = {lock_version}")
+
+            # Zawsze spróbuj oczyścić katalog target przed finalnym buildem
+            self.print_step("0", "Czyszczenie katalogu 'target'")
+            cleaned_ok = self.clean_build(verbose=verbose)
+            if not cleaned_ok:
+                # Fallback: spróbuj ręcznie usunąć folder target (zignoruj błędy)
+                target_dir = self.project_dir / "target"
+                try:
+                    if target_dir.exists():
+                        print(f"⚠️  cargo clean nie powiodło się – próba usunięcia: {target_dir}")
+                        shutil.rmtree(target_dir, ignore_errors=True)
+                        if target_dir.exists():
+                            print("⚠️  Nie udało się w pełni usunąć folderu 'target' (możliwe zablokowane pliki)")
+                        else:
+                            print("🗑️  Folder 'target' usunięty (fallback)")
+                except Exception as e:
+                    print(f"⚠️  Fallback usunięcia 'target' nie powiódł się: {e}")
+
+            # Build release konkretnej binarki (build.rs doda datę kompilacji do wersji)
+            self.print_step("1", f"Kompilacja binarki '{bin_name}' w trybie release")
+            cmd = ["cargo", "build", "--release", "--bin", bin_name]
+            if jobs is not None:
+                cmd.extend(["-j", str(jobs)])
+            ok, _ = self.run_command(cmd, f"Kompilacja '{bin_name}' (release)", live_output=True)
+            if not ok:
+                return False
+
+            # Ścieżki artefaktów (zbudowany plik ma nazwę binarki z Cargo)
+            target_dir = self.project_dir / "target" / "release"
+            built_exe = f"{bin_name}.exe" if os.name == "nt" else bin_name
+            built_path = target_dir / built_exe
+            if not built_path.exists():
+                print(f"❌ Nie znaleziono skompilowanego pliku: {built_path}")
+                print(f"   💡 Podpowiedź: Sprawdź nazwę binarki (--bin {bin_name}) w Cargo.toml")
+                return False
+
+            # Przygotuj katalog wyjściowy (docelowa nazwa bez _nightly)
+            out_path = self.project_dir / out_dir
+            out_path.mkdir(parents=True, exist_ok=True)
+            final_exe = f"{out_name}.exe" if os.name == "nt" else out_name
+            final_path = out_path / final_exe
+
+            try:
+                shutil.copy2(built_path, final_path)
+            except Exception as e:
+                print(f"❌ Kopiowanie do {final_path} nie powiodło się: {e}")
+                print(f"   💡 Podpowiedź: Sprawdź uprawnienia i czy plik nie jest zablokowany przez inną aplikację")
+                return False
+
+            size_mb = final_path.stat().st_size / (1024 * 1024)
+            # Odczytaj wersję z Cargo.toml (build.rs dodał datę wewnątrz exe)
+            pkg_version = self._read_package_version()
+            build_datetime = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
+            version_str = f"{pkg_version} ({build_datetime})" if pkg_version else "?"
+            print(f"\n✅ Finalny plik: {final_path}")
+            print(f"   Rozmiar: {size_mb:.2f} MB")
+            print(f"   Wersja: {version_str}")
+            success = True
+            return True
+        finally:
+            # Rollback Cargo.toml jeśli cokolwiek po bumpie wersji poszło nie tak
+            # (KeyboardInterrupt również tu trafia — finally wykona się przed propagacją)
+            if not success and cargo_toml_backup is not None:
+                try:
+                    self.cargo_toml.write_text(cargo_toml_backup, encoding="utf-8")
+                    print(f"↩️  Przywrócono oryginalny Cargo.toml (rollback po błędzie)")
+                    print(f"   ℹ️  Cargo.lock zostanie zsynchronizowany przy następnym wywołaniu cargo")
+                except Exception as e:
+                    print(f"⚠️  Nie udało się przywrócić Cargo.toml: {e}")
+                    print(f"   💡 Ręcznie przywróć wersję w [package] w Cargo.toml")
         
     def check_project(self):
         """Sprawdza projekt bez kompilacji"""
@@ -477,6 +653,7 @@ Przykłady użycia:
   python build.py --run-tests        # Kompilacja z testami
   python build.py --example simple   # Kompilacja i uruchomienie przykładu
   python build.py --clean-only       # Tylko czyszczenie
+  python build.py --set-version 0.3.6  # Zmień wersję i zbuduj finalny artefakt
         """
     )
     
@@ -558,6 +735,20 @@ Przykłady użycia:
         help="Liczba zadań cargo (np. 1 przy LNK1104)"
     )
 
+    parser.add_argument(
+        "--set-version",
+        type=str,
+        default=None,
+        metavar="X.Y.Z",
+        help="Zmień wersję w [package] Cargo.toml przed kompilacją (semver). Cargo.lock zostanie odświeżony i zweryfikowany przed buildem."
+    )
+
+    parser.add_argument(
+        "--force-downgrade",
+        action="store_true",
+        help="Pozwól na zmianę wersji w dół (domyślnie blokowane przez ochronę przed downgrade)"
+    )
+
     args = parser.parse_args()
     
     # Tworzenie buildera
@@ -603,7 +794,7 @@ Przykłady użycia:
             if not builder.check_cargo_project():
                 print(f"\n⏱️  Proces przerwany po {time.time() - start_time:.1f}s")
                 sys.exit(1)
-            success = builder.build_final(bin_name=args.bin, out_name=args.out_name, out_dir=args.out_dir, clean=args.clean, verbose=args.verbose, jobs=args.jobs)
+            success = builder.build_final(bin_name=args.bin, out_name=args.out_name, out_dir=args.out_dir, clean=args.clean, verbose=args.verbose, jobs=args.jobs, set_version=args.set_version, force_downgrade=args.force_downgrade)
             elapsed = time.time() - start_time
             print(f"\n⏱️  Cały proces zakończony w {elapsed:.1f}s")
             sys.exit(0 if success else 1)

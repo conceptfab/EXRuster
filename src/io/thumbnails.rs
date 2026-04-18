@@ -262,11 +262,11 @@ pub fn generate_single_exr_thumbnail_work_new(
 
     let pixels = thumbnail.into_raw();
 
-    let file_name = exr_path
+    let raw_name = exr_path
         .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("?")
-        .to_string();
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "?".to_string());
+    let file_name = crate::utils::normalize_display_name(&raw_name);
     let file_size_bytes = fs::metadata(exr_path).map(|m| m.len()).unwrap_or(0);
 
     Ok(ExrThumbWork {

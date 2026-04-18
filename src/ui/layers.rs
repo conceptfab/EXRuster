@@ -44,11 +44,11 @@ pub fn handle_layer_tree_click(
     let trimmed = clicked_item.trim();
 
     // GRUPA - sprawdź czy zawiera strzałkę grupy
-    if (trimmed.contains("▼ 📂") || trimmed.contains("▶ 📂")) && !trimmed.contains("📁") {
+    if (trimmed.starts_with("▼ 📁") || trimmed.starts_with("▶ 📁")) && !trimmed.starts_with("  📁") {
         if let Some(ui) = ui_handle.upgrade() {
             let group_name = trimmed
-                .trim_start_matches("▼ 📂")
-                .trim_start_matches("▶ 📂")
+                .trim_start_matches("▼ 📁")
+                .trim_start_matches("▶ 📁")
                 .trim()
                 .to_string();
 

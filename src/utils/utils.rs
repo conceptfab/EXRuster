@@ -61,6 +61,47 @@ pub fn get_channel_info(channel: &str, ui: &AppWindow) -> (Color, String, String
     }
 }
 
+/// Normalizuje nazwę do wyświetlenia: mapuje popularne warianty Unicode
+/// (pełnoszerokościowe, typograficzne, matematyczne) na odpowiedniki ASCII,
+/// żeby font UI (Geist) nie renderował ich jako „tofu" (□).
+/// Nie dotyka oryginalnej ścieżki pliku — tylko stringa widocznego w UI.
+pub fn normalize_display_name(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    for c in name.chars() {
+        let replacement = match c {
+            // pełnoszerokościowe nawiasy i znaki
+            '\u{FF08}' => Some('('),
+            '\u{FF09}' => Some(')'),
+            '\u{FF3B}' => Some('['),
+            '\u{FF3D}' => Some(']'),
+            '\u{FF5B}' => Some('{'),
+            '\u{FF5D}' => Some('}'),
+            '\u{FF0D}' => Some('-'),
+            '\u{FF0E}' => Some('.'),
+            '\u{FF0F}' => Some('/'),
+            '\u{FF3F}' => Some('_'),
+            '\u{FF3C}' => Some('\\'),
+            // nawiasy specjalne
+            '\u{2768}' | '\u{276A}' | '\u{27EE}' | '\u{2985}' => Some('('),
+            '\u{2769}' | '\u{276B}' | '\u{27EF}' | '\u{2986}' => Some(')'),
+            '\u{276C}' | '\u{2770}' | '\u{27E8}' => Some('<'),
+            '\u{276D}' | '\u{2771}' | '\u{27E9}' => Some('>'),
+            '\u{3010}' | '\u{3014}' | '\u{27E6}' => Some('['),
+            '\u{3011}' | '\u{3015}' | '\u{27E7}' => Some(']'),
+            // typograficzne myślniki i cudzysłowy
+            '\u{2013}' | '\u{2014}' | '\u{2212}' => Some('-'),
+            '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{2032}' => Some('\''),
+            '\u{201C}' | '\u{201D}' | '\u{201E}' | '\u{2033}' => Some('"'),
+            _ => None,
+        };
+        match replacement {
+            Some(a) => out.push(a),
+            None => out.push(c),
+        }
+    }
+    out
+}
+
 /// Normalizacja nazw kanałów do standardowych skrótów R/G/B/A
 #[inline]
 pub fn normalize_channel_name(channel: &str) -> String {

@@ -427,7 +427,7 @@ pub fn setup_panel_callbacks(
                                     ui.as_weak(),
                                     dir,
                                     console_model.clone(),
-                                    130,
+                                    crate::ui::browser_handlers::CANONICAL_THUMB_HEIGHT,
                                 );
                             }
                         }

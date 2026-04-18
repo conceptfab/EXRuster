@@ -135,7 +135,7 @@ export component AppWindow inherits Window {
 
     // Dolny panel (wariant A: 0px gdy ukryty)
     in-out property <bool> bottom-panel-visible: false;
-    in-out property <length> bottom-panel-expanded-height: 160px;
+    in-out property <length> bottom-panel-expanded-height: 320px;
     property <length> bottom-panel-current-height: bottom-panel-visible ? bottom-panel-expanded-height : 0px;
 
     // Callbacks
@@ -1197,19 +1197,34 @@ export component AppWindow inherits Window {
             triggered => { thumbs_panel.ctx_visible = false; self.running = false; }
         }
 
-        // Top-right drag handle for resizing thumbnail panel
-        Rectangle {
-            x: parent.width - 4px;
-            y: 0px; 
-            width: 4px;
-            height: parent.height;
-            background: Kolory.przezroczysty;
-            
-            TouchArea {
+        // Top drag handle for resizing thumbnail panel vertically
+        resize_handle := Rectangle {
+            x: 0px;
+            y: 0px;
+            width: parent.width;
+            height: 8px;
+            background: resize_area.pressed ? Kolory.hover
+                        : (resize_area.has-hover ? Kolory.suwak_tor : Kolory.suwak_tlo);
+            border-color: Kolory.obramowanie;
+            border-width: 1px;
+
+            // Grip indicator - three short lines in the middle
+            HorizontalLayout {
+                alignment: center;
+                spacing: 3px;
+                padding: 0px;
+                y: (parent.height - self.height) / 2;
+                height: 2px;
+                Rectangle { width: 18px; height: 2px; background: Kolory.tekst_slabszy; border-radius: 1px; }
+                Rectangle { width: 18px; height: 2px; background: Kolory.tekst_slabszy; border-radius: 1px; }
+                Rectangle { width: 18px; height: 2px; background: Kolory.tekst_slabszy; border-radius: 1px; }
+            }
+
+            resize_area := TouchArea {
                 width: parent.width;
-                height: parent.height; 
+                height: parent.height;
                 mouse-cursor: ns-resize;
-                
+
                 moved => {
                     if (self.pressed) {
                         root.bottom-panel-expanded-height = max(80px, min(root.height - 124px,

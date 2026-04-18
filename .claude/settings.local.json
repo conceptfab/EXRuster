@@ -54,7 +54,11 @@
       "Bash(awk '/^#\\\\[cfg\\\\\\(test\\\\\\)\\\\]/,0' src/processing/tone_mapping.rs)",
       "Read(//c/Users/micz/.claude/plugins/cache/claude-plugins-official/superpowers/b55764852ac7/skills/subagent-driven-development/**)",
       "Bash(python -c \"import subprocess; r = subprocess.run\\(['cargo', 'metadata', '--format-version', '1', '--no-deps'], capture_output=True, text=True\\); import json; meta = json.loads\\(r.stdout\\); [print\\(p['name'], p['version']\\) for p in meta['packages'] if p['name'] in \\('arboard', 'rfd'\\)]\")",
-      "mcp__plugin_claude-mem_mcp-search__smart_outline"
+      "mcp__plugin_claude-mem_mcp-search__smart_outline",
+      "Bash(python -c \"import build; b=build.RustBuilder\\('.'\\); print\\('valid 0.3.6:', b._is_valid_semver\\('0.3.6'\\)\\); print\\('valid 1.2.3-alpha.1:', b._is_valid_semver\\('1.2.3-alpha.1'\\)\\); print\\('invalid abc:', b._is_valid_semver\\('abc'\\)\\); print\\('current Cargo.toml:', b._read_package_version\\(\\)\\); print\\('current Cargo.lock EXruster:', b.read_cargo_lock_version\\('EXruster'\\)\\)\")",
+      "Bash(python build.py --help)",
+      "Bash(python -c ' *)",
+      "Bash(python build.py --set-version 0.1.0 --help)"
     ],
     "deny": [],
     "ask": []

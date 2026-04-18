@@ -520,7 +520,7 @@ pub fn create_layers_model(
         // Clean display without markers - use buffer to avoid allocation
         format_buffer.clear();
         use std::fmt::Write;
-        write!(&mut format_buffer, "{} 📂 {}", arrow, group_name).unwrap();
+        write!(&mut format_buffer, "{} 📁 {}", arrow, group_name).unwrap();
         items.push(format_buffer.clone().into());
         colors.push(ui.get_layers_color_group());
         font_sizes.push(12);

@@ -110,41 +110,26 @@ pub fn handle_copy_current_file_to(
     }
 }
 
-pub fn size_level_to_height(level: i32) -> u32 {
-    match level {
-        2 => 260,
-        3 => 390,
-        _ => 130,
-    }
+/// Canonical thumbnail pixel height — thumbnails are generated once at this
+/// size and the UI scales the cached pixmap for every size level.
+pub const CANONICAL_THUMB_HEIGHT: u32 = 390;
+
+pub fn size_level_to_height(_level: i32) -> u32 {
+    CANONICAL_THUMB_HEIGHT
 }
 
 pub fn handle_thumbnail_size_changed(
     ui_handle: Weak<AppWindow>,
-    app_state: SharedAppState,
+    _app_state: SharedAppState,
     console: ConsoleModel,
     level: i32,
 ) {
     let Some(ui) = ui_handle.upgrade() else { return; };
-    let height = size_level_to_height(level);
-
-    // TODO: unlike the other handlers here which use match+log_error on poison,
-    // the spec calls for .ok() which silently drops a poisoned-lock error.
-    let folder_opt = app_state
-        .read()
-        .ok()
-        .and_then(|s| s.current_browsed_folder.clone());
-
-    let Some(folder) = folder_opt else {
-        ui.set_status_text("No folder selected".into());
-        return;
-    };
-
     push_console(
         &ui,
         &console,
-        format!("[browser] thumbnail size -> {}px ({})", height, folder.display()),
+        format!("[browser] thumbnail size level -> x{} (cached pixmap rescaled in UI)", level),
     );
-    crate::ui::load_thumbnails_for_directory(ui.as_weak(), &folder, console, height);
 }
 
 /// Rebuild the Slint `folder-tree` model from the current `AppState`.

@@ -28,9 +28,6 @@ pub fn load_thumbnails_for_directory(
         let prog = std::sync::Arc::new(UiProgress::new(ui.as_weak()));
         prog.start_indeterminate(Some("🔍 Scanning folder for EXR files..."));
 
-        // Clear cache to force regeneration of thumbnails with new parameters
-        crate::io::thumbnails::clear_thumb_cache();
-
         // Use constant, optimized values for thumbnails (not from UI!)
         let exposure = 0.0; // Neutral exposure for thumbnails
         let gamma = 2.2; // Standard gamma for thumbnails
