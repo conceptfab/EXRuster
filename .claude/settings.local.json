@@ -53,7 +53,8 @@
       "Bash(timeout 30s cargo test channel_classification -- --nocapture)",
       "Bash(awk '/^#\\\\[cfg\\\\\\(test\\\\\\)\\\\]/,0' src/processing/tone_mapping.rs)",
       "Read(//c/Users/micz/.claude/plugins/cache/claude-plugins-official/superpowers/b55764852ac7/skills/subagent-driven-development/**)",
-      "Bash(python -c \"import subprocess; r = subprocess.run\\(['cargo', 'metadata', '--format-version', '1', '--no-deps'], capture_output=True, text=True\\); import json; meta = json.loads\\(r.stdout\\); [print\\(p['name'], p['version']\\) for p in meta['packages'] if p['name'] in \\('arboard', 'rfd'\\)]\")"
+      "Bash(python -c \"import subprocess; r = subprocess.run\\(['cargo', 'metadata', '--format-version', '1', '--no-deps'], capture_output=True, text=True\\); import json; meta = json.loads\\(r.stdout\\); [print\\(p['name'], p['version']\\) for p in meta['packages'] if p['name'] in \\('arboard', 'rfd'\\)]\")",
+      "mcp__plugin_claude-mem_mcp-search__smart_outline"
     ],
     "deny": [],
     "ask": []
