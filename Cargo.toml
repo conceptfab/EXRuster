@@ -45,6 +45,8 @@ windows = { version = "0.61.3", features = [
 [build-dependencies]
 chrono = "0.4"
 slint-build = "1.12.1"
+
+[target.'cfg(windows)'.build-dependencies]
 winres = "0.1"
 
 [profile.dev]
