@@ -479,15 +479,7 @@ pub(crate) fn load_all_channels_for_layer_from_full(
     }
 
     for layer in full.layers.iter() {
-        let matches = if layer_name.is_empty() && layer.name.is_empty() {
-            true
-        } else if layer_name.is_empty() || layer.name.is_empty() {
-            false
-        } else {
-            layer.name.eq_ignore_ascii_case(layer_name)
-                || layer.name.as_bytes().windows(layer_name.len()).any(|w| w.eq_ignore_ascii_case(layer_name.as_bytes()))
-                || layer_name.as_bytes().windows(layer.name.len()).any(|w| w.eq_ignore_ascii_case(layer.name.as_bytes()))
-        };
+        let matches = layer.name.eq_ignore_ascii_case(layer_name);
         if matches {
             if let Some(p) = _progress {
                 p.set(0.35, Some("Copying channel data..."));
@@ -773,4 +765,38 @@ impl ImageCache {
         Image::from_rgba8(buffer)
     }
 
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::io::full_exr_cache::{FullExrCacheData, FullLayer};
+
+    fn make_layer(name: &str, fill: f32) -> FullLayer {
+        FullLayer {
+            name: name.to_string(),
+            width: 2,
+            height: 1,
+            channel_names: vec!["R".into(), "G".into(), "B".into()],
+            channel_data: Arc::from(vec![fill; 6].into_boxed_slice()),
+        }
+    }
+
+    #[test]
+    fn load_layer_matches_exact_name_not_substring() {
+        let full = Arc::new(FullExrCacheData {
+            layers: vec![make_layer("Light", 1.0), make_layer("LightMix", 2.0)],
+        });
+        let lc = load_all_channels_for_layer_from_full(&full, "LightMix", None).unwrap();
+        assert_eq!(lc.channel_data[0], 2.0, "must return LightMix, not Light");
+    }
+
+    #[test]
+    fn load_layer_is_case_insensitive() {
+        let full = Arc::new(FullExrCacheData {
+            layers: vec![make_layer("Beauty", 3.0)],
+        });
+        let lc = load_all_channels_for_layer_from_full(&full, "beauty", None).unwrap();
+        assert_eq!(lc.channel_data[0], 3.0);
+    }
 }
