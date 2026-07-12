@@ -191,9 +191,11 @@ pub fn srgb_oetf(x: f32) -> f32 {
     srgb_oetf_lut(x)
 }
 
+/// Gamma encode a linear value. Input is clamped to [0,1] to match the SIMD
+/// variant — an unclamped powf on out-of-range input diverges from it.
 #[inline]
 pub fn apply_gamma_lut(value: f32, gamma_inv: f32) -> f32 {
-    value.powf(gamma_inv)
+    value.clamp(0.0, 1.0).powf(gamma_inv)
 }
 
 #[inline]
@@ -390,8 +392,10 @@ mod tests {
 
     #[test]
     fn test_simd_gamma_lut_optimization() {
-        // Test that SIMD version produces same results as scalar
-        let test_values = f32x4::from_array([0.0, 0.5, 1.0, 2.0]);
+        // SIMD and scalar must agree, including on out-of-range input:
+        // both clamp to [0,1] before encoding.
+        const INPUTS: [f32; 4] = [-1.0, 0.5, 1.0, 2.0];
+        let test_values = f32x4::from_array(INPUTS);
         let gamma_inv = 1.0 / 2.2;
 
         let simd_result = apply_gamma_lut_simd(test_values, gamma_inv);
@@ -399,16 +403,20 @@ mod tests {
 
         // Compare with scalar version
         for i in 0..4 {
-            let input = [0.0, 0.5, 1.0, 2.0][i];
-            let scalar_result = apply_gamma_lut(input, gamma_inv);
+            let scalar_result = apply_gamma_lut(INPUTS[i], gamma_inv);
             let diff = (simd_array[i] - scalar_result).abs();
             assert!(
                 diff < 1e-6,
-                "SIMD and scalar results differ: {} vs {}",
+                "SIMD and scalar results differ for input {}: {} vs {}",
+                INPUTS[i],
                 simd_array[i],
                 scalar_result
             );
         }
+
+        // Out-of-range input saturates rather than extrapolating.
+        assert_eq!(simd_array[0], 0.0, "negative input must clamp to 0");
+        assert_eq!(simd_array[3], 1.0, "input above 1 must clamp to 1");
     }
 
     #[test]
