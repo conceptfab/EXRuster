@@ -100,7 +100,7 @@ impl ImageCache {
 
         // Spróbuj wyliczyć macierz konwersji primaries → sRGB na podstawie atrybutu chromaticities (dla wybranej warstwy/partu)
         let mut color_matrices = HashMap::new();
-        let color_matrix_rgb_to_srgb = crate::processing::color_processing::compute_rgb_to_srgb_matrix_from_file_for_layer_cached(path, &best_layer).ok();
+        let color_matrix_rgb_to_srgb = crate::processing::color_processing::compute_rgb_to_srgb_matrix_from_file_for_layer_cached(path, &best_layer);
         if let Some(matrix) = color_matrix_rgb_to_srgb {
             color_matrices.insert(best_layer.clone(), matrix);
         }
@@ -155,7 +155,7 @@ impl ImageCache {
 
         // Color matrix
         let mut color_matrices = HashMap::new();
-        let color_matrix_rgb_to_srgb = crate::processing::color_processing::compute_rgb_to_srgb_matrix_from_file_for_layer_cached(path, &best_layer).ok();
+        let color_matrix_rgb_to_srgb = crate::processing::color_processing::compute_rgb_to_srgb_matrix_from_file_for_layer_cached(path, &best_layer);
         if let Some(matrix) = color_matrix_rgb_to_srgb {
             color_matrices.insert(best_layer.clone(), matrix);
         }
@@ -263,7 +263,7 @@ impl ImageCache {
         if self.color_matrices.contains_key(layer_name) {
             self.color_matrix_rgb_to_srgb = self.color_matrices.get(layer_name).cloned();
         } else {
-            self.color_matrix_rgb_to_srgb = crate::processing::color_processing::compute_rgb_to_srgb_matrix_from_file_for_layer_cached(path, layer_name).ok();
+            self.color_matrix_rgb_to_srgb = crate::processing::color_processing::compute_rgb_to_srgb_matrix_from_file_for_layer_cached(path, layer_name);
             if let Some(matrix) = self.color_matrix_rgb_to_srgb {
                 self.color_matrices.insert(layer_name.to_string(), matrix);
             }

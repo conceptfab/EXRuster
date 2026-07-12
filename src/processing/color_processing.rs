@@ -8,14 +8,17 @@ use std::sync::RwLock;
 
 // Global cache dla color matrices - persistent między sesjami
 // RwLock allows multiple concurrent readers, improving performance for cache hits
-static COLOR_MATRIX_CACHE: LazyLock<RwLock<LruCache<(PathBuf, String), Mat3>>> =
+type ColorMatrixCacheKey = (PathBuf, String);
+type ColorMatrixCache = LruCache<ColorMatrixCacheKey, Option<Mat3>>;
+
+static COLOR_MATRIX_CACHE: LazyLock<RwLock<ColorMatrixCache>> =
     LazyLock::new(|| RwLock::new(LruCache::new(std::num::NonZeroUsize::new(100).unwrap())));
 
 // Make the main function public
 pub fn compute_rgb_to_srgb_matrix_from_file_for_layer(
     path: &Path,
     layer_name: &str,
-) -> anyhow::Result<Mat3> {
+) -> anyhow::Result<Option<Mat3>> {
     // Odczytaj wyłącznie nagłówki/atrybuty (bez danych pikseli)
     // Wczytaj tylko meta-dane (nagłówki) bez pikseli
     let meta = ::exr::meta::MetaData::read_from_file(path, /*pedantic=*/ false)?;
@@ -77,15 +80,16 @@ pub fn compute_rgb_to_srgb_matrix_from_file_for_layer(
         }
     }
 
-    let (rx, ry, gx, gy, bx, by, wx, wy) = primaries
-        .ok_or_else(|| anyhow::anyhow!("chromaticities attribute not found or incomplete"))?;
+    let Some((rx, ry, gx, gy, bx, by, wx, wy)) = primaries else {
+        // No chromaticities attribute — a valid, cacheable outcome (assume sRGB).
+        return Ok(None);
+    };
 
     let m_src = rgb_to_xyz_from_primaries(rx, ry, gx, gy, bx, by, wx, wy);
     // Adaptacja Bradford do D65
     let m_adapt = bradford_adaptation_matrix((wx, wy), (0.3127, 0.3290));
     let m_xyz_to_srgb = xyz_to_srgb_matrix();
-    let m = m_xyz_to_srgb * (m_adapt * m_src);
-    Ok(m)
+    Ok(Some(m_xyz_to_srgb * (m_adapt * m_src)))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -166,19 +170,19 @@ fn xy_to_xyz(x: f64, y: f64) -> DVec3 {
 pub fn compute_rgb_to_srgb_matrix_from_file_for_layer_cached(
     path: &Path,
     layer_name: &str,
-) -> anyhow::Result<Mat3> {
+) -> Option<Mat3> {
     let key = (path.to_path_buf(), layer_name.to_string());
 
     // Fast path: Try read lock first for cache hit (allows concurrent reads)
     // Use peek() instead of get() to avoid needing mutable access for LRU update
     if let Ok(cache) = COLOR_MATRIX_CACHE.read() {
-        if let Some(&matrix) = cache.peek(&key) {
+        if let Some(&cached) = cache.peek(&key) {
             log_info!(
                 "Color matrix cache HIT for {}:{}",
                 path.display(),
                 layer_name
             );
-            return Ok(matrix);
+            return cached;
         }
     }
 
@@ -189,14 +193,17 @@ pub fn compute_rgb_to_srgb_matrix_from_file_for_layer_cached(
         layer_name
     );
 
-    let matrix = compute_rgb_to_srgb_matrix_from_file_for_layer(path, layer_name)?;
-
-    // Write path: Use write lock only for cache update
-    if let Ok(mut cache) = COLOR_MATRIX_CACHE.write() {
-        cache.put(key, matrix);
+    match compute_rgb_to_srgb_matrix_from_file_for_layer(path, layer_name) {
+        Ok(result) => {
+            // Cache both Some(matrix) and None ("no chromaticities") outcomes.
+            if let Ok(mut cache) = COLOR_MATRIX_CACHE.write() {
+                cache.put(key, result);
+            }
+            result
+        }
+        // I/O errors are not cached — the file may appear or change later.
+        Err(_) => None,
     }
-
-    Ok(matrix)
 }
 
 
@@ -214,7 +221,7 @@ mod tests {
         let _ = COLOR_MATRIX_CACHE
             .write()
             .unwrap()
-            .put((test_file.clone(), "test".to_string()), Mat3::IDENTITY);
+            .put((test_file.clone(), "test".to_string()), Some(Mat3::IDENTITY));
 
         let start = std::time::Instant::now();
         let handles: Vec<_> = (0..10)
