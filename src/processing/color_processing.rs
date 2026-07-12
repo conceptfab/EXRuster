@@ -1,4 +1,4 @@
-use crate::log_info;
+use crate::{log_info, log_warn};
 use ::exr::meta::attribute::AttributeValue;
 use glam::{DMat3, DVec3, Mat3};
 use lru::LruCache;
@@ -8,11 +8,35 @@ use std::sync::RwLock;
 
 // Global cache dla color matrices - persistent między sesjami
 // RwLock allows multiple concurrent readers, improving performance for cache hits
-type ColorMatrixCacheKey = (PathBuf, String);
+//
+// Klucz zawiera mtime pliku: dzięki temu ponowny zapis pliku "w miejscu" (typowy
+// workflow artysty) unieważnia wpis, zamiast zwracać nieaktualny wynik — również
+// nieaktualne `None` ("brak chromaticities").
+type ColorMatrixCacheKey = (PathBuf, String, u64);
 type ColorMatrixCache = LruCache<ColorMatrixCacheKey, Option<Mat3>>;
 
 static COLOR_MATRIX_CACHE: LazyLock<RwLock<ColorMatrixCache>> =
     LazyLock::new(|| RwLock::new(LruCache::new(std::num::NonZeroUsize::new(100).unwrap())));
+
+/// Mtime pliku w sekundach od epoki; 0 gdy nie da się go odczytać.
+/// (Lokalny odpowiednik `file_mtime_u64` z `io::thumbnails` — celowo nie
+/// współdzielony, by nie wiązać `processing` z `io::thumbnails`.)
+fn file_mtime_u64(path: &Path) -> u64 {
+    std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+fn color_matrix_cache_key(path: &Path, layer_name: &str) -> ColorMatrixCacheKey {
+    (
+        path.to_path_buf(),
+        layer_name.to_string(),
+        file_mtime_u64(path),
+    )
+}
 
 // Make the main function public
 pub fn compute_rgb_to_srgb_matrix_from_file_for_layer(
@@ -171,7 +195,7 @@ pub fn compute_rgb_to_srgb_matrix_from_file_for_layer_cached(
     path: &Path,
     layer_name: &str,
 ) -> Option<Mat3> {
-    let key = (path.to_path_buf(), layer_name.to_string());
+    let key = color_matrix_cache_key(path, layer_name);
 
     // Fast path: Try read lock first for cache hit (allows concurrent reads)
     // Use peek() instead of get() to avoid needing mutable access for LRU update
@@ -202,15 +226,102 @@ pub fn compute_rgb_to_srgb_matrix_from_file_for_layer_cached(
             result
         }
         // I/O errors are not cached — the file may appear or change later.
-        Err(_) => None,
+        // Log them, otherwise a corrupt/unreadable header is indistinguishable
+        // from a file that legitimately has no chromaticities attribute.
+        Err(e) => {
+            log_warn!(
+                "Failed to read color matrix from {}:{} ({e}); assuming sRGB",
+                path.display(),
+                layer_name
+            );
+            None
+        }
     }
 }
-
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::thread;
+
+    /// Unikalna ścieżka w katalogu tymczasowym (brak zależności `tempfile` w projekcie).
+    fn unique_temp_path(tag: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("exruster_{tag}_{}_{nanos}.exr", std::process::id()))
+    }
+
+    /// Zapisuje minimalny, poprawny plik EXR — bez atrybutu `chromaticities`.
+    fn write_exr_without_chromaticities(path: &Path) {
+        ::exr::prelude::write_rgba_file(path, 2, 2, |_x, _y| (0.5f32, 0.5f32, 0.5f32, 1.0f32))
+            .expect("failed to write test exr");
+    }
+
+    #[test]
+    fn none_result_is_cached_for_file_without_chromaticities() {
+        let path = unique_temp_path("no_chroma");
+        write_exr_without_chromaticities(&path);
+
+        // Plik bez chromaticities → brak macierzy (traktujemy jak sRGB).
+        let result = compute_rgb_to_srgb_matrix_from_file_for_layer_cached(&path, "");
+        assert!(
+            result.is_none(),
+            "file has no chromaticities → expected None"
+        );
+
+        // Sedno zmiany: negatywny wynik JEST w cache'u (wpis istnieje, wartość = None),
+        // więc kolejne kliknięcia warstwy nie czytają nagłówka z dysku ponownie.
+        let key = color_matrix_cache_key(&path, "");
+        let cached = COLOR_MATRIX_CACHE.read().unwrap().peek(&key).copied();
+        assert_eq!(
+            cached,
+            Some(None),
+            "negative (None) outcome must be cached, not recomputed on every call"
+        );
+
+        // Powtórne wywołanie nadal zwraca None (tym razem z cache'u).
+        assert!(compute_rgb_to_srgb_matrix_from_file_for_layer_cached(&path, "").is_none());
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn io_error_is_not_cached() {
+        let path = unique_temp_path("missing");
+        assert!(!path.exists(), "test path must not exist");
+
+        // Nieistniejący plik → błąd I/O → None, ale NIC nie trafia do cache'u
+        // (plik może się pojawić później).
+        let result = compute_rgb_to_srgb_matrix_from_file_for_layer_cached(&path, "");
+        assert!(result.is_none(), "I/O error surfaces as None");
+
+        let key = color_matrix_cache_key(&path, "");
+        let cached = COLOR_MATRIX_CACHE.read().unwrap().peek(&key).copied();
+        assert_eq!(cached, None, "I/O errors must NOT create a cache entry");
+    }
+
+    #[test]
+    fn cache_key_includes_file_mtime() {
+        // Klucz zawiera mtime pliku — zapis pliku "w miejscu" daje inny klucz,
+        // więc stary (również negatywny) wynik nie jest zwracany jako aktualny.
+        let path = unique_temp_path("mtime");
+        write_exr_without_chromaticities(&path);
+
+        let key = color_matrix_cache_key(&path, "");
+        assert_eq!(key.0, path);
+        assert_ne!(
+            key.2, 0,
+            "existing file must have a non-zero mtime in the key"
+        );
+
+        // Ten sam plik z inną mtime → inny klucz (a więc cache miss).
+        let stale_key = (key.0.clone(), key.1.clone(), key.2 - 1);
+        assert_ne!(key, stale_key);
+
+        let _ = std::fs::remove_file(&path);
+    }
 
     #[test]
     fn test_cache_concurrent_performance() {
@@ -218,10 +329,10 @@ mod tests {
         let test_file = std::env::current_dir().unwrap().join("test.exr");
 
         // Pre-populate cache with a test entry
-        let _ = COLOR_MATRIX_CACHE
-            .write()
-            .unwrap()
-            .put((test_file.clone(), "test".to_string()), Some(Mat3::IDENTITY));
+        let _ = COLOR_MATRIX_CACHE.write().unwrap().put(
+            (test_file.clone(), "test".to_string(), 0),
+            Some(Mat3::IDENTITY),
+        );
 
         let start = std::time::Instant::now();
         let handles: Vec<_> = (0..10)
@@ -231,7 +342,7 @@ mod tests {
                     // Simulate concurrent cache reads
                     for _ in 0..100 {
                         if let Ok(cache) = COLOR_MATRIX_CACHE.read() {
-                            let _ = cache.peek(&(test_file.clone(), "test".to_string()));
+                            let _ = cache.peek(&(test_file.clone(), "test".to_string(), 0));
                         }
                     }
                 })
@@ -253,5 +364,4 @@ mod tests {
             duration
         );
     }
-
 }
