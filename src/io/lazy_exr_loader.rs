@@ -241,10 +241,9 @@ impl LazyExrLoader {
                 let full = ch.name.to_string();
                 let (_lname, short) = split_layer_and_short(&full, base_attr.as_deref());
                 names.push(short);
-                let samples = (0..pixel_count).map(|i| {
-                    ch.sample_data.value_by_flat_index(i).to_f32()
-                });
-                data.extend(samples);
+                // One enum dispatch per channel, not per sample.
+                let converted = crate::io::full_exr_cache::flat_samples_to_f32(&ch.sample_data);
+                data.extend_from_slice(&converted[..pixel_count.min(converted.len())]);
             }
             (names, data)
         } else {
@@ -283,10 +282,10 @@ impl LazyExrLoader {
                         continue;
                     }
                     channel_names.push(short);
-                    let samples = (0..pixel_count).map(|i| {
-                        ch.sample_data.value_by_flat_index(i).to_f32()
-                    });
-                    channel_data.extend(samples);
+                    // One enum dispatch per channel, not per sample.
+                    let converted =
+                        crate::io::full_exr_cache::flat_samples_to_f32(&ch.sample_data);
+                    channel_data.extend_from_slice(&converted[..pixel_count.min(converted.len())]);
                 }
             }
             (channel_names, channel_data)

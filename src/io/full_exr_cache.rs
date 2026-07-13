@@ -39,6 +39,17 @@ impl FullExrCacheData {
     }
 }
 
+/// Bulk-convert one channel's samples: a single enum dispatch per channel,
+/// instead of one per sample via `value_by_flat_index`. For a large EXR that is
+/// the difference between billions of dispatches and a handful.
+pub(crate) fn flat_samples_to_f32(samples: &exr::FlatSamples) -> Vec<f32> {
+    match samples {
+        exr::FlatSamples::F16(v) => v.iter().map(|x| x.to_f32()).collect(),
+        exr::FlatSamples::F32(v) => v.clone(),
+        exr::FlatSamples::U32(v) => v.iter().map(|&x| x as f32).collect(),
+    }
+}
+
 /// Buduje pełny cache z pliku EXR: wszystkie warstwy i kanały w pamięci (float32)
 pub fn build_full_exr_cache(
     path: &PathBuf,
@@ -50,41 +61,65 @@ pub fn build_full_exr_cache(
     let any_image = exr::read_all_flat_layers_from_file(path)
         .with_context(|| format!("Błąd wczytania EXR: {}", path.display()))?;
 
+    use rayon::prelude::*;
     use std::collections::HashMap;
-    // Agreguj kanały według efektywnej nazwy warstwy (patrz to_layers_info)
-    // Mapowanie: nazwa_warstwy -> (width, height, channel_names, channel_data)
+
+    struct ConvertedChannel {
+        layer_name: String,
+        short: String,
+        width: u32,
+        height: u32,
+        data: Vec<f32>,
+    }
+
+    // Flatten to (layer, channel) pairs, then convert every channel in parallel.
+    // The old loop was single-threaded despite running under rayon::spawn.
+    let channel_refs: Vec<_> = any_image
+        .layer_data
+        .iter()
+        .flat_map(|layer| {
+            let width = layer.size.width() as u32;
+            let height = layer.size.height() as u32;
+            let base_attr: Option<String> =
+                layer.attributes.layer_name.as_ref().map(|s| s.to_string());
+            layer
+                .channel_data
+                .list
+                .iter()
+                .map(move |ch| (width, height, base_attr.clone(), ch))
+        })
+        .collect();
+
+    let converted: Vec<ConvertedChannel> = channel_refs
+        .into_par_iter()
+        .map(|(width, height, base_attr, ch)| {
+            let full = ch.name.to_string();
+            let (layer_name, short) = split_layer_and_short(&full, base_attr.as_deref());
+            ConvertedChannel {
+                layer_name,
+                short,
+                width,
+                height,
+                data: flat_samples_to_f32(&ch.sample_data),
+            }
+        })
+        .collect();
+
+    // Aggregate sequentially, preserving first-occurrence layer order.
     let mut layer_map: HashMap<String, (u32, u32, Vec<String>, Vec<f32>)> = HashMap::new();
-    // Pre-allocate with estimated capacity based on image layers
     let mut layer_order: Vec<String> = Vec::with_capacity(any_image.layer_data.len());
 
-    for layer in any_image.layer_data.iter() {
-        let width = layer.size.width() as u32;
-        let height = layer.size.height() as u32;
-        let pixel_count = (width as usize) * (height as usize);
-
-        let base_attr: Option<String> = layer.attributes.layer_name.as_ref().map(|s| s.to_string());
-
-        for (idx, ch) in layer.channel_data.list.iter().enumerate() {
-            let full = ch.name.to_string();
-            let (lname, short) = split_layer_and_short(&full, base_attr.as_deref());
-            let entry = layer_map.entry(lname.clone()).or_insert_with(|| {
-                layer_order.push(lname.clone());
-                (width, height, Vec::new(), Vec::new())
-            });
-            // Jeśli rozmiary różnią się (rzadkie), preferuj pierwszy i pomiń konfliktujące kanały
-            if entry.0 != width || entry.1 != height {
-                continue;
-            }
-            entry.2.push(short);
-            entry.3.reserve(pixel_count);
-            let samples = (0..pixel_count).map(|i| {
-                layer.channel_data.list[idx]
-                    .sample_data
-                    .value_by_flat_index(i)
-                    .to_f32()
-            });
-            entry.3.extend(samples);
+    for c in converted {
+        let entry = layer_map.entry(c.layer_name.clone()).or_insert_with(|| {
+            layer_order.push(c.layer_name.clone());
+            (c.width, c.height, Vec::new(), Vec::new())
+        });
+        // Jeśli rozmiary różnią się (rzadkie), preferuj pierwszy i pomiń konfliktujące kanały
+        if entry.0 != c.width || entry.1 != c.height {
+            continue;
         }
+        entry.2.push(c.short);
+        entry.3.extend_from_slice(&c.data);
     }
 
     let mut out_layers: Vec<FullLayer> = Vec::with_capacity(layer_map.len());
