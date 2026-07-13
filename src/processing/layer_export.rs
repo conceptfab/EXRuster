@@ -4,7 +4,6 @@ use crate::processing::channel_classification::determine_channel_group_with_conf
 use crate::utils::channel_config::load_channel_config;
 use crate::processing::tone_mapping::{tone_map_and_gamma, ToneMapMode};
 use anyhow::Result;
-use rayon::prelude::*;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -57,8 +56,6 @@ impl LayerExporter {
         self.export_params = params;
         self
     }
-
-    /// Export layers based on configuration
 
     /// Export the base layer specifically
     pub fn export_base_layer(
@@ -164,7 +161,7 @@ impl LayerExporter {
         let layer_channels = self.load_layer_channels(&layer_info.name)?;
 
         // Process layer to RGB/RGBA pixels
-        let processed_pixels = self.process_layer_to_pixels(&layer_channels)?;
+        let processed_pixels = self.process_layer_to_pixels(&layer_channels, format)?;
 
         // Generate output filename
         let output_path =
@@ -181,38 +178,48 @@ impl LayerExporter {
         crate::io::image_cache::load_all_channels_for_layer_from_full(&self.cache, layer_name, None)
     }
 
-    /// Process layer to final pixels with tone mapping and color correction
-    fn process_layer_to_pixels(&self, layer_channels: &LayerChannels) -> Result<ProcessedPixels> {
+    /// Process layer to final pixels.
+    ///
+    /// PNG16 gets the display pipeline (exposure → tone map → gamma → 16-bit).
+    /// Tiff32Float deliberately gets none of it: a float export exists to carry
+    /// the linear scene values, and tone mapping would destroy exactly the
+    /// high-range data the format is chosen for.
+    fn process_layer_to_pixels(
+        &self,
+        layer_channels: &LayerChannels,
+        format: &ExportFormat,
+    ) -> Result<ProcessedPixels> {
         let pixel_count = (layer_channels.width * layer_channels.height) as usize;
 
         // Compose RGB from channels (shared helper — identical semantics to the
         // cache-side compositor, including RGB fallback for cryptomatte/etc layers).
         let rgb_pixels = crate::io::image_cache::compose_composite_from_channels(layer_channels);
 
-        // All layers use the same processing pipeline with global default parameters
-
-        // Apply tone mapping and gamma correction in parallel
         let has_alpha = layer_channels.channel_names.iter().any(|name| {
             let n = name.to_ascii_uppercase();
             n == "A" || n.starts_with("ALPHA")
         });
+        let channels: u8 = if has_alpha { 4 } else { 3 };
 
-        let channels = if has_alpha { 4 } else { 3 };
-
-        // ALL layers now use same processing with global default parameters (gamma 2.2, exposure 0.0)
-        let processed_data = match layer_channels.channel_names.len() {
-            1 => {
+        let data = match format {
+            ExportFormat::Tiff32Float => {
+                // Raw linear values, unclamped — HDR above 1.0 survives.
+                let mut out = Vec::with_capacity(pixel_count * channels as usize);
+                for chunk in rgb_pixels.chunks_exact(4) {
+                    out.extend_from_slice(&chunk[..channels as usize]);
+                }
+                PixelData::F32(out)
+            }
+            ExportFormat::Png16 => PixelData::U16(match layer_channels.channel_names.len() {
                 // Grayscale channel - expand to RGB
-                self.process_grayscale_pixels(&rgb_pixels, pixel_count)?
-            }
-            _ => {
+                1 => self.process_grayscale_pixels(&rgb_pixels, pixel_count)?,
                 // RGB/RGBA channels - full color processing with tone mapping
-                self.process_color_pixels(&rgb_pixels, pixel_count, has_alpha)?
-            }
+                _ => self.process_color_pixels(&rgb_pixels, pixel_count, has_alpha)?,
+            }),
         };
 
         Ok(ProcessedPixels {
-            data: processed_data,
+            data,
             width: layer_channels.width,
             height: layer_channels.height,
             channels,
@@ -415,20 +422,21 @@ impl LayerExporter {
     fn save_png16(&self, pixels: &ProcessedPixels, output_path: &PathBuf) -> Result<()> {
         use image::{ImageBuffer, Rgba};
 
+        let PixelData::U16(data) = &pixels.data else {
+            anyhow::bail!("PNG16 export requires 16-bit pixel data");
+        };
+
         if pixels.channels == 4 {
-            let img_buffer = ImageBuffer::<Rgba<u16>, _>::from_raw(
-                pixels.width,
-                pixels.height,
-                pixels.data.clone(),
-            )
-            .ok_or_else(|| anyhow::anyhow!("Failed to create RGBA image buffer"))?;
+            let img_buffer =
+                ImageBuffer::<Rgba<u16>, _>::from_raw(pixels.width, pixels.height, data.clone())
+                    .ok_or_else(|| anyhow::anyhow!("Failed to create RGBA image buffer"))?;
 
             img_buffer.save(output_path)?;
         } else {
             let img_buffer = ImageBuffer::<image::Rgb<u16>, _>::from_raw(
                 pixels.width,
                 pixels.height,
-                pixels.data.clone(),
+                data.clone(),
             )
             .ok_or_else(|| anyhow::anyhow!("Failed to create RGB image buffer"))?;
 
@@ -438,41 +446,26 @@ impl LayerExporter {
         Ok(())
     }
 
-    /// Save as TIFF 32-bit float
+    /// Save as TIFF 32-bit float — writes the linear values through unchanged.
     fn save_tiff32_float(&self, pixels: &ProcessedPixels, output_path: &PathBuf) -> Result<()> {
         use std::fs::File;
         use tiff::encoder::{colortype, TiffEncoder};
 
-        // Convert u16 data back to f32 for 32-bit float export
-        let float_data: Vec<f32> = pixels
-            .data
-            .par_iter()
-            .map(|&value| (value as f32) / 65535.0)
-            .collect();
+        let PixelData::F32(float_data) = &pixels.data else {
+            anyhow::bail!("TIFF float export requires 32-bit float pixel data");
+        };
 
         let file = File::create(output_path)?;
         let mut tiff = TiffEncoder::new(file)?;
 
         match pixels.channels {
             4 => {
-                tiff.write_image::<colortype::RGBA32Float>(
-                    pixels.width,
-                    pixels.height,
-                    &float_data,
-                )
-                .map_err(|e| anyhow::anyhow!("Failed to write RGBA TIFF: {}", e))?;
+                tiff.write_image::<colortype::RGBA32Float>(pixels.width, pixels.height, float_data)
+                    .map_err(|e| anyhow::anyhow!("Failed to write RGBA TIFF: {}", e))?;
             }
             3 => {
-                tiff.write_image::<colortype::RGB32Float>(pixels.width, pixels.height, &float_data)
+                tiff.write_image::<colortype::RGB32Float>(pixels.width, pixels.height, float_data)
                     .map_err(|e| anyhow::anyhow!("Failed to write RGB TIFF: {}", e))?;
-            }
-            1 => {
-                tiff.write_image::<colortype::Gray32Float>(
-                    pixels.width,
-                    pixels.height,
-                    &float_data,
-                )
-                .map_err(|e| anyhow::anyhow!("Failed to write grayscale TIFF: {}", e))?;
             }
             _ => anyhow::bail!("Unsupported channel count for TIFF: {}", pixels.channels),
         }
@@ -481,10 +474,76 @@ impl LayerExporter {
     }
 }
 
-/// Processed pixel data container
+/// Processed pixel data container.
+///
+/// PNG16 carries display-referred 16-bit integers; Tiff32Float carries the raw
+/// linear scene values, so the two cannot share a representation.
+enum PixelData {
+    U16(Vec<u16>),
+    F32(Vec<f32>),
+}
+
 struct ProcessedPixels {
-    data: Vec<u16>,
+    data: PixelData,
     width: u32,
     height: u32,
     channels: u8,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::io::full_exr_cache::{FullExrCacheData, FullLayer};
+
+    /// 2x1 layer, planar: R=[5.0, 5.0] G=[0.5, 0.5] B=[0.25, 0.25].
+    /// R is deliberately above 1.0 — that is the HDR value a float export must keep.
+    fn test_exporter() -> LayerExporter {
+        let layer = FullLayer {
+            name: "Beauty".into(),
+            width: 2,
+            height: 1,
+            channel_names: vec!["R".into(), "G".into(), "B".into()],
+            channel_data: Arc::from(vec![5.0f32, 5.0, 0.5, 0.5, 0.25, 0.25].into_boxed_slice()),
+        };
+        let cache = Arc::new(FullExrCacheData {
+            layers: vec![layer],
+        });
+        let layers_info = cache.to_layers_info();
+        LayerExporter::new(cache, layers_info)
+    }
+
+    #[test]
+    fn tiff32_export_preserves_hdr_values() {
+        let exporter = test_exporter();
+        let lc = exporter.load_layer_channels("Beauty").unwrap();
+        let processed = exporter
+            .process_layer_to_pixels(&lc, &ExportFormat::Tiff32Float)
+            .unwrap();
+
+        let PixelData::F32(data) = processed.data else {
+            panic!("Tiff32Float must produce f32 pixel data");
+        };
+        assert_eq!(processed.channels, 3);
+        assert_eq!(
+            data[0], 5.0,
+            "a value above 1.0 must survive a 32-bit float export"
+        );
+        assert_eq!(data[1], 0.5);
+        assert_eq!(data[2], 0.25);
+    }
+
+    #[test]
+    fn png16_export_stays_u16() {
+        let exporter = test_exporter();
+        let lc = exporter.load_layer_channels("Beauty").unwrap();
+        let processed = exporter
+            .process_layer_to_pixels(&lc, &ExportFormat::Png16)
+            .unwrap();
+
+        let PixelData::U16(data) = processed.data else {
+            panic!("Png16 must produce u16 pixel data");
+        };
+        // Display-referred: the HDR red clamps to full scale.
+        assert_eq!(data[0], u16::MAX);
+    }
 }
