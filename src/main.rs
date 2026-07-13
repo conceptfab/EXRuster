@@ -108,7 +108,10 @@ fn main() -> Result<(), slint::PlatformError> {
                                 ui.as_weak(),
                                 dir,
                                 console_model.clone(),
-                                130,
+                                // Must match the canonical height, or the first
+                                // folder click regenerates every thumbnail: the
+                                // cache key includes thumb_h.
+                                crate::ui::browser_handlers::CANONICAL_THUMB_HEIGHT,
                             );
                         }
                     }

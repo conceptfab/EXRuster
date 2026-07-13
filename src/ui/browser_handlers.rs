@@ -94,20 +94,34 @@ pub fn handle_copy_current_file_to(
         return;
     }
 
-    match std::fs::copy(&src, &dest) {
-        Ok(bytes) => {
-            ui.set_status_text(format!("Copied {} bytes to {}", bytes, dest.display()).into());
-            push_console(
-                &ui,
-                &console,
-                format!("[copy-file] {} -> {}", src.display(), dest.display()),
-            );
-        }
-        Err(e) => {
-            log_error!("Copy failed: {}", e);
-            ui.set_status_text(format!("Copy failed: {}", e).into());
-        }
-    }
+    // EXR files run to gigabytes; fs::copy on the event loop freezes the window.
+    push_console(
+        &ui,
+        &console,
+        format!("[copy-file] {} -> {}", src.display(), dest.display()),
+    );
+    ui.set_status_text(format!("Copying to {} ...", dest.display()).into());
+
+    let ui_weak = ui.as_weak();
+    std::thread::spawn(move || {
+        let result = std::fs::copy(&src, &dest);
+        let _ = slint::invoke_from_event_loop(move || {
+            let Some(ui) = ui_weak.upgrade() else {
+                return;
+            };
+            match result {
+                Ok(bytes) => {
+                    ui.set_status_text(
+                        format!("Copied {} bytes to {}", bytes, dest.display()).into(),
+                    );
+                }
+                Err(e) => {
+                    log_error!("Copy failed: {}", e);
+                    ui.set_status_text(format!("Copy failed: {}", e).into());
+                }
+            }
+        });
+    });
 }
 
 /// Canonical thumbnail pixel height — thumbnails are generated once at this

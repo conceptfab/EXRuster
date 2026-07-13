@@ -11,7 +11,7 @@ use crate::log_info;
 use crate::processing::tone_mapping::ToneMapMode;
 use crate::ui::progress::ProgressSink;
 use lru::LruCache;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::sync::OnceLock;
 
 // Dodaj importy dla nowego systemu
@@ -90,6 +90,24 @@ pub fn generate_thumbnails_cpu_raw(
     let timing_stats = TimingStats::new();
     let color_config = ColorConfig::new(gamma, exposure, tonemap_mode);
 
+    // A message forces an un-throttled event-loop dispatch (UiProgress::set treats
+    // Some(msg) as "always deliver"). One per file would queue hundreds of closures
+    // on a big folder, so only every Nth file carries text; the rest just move the bar.
+    const PROGRESS_MESSAGE_EVERY: usize = 16;
+
+    let report = |p: &dyn ProgressSink, done: usize, path: &Path, verb: &str| {
+        let frac = (done as f32) / (total_files as f32);
+        if done % PROGRESS_MESSAGE_EVERY == 0 || done == total_files {
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
+            p.set(
+                frac,
+                Some(&format!("{}: {}/{} {}", verb, done, total_files, name)),
+            );
+        } else {
+            p.set(frac, None);
+        }
+    };
+
     // 1) Równolegle generuj dane miniaturek w typie bezpiecznym dla wątków
     let completed = AtomicUsize::new(0);
     let works: Vec<ExrThumbWork> = files
@@ -100,16 +118,7 @@ pub fn generate_thumbnails_cpu_raw(
             if let Some(cached) = cached_opt {
                 let n = completed.fetch_add(1, Ordering::Relaxed) + 1;
                 if let Some(p) = progress {
-                    let frac = (n as f32) / (total_files as f32);
-                    p.set(
-                        frac,
-                        Some(&format!(
-                            "Cached: {}/{} {}",
-                            n,
-                            total_files,
-                            path.file_name().and_then(|n| n.to_str()).unwrap_or("?")
-                        )),
-                    );
+                    report(p, n, &path, "Cached");
                 }
                 return Some(cached);
             }
@@ -135,16 +144,7 @@ pub fn generate_thumbnails_cpu_raw(
             });
             let n = completed.fetch_add(1, Ordering::Relaxed) + 1;
             if let Some(p) = progress {
-                let frac = (n as f32) / (total_files as f32);
-                p.set(
-                    frac,
-                    Some(&format!(
-                        "Processed: {}/{} {}",
-                        n,
-                        total_files,
-                        path.file_name().and_then(|n| n.to_str()).unwrap_or("?")
-                    )),
-                );
+                report(p, n, &path, "Processed");
             }
             res.ok()
         })
@@ -197,10 +197,46 @@ pub struct ExrThumbWork {
     pub width: u32,
     pub height: u32,
     pub num_layers: usize,
-    pub pixels: Vec<u8>, // RGBA8 interleaved
+    pub pixels: Arc<[u8]>, // RGBA8 interleaved
 }
 
-/// NOWA, WYDAJNA FUNKCJA generowania miniaturki używająca nowoczesnego API exr
+/// Tone-map interleaved linear RGBA f32 to RGBA8.
+///
+/// Uses the shared pipeline (which reaches for the sRGB LUT at gamma ~2.2)
+/// rather than raw `powf` per channel.
+fn tonemap_thumb_rgba(rgba: &[f32], color_config: &ColorConfig) -> Arc<[u8]> {
+    use crate::processing::tone_mapping::{tone_map_and_gamma, ToneMapParams};
+
+    let params = ToneMapParams::new(
+        color_config.exposure,
+        color_config.gamma,
+        color_config.tonemap_mode as i32,
+    );
+
+    let mut out = Vec::with_capacity(rgba.len());
+    for chunk in rgba.chunks_exact(4) {
+        let (r, g, b) = tone_map_and_gamma(
+            chunk[0],
+            chunk[1],
+            chunk[2],
+            params.exposure_multiplier,
+            params.gamma_inv,
+            params.use_srgb,
+            params.mode,
+        );
+        out.push((r.clamp(0.0, 1.0) * 255.0) as u8);
+        out.push((g.clamp(0.0, 1.0) * 255.0) as u8);
+        out.push((b.clamp(0.0, 1.0) * 255.0) as u8);
+        out.push((chunk[3].clamp(0.0, 1.0) * 255.0) as u8);
+    }
+    Arc::from(out.into_boxed_slice())
+}
+
+/// Generate one EXR thumbnail.
+///
+/// Reads linear f32, downscales, and only then tone-maps: the expensive
+/// per-pixel math runs on ~390px of output rather than on every pixel of a
+/// full-resolution frame (8.3M of them for 4K).
 pub fn generate_single_exr_thumbnail_work_new(
     exr_path: &Path,
     thumb_height: u32,
@@ -209,30 +245,15 @@ pub fn generate_single_exr_thumbnail_work_new(
 ) -> anyhow::Result<ExrThumbWork> {
     let load_start = Instant::now();
 
-    let exposure = color_config.exposure;
-    let tonemap_mode = color_config.tonemap_mode;
-    let gamma = color_config.gamma;
-    let exposure_mult = 2.0_f32.powf(exposure);
-
-    // Read EXR — pixel callback handles tone mapping inline (single file read)
     let reader = exr::read_first_rgba_layer_from_file(
         exr_path,
         |resolution, _| exr::pixel_vec::PixelVec {
             resolution,
-            pixels: vec![image::Rgba([0u8; 4]); resolution.width() * resolution.height()],
+            pixels: vec![[0.0f32; 4]; resolution.width() * resolution.height()],
         },
-        move |pixel_vec, position, (r, g, b, a): (f32, f32, f32, f32)| {
+        |pixel_vec, position, (r, g, b, a): (f32, f32, f32, f32)| {
             let index = position.y() * pixel_vec.resolution.width() + position.x();
-            let (r, g, b) = (r * exposure_mult, g * exposure_mult, b * exposure_mult);
-            let (r, g, b) = crate::processing::tone_mapping::apply_tonemap_scalar(r, g, b, tonemap_mode);
-            let gamma_inv = 1.0 / gamma;
-            let processed = [
-                (r.powf(gamma_inv) * 255.0) as u8,
-                (g.powf(gamma_inv) * 255.0) as u8,
-                (b.powf(gamma_inv) * 255.0) as u8,
-                (a.clamp(0.0, 1.0) * 255.0) as u8,
-            ];
-            pixel_vec.pixels[index] = image::Rgba(processed);
+            pixel_vec.pixels[index] = [r, g, b, a];
         },
     )
     .map_err(|e| anyhow::anyhow!("Failed to read EXR: {}", e))?;
@@ -249,27 +270,19 @@ pub fn generate_single_exr_thumbnail_work_new(
     );
     let thumb_width = (width as f32 / height as f32 * thumb_height as f32) as u32;
 
-    // Build RGBA8 buffer directly without intermediate Vec — use raw pixel data
-    let pixel_count = (width as usize) * (height as usize);
-    let mut raw_pixels = Vec::with_capacity(pixel_count * 4);
-    for rgba in &image_data.pixels {
-        raw_pixels.extend_from_slice(&rgba.0);
-    }
-
-    let img = image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(width, height, raw_pixels)
+    let raw: Vec<f32> = image_data.pixels.into_iter().flatten().collect();
+    let img = image::ImageBuffer::<image::Rgba<f32>, _>::from_raw(width, height, raw)
         .ok_or_else(|| anyhow::anyhow!("Could not create image buffer"))?;
 
-    let thumbnail = image::imageops::resize(
+    let small = image::imageops::resize(
         &img,
         thumb_width,
         thumb_height,
         image::imageops::FilterType::Triangle,
     );
+    let pixels = tonemap_thumb_rgba(small.as_raw(), color_config);
 
-    let load_duration = load_start.elapsed();
-    timing_stats.add_load_time(load_duration);
-
-    let pixels = thumbnail.into_raw();
+    timing_stats.add_load_time(load_start.elapsed());
 
     let raw_name = exr_path
         .file_name()
@@ -297,37 +310,22 @@ pub fn generate_single_hdr_thumbnail_work(
     timing_stats: &TimingStats,
 ) -> anyhow::Result<ExrThumbWork> {
     let load_start = Instant::now();
-    let exposure = color_config.exposure;
-    let tonemap_mode = color_config.tonemap_mode;
-    let gamma = color_config.gamma;
-    let exposure_mult = 2.0_f32.powf(exposure);
-    let gamma_inv = 1.0 / gamma;
 
     let hdr = crate::io::hdr_loader::load_hdr(hdr_path)?;
     let width = hdr.width;
     let height = hdr.height;
-    let pixel_count = (width as usize) * (height as usize);
 
-    let mut raw = Vec::with_capacity(pixel_count * 4);
-    for chunk in hdr.rgba.chunks_exact(4) {
-        let (r, g, b) = (chunk[0] * exposure_mult, chunk[1] * exposure_mult, chunk[2] * exposure_mult);
-        let (r, g, b) = crate::processing::tone_mapping::apply_tonemap_scalar(r, g, b, tonemap_mode);
-        raw.push((r.powf(gamma_inv).clamp(0.0, 1.0) * 255.0) as u8);
-        raw.push((g.powf(gamma_inv).clamp(0.0, 1.0) * 255.0) as u8);
-        raw.push((b.powf(gamma_inv).clamp(0.0, 1.0) * 255.0) as u8);
-        raw.push(255);
-    }
-
-    let img = image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(width, height, raw)
+    // Same order as the EXR path: downscale the linear data, then tone-map.
+    let img = image::ImageBuffer::<image::Rgba<f32>, _>::from_raw(width, height, hdr.rgba)
         .ok_or_else(|| anyhow::anyhow!("Could not create HDR image buffer"))?;
     let thumb_width = (width as f32 / height as f32 * thumb_height as f32) as u32;
-    let thumbnail = image::imageops::resize(
+    let small = image::imageops::resize(
         &img,
         thumb_width,
         thumb_height,
         image::imageops::FilterType::Triangle,
     );
-    let pixels = thumbnail.into_raw();
+    let pixels = tonemap_thumb_rgba(small.as_raw(), color_config);
 
     timing_stats.add_load_time(load_start.elapsed());
 
@@ -375,7 +373,7 @@ pub struct ThumbValue {
     num_layers: usize,
     file_size_bytes: u64,
     file_name: String,
-    pixels: Vec<u8>,
+    pixels: Arc<[u8]>,
 }
 
 fn quantize(v: f32, step: f32, min: f32, max: f32) -> i16 {

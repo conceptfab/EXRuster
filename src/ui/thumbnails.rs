@@ -114,23 +114,17 @@ pub fn load_thumbnails_for_directory(
             let count = sorted_works.len();
             let ms = t0.elapsed().as_millis();
 
-            // Convert pixels to Rgba8Pixel in background (avoids blocking UI with ~5MB+ copy)
+            // Build the SharedPixelBuffers here — they are Send, so the event loop
+            // below only has to wrap them in a slint::Image. Previously the pixels
+            // were copied twice: once here, once again on the UI thread.
             prog.set(0.92, Some("🎨 Preparing pixel data..."));
             let prepared: Vec<_> = sorted_works
                 .into_iter()
                 .map(|w| {
-                    let pixels: Vec<Rgba8Pixel> = w
-                        .pixels
-                        .chunks_exact(4)
-                        .map(|chunk| Rgba8Pixel {
-                            r: chunk[0],
-                            g: chunk[1],
-                            b: chunk[2],
-                            a: chunk[3],
-                        })
-                        .collect();
+                    let mut buffer = SharedPixelBuffer::<Rgba8Pixel>::new(w.width, w.height);
+                    buffer.make_mut_bytes().copy_from_slice(&w.pixels);
                     (
-                        pixels,
+                        buffer,
                         w.file_name,
                         w.file_size_bytes,
                         w.num_layers,
@@ -152,22 +146,19 @@ pub fn load_thumbnails_for_directory(
 
                     let items: Vec<ThumbItem> = prepared
                         .into_iter()
-                        .map(|(pixels, file_name, file_size_bytes, num_layers, path, width, height)| {
-                            let mut buffer =
-                                SharedPixelBuffer::<Rgba8Pixel>::new(width, height);
-                            buffer.make_mut_slice().copy_from_slice(&pixels);
-                            let image = Image::from_rgba8(buffer);
-
-                            ThumbItem {
-                                img: image,
-                                name: file_name.into(),
-                                size: human_size(file_size_bytes).into(),
-                                layers: format!("{} layers", num_layers).into(),
-                                path: path.display().to_string().into(),
-                                width: width as i32,
-                                height: height as i32,
-                            }
-                        })
+                        .map(
+                            |(buffer, file_name, file_size_bytes, num_layers, path, width, height)| {
+                                ThumbItem {
+                                    img: Image::from_rgba8(buffer),
+                                    name: file_name.into(),
+                                    size: human_size(file_size_bytes).into(),
+                                    layers: format!("{} layers", num_layers).into(),
+                                    path: path.display().to_string().into(),
+                                    width: width as i32,
+                                    height: height as i32,
+                                }
+                            },
+                        )
                         .collect();
 
                     // Update UI
