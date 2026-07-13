@@ -3,9 +3,6 @@ use crate::AppWindow;
 
 /// Trait for UI components that can report errors consistently
 pub trait UiErrorReporter {
-    /// Reports an error with consistent UI updates (status text + console log)
-    fn report_error(&self, console: &ConsoleModel, context: &str, error: impl std::fmt::Display);
-
     /// Reports an error with a custom status message
     fn report_error_with_status(
         &self,
@@ -18,14 +15,6 @@ pub trait UiErrorReporter {
 }
 
 impl UiErrorReporter for AppWindow {
-    fn report_error(&self, console: &ConsoleModel, context: &str, error: impl std::fmt::Display) {
-        let error_msg = format!("[error][{}] {}", context, error);
-        let status_msg = format!("{} error: {}", context, error);
-
-        push_console(self, console, error_msg);
-        self.set_status_text(status_msg.into());
-    }
-
     fn report_error_with_status(
         &self,
         console: &ConsoleModel,

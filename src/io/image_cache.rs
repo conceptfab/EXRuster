@@ -3,7 +3,7 @@ use crate::log_info;
 use crate::ui::progress::ProgressSink;
 use crate::utils::split_layer_and_short;
 use rayon::prelude::*;
-use slint::{Image, Rgba8Pixel, SharedPixelBuffer};
+use slint::{Rgba8Pixel, SharedPixelBuffer};
 use std::collections::HashMap;
 use std::path::Path;
 use crate::io::full_exr_cache::FullExrCacheData;
@@ -338,55 +338,6 @@ impl ImageCache {
         self.histogram.clone()
     }
 
-    pub fn process_to_composite(
-        &self,
-        exposure: f32,
-        gamma: f32,
-        tonemap_mode: i32,
-        lighting_rgb: bool,
-    ) -> Image {
-        let mut buffer = SharedPixelBuffer::<Rgba8Pixel>::new(self.width, self.height);
-        let out_slice = buffer.make_mut_slice();
-
-        let color_m = self.color_matrix_rgb_to_srgb;
-
-        // Optymalizowana SIMD: separuj SIMD od skalarnej reszty
-        self.process_rgba_chunks_composite_optimized(
-            &self.raw_pixels,
-            out_slice,
-            exposure,
-            gamma,
-            tonemap_mode,
-            color_m,
-            lighting_rgb,
-        );
-
-        Image::from_rgba8(buffer)
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn process_rgba_chunks_composite_optimized(
-        &self,
-        input: &[f32],
-        output: &mut [Rgba8Pixel],
-        exposure: f32,
-        gamma: f32,
-        tonemap_mode: i32,
-        color_m: Option<Mat3>,
-        lighting_rgb: bool,
-    ) {
-        // Use unified SIMD processing function with sequential processing
-        crate::processing::simd_processing::process_rgba_chunk_optimized(
-            input,
-            output,
-            exposure,
-            gamma,
-            tonemap_mode,
-            color_m,
-            !lighting_rgb,
-            false,
-        );
-    }
 }
 
 // === GPU path implementation ===
@@ -676,17 +627,9 @@ impl ImageCache {
         Ok(())
     }
 
-    /// Specjalne renderowanie głębi: auto-normalizacja percentylowa + opcjonalne odwrócenie
-    pub fn process_depth_image_with_progress(
-        &self,
-        invert: bool,
-        progress: Option<&dyn ProgressSink>,
-    ) -> Image {
-        Image::from_rgba8(self.process_depth_to_buffer(invert, progress))
-    }
-
-    /// Same as `process_depth_image_with_progress`, but returns the raw buffer so
-    /// it can be produced off the UI thread (`SharedPixelBuffer` is `Send`).
+    /// Renderowanie głębi/pojedynczego kanału: auto-normalizacja percentylowa
+    /// + opcjonalne odwrócenie. Zwraca bufor (`Send`), więc może powstać poza
+    /// wątkiem UI; pętla zdarzeń tylko opakowuje go w `slint::Image`.
     pub fn process_depth_to_buffer(
         &self,
         invert: bool,

@@ -149,11 +149,6 @@ impl ScopedProgress {
         self.inner.start_indeterminate(message);
         self
     }
-
-    /// Get a reference to the underlying UiProgress for advanced usage
-    pub fn inner(&self) -> &UiProgress {
-        &self.inner
-    }
 }
 
 impl Drop for ScopedProgress {
