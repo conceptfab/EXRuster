@@ -8,7 +8,7 @@ mod processing;
 mod ui;
 mod utils;
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 mod platform;
 
 use crate::ui::create_shared_app_state;
@@ -55,6 +55,37 @@ fn main() -> Result<(), slint::PlatformError> {
                 }
             },
         );
+    }
+
+    // macOS: the NSWindow is created transparent by the winit backend, so the
+    // native titlebar shows whatever is behind the app. Force it opaque once the
+    // window exists (it does not yet at this point).
+    #[cfg(target_os = "macos")]
+    {
+        use slint::TimerMode;
+        use std::cell::Cell;
+        use std::rc::{Rc, Weak};
+
+        let timer = Rc::new(slint::Timer::default());
+        let timer_weak: Weak<slint::Timer> = Rc::downgrade(&timer);
+        let retries = Rc::new(Cell::new(0));
+        timer.start(
+            TimerMode::Repeated,
+            std::time::Duration::from_millis(50),
+            move || {
+                let done = crate::platform::try_make_windows_opaque();
+                let n = retries.get();
+                if done || n >= 40 {
+                    if let Some(t) = timer_weak.upgrade() {
+                        t.stop();
+                    }
+                } else {
+                    retries.set(n + 1);
+                }
+            },
+        );
+        // Keep the timer alive for the duration of the app.
+        std::mem::forget(timer);
     }
 
     log_info!("Application running in CPU-only mode");
