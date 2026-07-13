@@ -51,7 +51,7 @@ pub fn build_full_exr_cache(
         .with_context(|| format!("Błąd wczytania EXR: {}", path.display()))?;
 
     use std::collections::HashMap;
-    // Agreguj kanały według efektywnej nazwy warstwy tak samo jak UI (extract_layers_info)
+    // Agreguj kanały według efektywnej nazwy warstwy (patrz to_layers_info)
     // Mapowanie: nazwa_warstwy -> (width, height, channel_names, channel_data)
     let mut layer_map: HashMap<String, (u32, u32, Vec<String>, Vec<f32>)> = HashMap::new();
     // Pre-allocate with estimated capacity based on image layers

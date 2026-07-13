@@ -1,7 +1,6 @@
 use crate::io::fast_exr_metadata::ChannelInfo;
 use crate::log_info;
 use crate::ui::progress::ProgressSink;
-use crate::utils::split_layer_and_short;
 use rayon::prelude::*;
 use slint::{Rgba8Pixel, SharedPixelBuffer};
 use std::collections::HashMap;
@@ -154,8 +153,9 @@ impl ImageCache {
             "=== ImageCache::new_with_full_cache START === {}",
             path.display()
         );
-        // Najpierw wyciągnij informacje o warstwach (meta), wybierz najlepszą i wczytaj ją jako startowy podgląd
-        let layers_info = extract_layers_info(path)?;
+        // Warstwy budujemy z danych już wczytanych do RAM — nie ma powodu
+        // ponownie parsować nagłówka z dysku.
+        let layers_info = full_cache.to_layers_info();
         let best_layer = find_best_layer(&layers_info);
         let layer_channels = load_all_channels_for_layer_from_full(&full_cache, &best_layer, None)?;
 
@@ -359,50 +359,6 @@ impl ImageCache {
 // === GPU path implementation ===
 
 // GPU functions removed - using CPU-only processing
-
-pub(crate) fn extract_layers_info(path: &Path) -> anyhow::Result<Vec<LayerInfo>> {
-    // Odczytaj jedynie meta-dane (nagłówki) bez pikseli
-    let meta = ::exr::meta::MetaData::read_from_file(path, /*pedantic=*/ false)?;
-
-    // Mapowanie: nazwa_warstwy -> kanały
-    let mut layer_map: HashMap<String, Vec<ChannelInfo>> = HashMap::new();
-    // Kolejność pierwszego wystąpienia nazw warstw do stabilnego porządku w UI
-    let mut layer_order: Vec<String> = Vec::new();
-
-    for header in meta.headers.iter() {
-        // Preferuj nazwę z atrybutu warstwy; jeśli brak, kanały mogą być w formacie "warstwa.kanał"
-        let base_layer_name: Option<String> = header
-            .own_attributes
-            .layer_name
-            .as_ref()
-            .map(|t| t.to_string());
-
-        for ch in header.channels.list.iter() {
-            let full_channel_name = ch.name.to_string();
-            let (layer_name_effective, short_channel_name) =
-                split_layer_and_short(&full_channel_name, base_layer_name.as_deref());
-
-            let entry = layer_map
-                .entry(layer_name_effective.clone())
-                .or_insert_with(|| {
-                    layer_order.push(layer_name_effective.clone());
-                    Vec::new()
-                });
-
-            entry.push(ChannelInfo::new(short_channel_name));
-        }
-    }
-
-    // Zbuduj listę warstw w kolejności pierwszego wystąpienia
-    let mut layers: Vec<LayerInfo> = Vec::with_capacity(layer_map.len());
-    for name in layer_order {
-        if let Some(channels) = layer_map.remove(&name) {
-            layers.push(LayerInfo { name, channels });
-        }
-    }
-
-    Ok(layers)
-}
 
 pub(crate) fn find_best_layer(layers_info: &[LayerInfo]) -> String {
     // Pick the first layer with RGBA channels, then fall back to RGB,
