@@ -338,18 +338,6 @@ impl ImageCache {
         self.histogram.clone()
     }
 
-    pub fn process_to_image(&self, exposure: f32, gamma: f32, tonemap_mode: i32) -> Image {
-        Image::from_rgba8(render_to_buffer(
-            &self.raw_pixels,
-            self.width,
-            self.height,
-            exposure,
-            gamma,
-            tonemap_mode,
-            self.color_matrix_rgb_to_srgb,
-        ))
-    }
-
     pub fn process_to_composite(
         &self,
         exposure: f32,

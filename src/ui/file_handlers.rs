@@ -22,23 +22,37 @@ use std::time::Instant;
 /// File size threshold for light mode loading (>700 MB)
 const LIGHT_MODE_FILE_SIZE_THRESHOLD: u64 = 700 * 1024 * 1024;
 
-/// Shared histogram computation — updates histogram in cache and applies to UI
+/// Apply an already-computed histogram to the UI. No locking, no recompute —
+/// safe to call from the event loop after a worker did the heavy pass.
+pub fn apply_histogram_data_to_ui(
+    ui: &AppWindow,
+    hist_data: &crate::processing::histogram::HistogramData,
+) {
+    use crate::processing::histogram::HistogramChannel::Luminance;
+    hist_data.apply_to_ui(ui);
+    ui.set_histogram_total_pixels(hist_data.total_pixels as i32);
+    ui.set_histogram_p1(hist_data.get_percentile(Luminance, 0.01));
+    ui.set_histogram_p50(hist_data.get_percentile(Luminance, 0.50));
+    ui.set_histogram_p99(hist_data.get_percentile(Luminance, 0.99));
+}
+
+/// Recompute the histogram from the cache and apply it. Runs the full pixel pass
+/// inline — only call this off the UI thread, or on an image already loaded.
 pub fn apply_histogram_to_ui(ui: &AppWindow, app_state: &SharedAppState) {
-    if let Ok(mut state) = app_state.write() {
-        if let Some(ref mut cache) = state.image_cache {
-            if let Ok(()) = cache.update_histogram() {
-                if let Some(hist_data) = cache.get_histogram_data() {
-                    hist_data.apply_to_ui(ui);
-                    ui.set_histogram_total_pixels(hist_data.total_pixels as i32);
-                    let p1 = hist_data.get_percentile(crate::processing::histogram::HistogramChannel::Luminance, 0.01);
-                    let p50 = hist_data.get_percentile(crate::processing::histogram::HistogramChannel::Luminance, 0.50);
-                    let p99 = hist_data.get_percentile(crate::processing::histogram::HistogramChannel::Luminance, 0.99);
-                    ui.set_histogram_p1(p1);
-                    ui.set_histogram_p50(p50);
-                    ui.set_histogram_p99(p99);
-                }
-            }
+    let hist = {
+        let Ok(mut state) = app_state.write() else {
+            return;
+        };
+        let Some(cache) = state.image_cache.as_mut() else {
+            return;
+        };
+        if cache.update_histogram().is_err() {
+            return;
         }
+        cache.get_histogram_data()
+    };
+    if let Some(hist_data) = hist {
+        apply_histogram_data_to_ui(ui, &hist_data);
     }
 }
 
@@ -146,38 +160,42 @@ pub fn handle_open_exr_from_path(
                                 let cache_res =
                                     ImageCache::new_with_lazy_loader(&path_c, lazy_loader.clone());
                                 match cache_res {
-                                    Ok(cache) => {
+                                    Ok(mut cache) => {
+                                        // Heavy work stays on this worker: first render + histogram.
+                                        // The event loop below only assigns properties.
+                                        let snap = cache.snapshot();
+                                        let buffer = crate::io::image_cache::render_to_buffer(
+                                            &snap.pixels,
+                                            snap.width,
+                                            snap.height,
+                                            exposure0,
+                                            gamma0,
+                                            tonemap_mode0,
+                                            snap.color_matrix,
+                                        );
+                                        let _ = cache.update_histogram();
+                                        let hist = cache.get_histogram_data();
+
                                         let _ = invoke_from_event_loop(move || {
                                             if let Some(ui2) = ui_weak.upgrade() {
-                                                // Single write lock: update state, generate image, get layers
-                                                let (img, layers_info_vec) = {
+                                                let layers_info_vec = {
                                                     if let Ok(mut state) = app_state_c.write() {
                                                         state.full_exr_cache = None;
                                                         state.image_cache = Some(cache);
-                                                        let li = state
+                                                        state
                                                             .image_cache
                                                             .as_ref()
                                                             .map(|c| c.layers_info.clone())
-                                                            .unwrap_or_default();
-                                                        let img = state
-                                                            .image_cache
-                                                            .as_ref()
-                                                            .map(|c| {
-                                                                c.process_to_image(
-                                                                    exposure0,
-                                                                    gamma0,
-                                                                    tonemap_mode0,
-                                                                )
-                                                            })
-                                                            .unwrap_or_else(|| ui2.get_exr_image());
-                                                        (img, li)
+                                                            .unwrap_or_default()
                                                     } else {
-                                                        (ui2.get_exr_image(), vec![])
+                                                        Vec::new()
                                                     }
                                                 };
-                                                ui2.set_exr_image(img);
+                                                ui2.set_exr_image(slint::Image::from_rgba8(buffer));
 
-                                                apply_histogram_to_ui(&ui2, &app_state_c);
+                                                if let Some(h) = hist {
+                                                    apply_histogram_data_to_ui(&ui2, &h);
+                                                }
                                                 if !layers_info_vec.is_empty() {
                                                     // Create a temporary SharedUiState wrapper for compatibility
                                                     let (
@@ -269,38 +287,43 @@ pub fn handle_open_exr_from_path(
                                 let cache_res =
                                     ImageCache::new_with_full_cache(&path_c, full.clone());
                                 match cache_res {
-                                    Ok(cache) => {
+                                    Ok(mut cache) => {
+                                        // Heavy work stays on this worker: first render + histogram.
+                                        // The event loop below only assigns properties.
+                                        let snap = cache.snapshot();
+                                        let buffer = crate::io::image_cache::render_to_buffer(
+                                            &snap.pixels,
+                                            snap.width,
+                                            snap.height,
+                                            exposure0,
+                                            gamma0,
+                                            tonemap_mode0,
+                                            snap.color_matrix,
+                                        );
+                                        let _ = cache.update_histogram();
+                                        let hist = cache.get_histogram_data();
+
                                         let _ = invoke_from_event_loop(move || {
                                             if let Some(ui2) = ui_weak.upgrade() {
-                                                // Single write lock: update state, generate image, get layers
-                                                let (img, layers_info_len, layers_info_vec) = {
+                                                let layers_info_vec = {
                                                     if let Ok(mut state) = app_state_c.write() {
                                                         state.full_exr_cache = Some(full.clone());
                                                         state.image_cache = Some(cache);
-                                                        let li = state
+                                                        state
                                                             .image_cache
                                                             .as_ref()
                                                             .map(|c| c.layers_info.clone())
-                                                            .unwrap_or_default();
-                                                        let img = state
-                                                            .image_cache
-                                                            .as_ref()
-                                                            .map(|c| {
-                                                                c.process_to_image(
-                                                                    exposure0,
-                                                                    gamma0,
-                                                                    tonemap_mode0,
-                                                                )
-                                                            })
-                                                            .unwrap_or_else(|| ui2.get_exr_image());
-                                                        (img, li.len(), li)
+                                                            .unwrap_or_default()
                                                     } else {
-                                                        (ui2.get_exr_image(), 0usize, Vec::new())
+                                                        Vec::new()
                                                     }
                                                 };
-                                                ui2.set_exr_image(img);
+                                                let layers_info_len = layers_info_vec.len();
+                                                ui2.set_exr_image(slint::Image::from_rgba8(buffer));
 
-                                                apply_histogram_to_ui(&ui2, &app_state_c);
+                                                if let Some(h) = hist {
+                                                    apply_histogram_data_to_ui(&ui2, &h);
+                                                }
 
                                                 if !layers_info_vec.is_empty() {
                                                     // Create a temporary SharedUiState wrapper for compatibility
@@ -441,30 +464,40 @@ pub fn handle_open_hdr_from_path(
         let t_start = Instant::now();
         let cache_res = ImageCache::new_from_hdr(&path_c);
         match cache_res {
-            Ok(cache) => {
+            Ok(mut cache) => {
+                // Heavy work stays on this worker: first render + histogram.
+                let snap = cache.snapshot();
+                let buffer = crate::io::image_cache::render_to_buffer(
+                    &snap.pixels,
+                    snap.width,
+                    snap.height,
+                    exposure0,
+                    gamma0,
+                    tonemap_mode0,
+                    snap.color_matrix,
+                );
+                let _ = cache.update_histogram();
+                let hist = cache.get_histogram_data();
+
                 let _ = invoke_from_event_loop(move || {
                     if let Some(ui2) = ui_weak.upgrade() {
-                        let (img, layers_info_vec) = {
+                        let layers_info_vec = {
                             if let Ok(mut state) = app_state_c.write() {
                                 state.full_exr_cache = None;
                                 state.image_cache = Some(cache);
-                                let li = state
+                                state
                                     .image_cache
                                     .as_ref()
                                     .map(|c| c.layers_info.clone())
-                                    .unwrap_or_default();
-                                let img = state
-                                    .image_cache
-                                    .as_ref()
-                                    .map(|c| c.process_to_image(exposure0, gamma0, tonemap_mode0))
-                                    .unwrap_or_else(|| ui2.get_exr_image());
-                                (img, li)
+                                    .unwrap_or_default()
                             } else {
-                                (ui2.get_exr_image(), vec![])
+                                Vec::new()
                             }
                         };
-                        ui2.set_exr_image(img);
-                        apply_histogram_to_ui(&ui2, &app_state_c);
+                        ui2.set_exr_image(slint::Image::from_rgba8(buffer));
+                        if let Some(h) = hist {
+                            apply_histogram_data_to_ui(&ui2, &h);
+                        }
                         if !layers_info_vec.is_empty() {
                             let (layers_model, layers_colors, layers_kinds, layers_font_sizes) =
                                 create_layers_model(&layers_info_vec, &ui2, &app_state_c);
