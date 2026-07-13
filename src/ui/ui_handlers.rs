@@ -49,7 +49,7 @@ pub fn handle_exit(ui_handle: Weak<AppWindow>) {
 
 // Re-exports from specialized modules
 pub use crate::ui::image_controls::{
-    handle_parameter_changed_throttled, update_preview_image, ThrottledUpdate,
+    handle_parameter_changed_throttled, ThrottledUpdate,
 };
 
 pub use crate::ui::thumbnails::load_thumbnails_for_directory;

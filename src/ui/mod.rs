@@ -12,7 +12,7 @@ pub mod ui_handlers;
 // Essential re-exports used by main.rs and internal modules
 pub use ui_handlers::{
     handle_exit, handle_open_exr, handle_open_exr_from_path, handle_parameter_changed_throttled,
-    load_thumbnails_for_directory, push_console, update_preview_image, ThrottledUpdate,
+    load_thumbnails_for_directory, push_console, ThrottledUpdate,
 };
 // Export handlers are called directly from setup.rs, not re-exported
 // pub use export_handlers::{};

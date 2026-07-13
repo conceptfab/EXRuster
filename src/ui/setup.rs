@@ -33,35 +33,36 @@ impl CallbackHelper {
     /// Handle tone mapping mode change
     fn handle_tonemap_change(&self, mode: i32) {
         if let Some(ui) = self.ui_weak.upgrade() {
-            if let Ok(state) = self.app_state.read() {
-                if let Some(ref cache) = state.image_cache {
-                    let exposure = ui.get_exposure_value();
-                    let gamma = ui.get_gamma_value();
-                    let image = crate::ui::update_preview_image(
-                        &ui, cache, exposure, gamma, mode, &self.console_model,
-                    );
-                    ui.set_exr_image(image);
-                    push_console(
-                        &ui,
-                        &self.console_model,
-                        format!("[preview] updated → tonemap mode: {}", mode),
-                    );
-                    ui.set_status_text(
-                        format!(
-                            "Tonemap: {}",
-                            match mode {
-                                0 => "ACES",
-                                1 => "Reinhard", 
-                                2 => "Linear",
-                                3 => "Filmic",
-                                4 => "Hable",
-                                5 => "Local",
-                                _ => "Unknown",
-                            }
-                        ).into()
-                    );
-                }
-            }
+            let exposure = ui.get_exposure_value();
+            let gamma = ui.get_gamma_value();
+            // No-ops when no image is loaded, so no guard needed here.
+            crate::ui::image_controls::spawn_preview_render(
+                self.ui_weak.clone(),
+                self.app_state.clone(),
+                exposure,
+                gamma,
+                mode,
+            );
+            push_console(
+                &ui,
+                &self.console_model,
+                format!("[preview] updated → tonemap mode: {}", mode),
+            );
+            ui.set_status_text(
+                format!(
+                    "Tonemap: {}",
+                    match mode {
+                        0 => "ACES",
+                        1 => "Reinhard",
+                        2 => "Linear",
+                        3 => "Filmic",
+                        4 => "Hable",
+                        5 => "Local",
+                        _ => "Unknown",
+                    }
+                )
+                .into(),
+            );
         }
     }
 
@@ -218,19 +219,18 @@ pub fn setup_image_control_callbacks(
     let debounced_geometry = {
         let ui_handle = ui.as_weak();
         let app_state = Arc::clone(&app_state);
-        let console = console_model.clone();
         let debounced = crate::ui::image_controls::DebouncedGeometry::new(move || {
             if let Some(ui) = ui_handle.upgrade() {
-                if let Ok(state) = app_state.read() {
-                    if let Some(ref cache) = state.image_cache {
-                        let exposure = ui.get_exposure_value();
-                        let gamma = ui.get_gamma_value();
-                        let mode = ui.get_tonemap_mode();
-                        let image =
-                            crate::ui::update_preview_image(&ui, cache, exposure, gamma, mode, &console);
-                        ui.set_exr_image(image);
-                    }
-                }
+                let exposure = ui.get_exposure_value();
+                let gamma = ui.get_gamma_value();
+                let mode = ui.get_tonemap_mode();
+                crate::ui::image_controls::spawn_preview_render(
+                    ui.as_weak(),
+                    app_state.clone(),
+                    exposure,
+                    gamma,
+                    mode,
+                );
             }
         });
         Arc::new(Mutex::new(debounced))

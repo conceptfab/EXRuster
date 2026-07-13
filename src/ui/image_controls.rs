@@ -1,12 +1,15 @@
-use crate::io::image_cache::ImageCache;
 use crate::ui::state::SharedAppState;
-use crate::ui::ui_handlers::{lock_or_recover, push_console, ConsoleModel};
+use crate::ui::ui_handlers::{lock_or_recover, ConsoleModel};
 use crate::AppWindow;
 use slint::{ComponentHandle, Timer, TimerMode, Weak};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-static LAST_PREVIEW_LOG: std::sync::Mutex<Option<Instant>> = std::sync::Mutex::new(None);
+/// Monotonic render generation. Every render request takes the next number;
+/// the event loop accepts a finished frame only if it is still the newest one.
+/// Without this, a slow full-res render could land after a newer, faster one.
+static RENDER_GENERATION: AtomicU64 = AtomicU64::new(0);
 
 /// Throttled update system for smooth parameter changes.
 /// Uses SingleShot timer to avoid polling when UI is idle.
@@ -87,95 +90,168 @@ impl DebouncedGeometry {
 pub fn handle_parameter_changed_throttled(
     ui_handle: Weak<AppWindow>,
     app_state: SharedAppState,
-    console: ConsoleModel,
+    _console: ConsoleModel,
     exposure: Option<f32>,
     gamma: Option<f32>,
 ) {
-    if let Some(ui) = ui_handle.upgrade() {
-        if let Ok(state) = app_state.read() {
-            if let Some(ref cache) = state.image_cache {
-                // Get current values if not passed
-                let final_exposure = exposure.unwrap_or_else(|| ui.get_exposure_value());
-                let final_gamma = gamma.unwrap_or_else(|| ui.get_gamma_value());
+    let Some(ui) = ui_handle.upgrade() else {
+        return;
+    };
 
-                let tonemap_mode = ui.get_tonemap_mode();
-                let image = update_preview_image(
-                    &ui,
-                    cache,
-                    final_exposure,
-                    final_gamma,
-                    tonemap_mode,
-                    &console,
-                );
+    let final_exposure = exposure.unwrap_or_else(|| ui.get_exposure_value());
+    let final_gamma = gamma.unwrap_or_else(|| ui.get_gamma_value());
+    let tonemap_mode = ui.get_tonemap_mode();
 
-                ui.set_exr_image(image);
+    spawn_preview_render(
+        ui.as_weak(),
+        app_state,
+        final_exposure,
+        final_gamma,
+        tonemap_mode,
+    );
 
-                // Update status bar with changed parameter info
-                if exposure.is_some() && gamma.is_some() {
-                    ui.set_status_text(
-                        format!(
-                            "🔄 Exposure: {:.2} EV, Gamma: {:.2}",
-                            final_exposure, final_gamma
-                        )
-                        .into(),
-                    );
-                } else if exposure.is_some() {
-                    ui.set_status_text(format!("🔄 Exposure: {:.2} EV", final_exposure).into());
-                } else if gamma.is_some() {
-                    ui.set_status_text(format!("🔄 Gamma: {:.2}", final_gamma).into());
-                }
-            }
-        }
+    // Update status bar with changed parameter info
+    if exposure.is_some() && gamma.is_some() {
+        ui.set_status_text(
+            format!(
+                "🔄 Exposure: {:.2} EV, Gamma: {:.2}",
+                final_exposure, final_gamma
+            )
+            .into(),
+        );
+    } else if exposure.is_some() {
+        ui.set_status_text(format!("🔄 Exposure: {:.2} EV", final_exposure).into());
+    } else if gamma.is_some() {
+        ui.set_status_text(format!("🔄 Gamma: {:.2}", final_gamma).into());
     }
 }
 
-/// Updates preview image based on current UI parameters
-pub fn update_preview_image(
-    ui: &AppWindow,
-    cache: &ImageCache,
-    exposure: f32,
-    gamma: f32,
-    tonemap_mode: i32,
-    console: &ConsoleModel,
-) -> slint::Image {
-    // Use thumbnail for real-time preview if image is large, but don't go below 1:1 relative to widget
-    // Consider HiDPI and image-fit: contain (aspect fitting)
+/// Longer side of the image as actually displayed (contain-fit, DPI-aware).
+fn compute_display_target(ui: &AppWindow, img_w: u32, img_h: u32) -> u32 {
     let preview_w = ui.get_preview_area_width();
     let preview_h = ui.get_preview_area_height();
     let dpr = ui.window().scale_factor();
-    let img_w = cache.width as f32;
-    let img_h = cache.height as f32;
+
     let container_ratio = if preview_h > 0.0 {
         preview_w / preview_h
     } else {
         1.0
     };
-    let image_ratio = if img_h > 0.0 { img_w / img_h } else { 1.0 };
-    // Longer side of image after fitting to container (contain)
+    let image_ratio = if img_h > 0 {
+        img_w as f32 / img_h as f32
+    } else {
+        1.0
+    };
     let display_long_side_logical = if container_ratio > image_ratio {
         preview_h * image_ratio
     } else {
         preview_w
     };
-    let target = (display_long_side_logical * dpr).round().max(1.0) as u32;
+    (display_long_side_logical * dpr).round().max(1.0) as u32
+}
 
-    let image = cache.process_to_image(exposure, gamma, tonemap_mode);
-
-    // Throttled log to console: at least 300ms interval
-    let mut last = lock_or_recover(&LAST_PREVIEW_LOG);
-    let now = Instant::now();
-    if last
-        .map(|t| now.duration_since(t).as_millis() >= 300)
-        .unwrap_or(true)
-    {
-        push_console(ui, console,
-            format!("[preview] exp={:.2}, gamma={:.2} | img={}x{} | view={}x{} @{:.1}x | target={} px",
-                exposure, gamma,
-                img_w as u32, img_h as u32,
-                preview_w as u32, preview_h as u32, dpr,
-                target));
-        *last = Some(now);
+/// Stride-decimate RGBA pixels down to roughly display size.
+///
+/// Nearest-neighbour on purpose: this feeds the throw-away interactive frame
+/// during a slider drag, and the full-resolution pass replaces it milliseconds
+/// later. Anything fancier would cost more than the frame is worth. Returns the
+/// input untouched when the image is already near display size.
+fn decimate_for_display(
+    pixels: &Arc<Vec<f32>>,
+    width: u32,
+    height: u32,
+    target_long_side: u32,
+) -> (Arc<Vec<f32>>, u32, u32) {
+    let long_side = width.max(height);
+    if target_long_side == 0 || long_side <= target_long_side.saturating_mul(3) / 2 {
+        return (Arc::clone(pixels), width, height);
     }
 
-    image
+    let step = (long_side / target_long_side).max(1) as usize;
+    let (w, h) = (width as usize, height as usize);
+    let new_w = w.div_ceil(step);
+    let new_h = h.div_ceil(step);
+
+    let mut out = Vec::with_capacity(new_w * new_h * 4);
+    for y in (0..h).step_by(step) {
+        let row = y * w;
+        for x in (0..w).step_by(step) {
+            let i = (row + x) * 4;
+            out.extend_from_slice(&pixels[i..i + 4]);
+        }
+    }
+    (Arc::new(out), new_w as u32, new_h as u32)
+}
+
+/// Render the preview on the rayon pool instead of the UI thread.
+///
+/// Two passes: a decimated frame for instant feedback, then full resolution —
+/// but only if no newer request superseded this one in the meantime. The event
+/// loop does nothing but wrap the finished buffer in a `slint::Image`.
+pub fn spawn_preview_render(
+    ui_handle: Weak<AppWindow>,
+    app_state: SharedAppState,
+    exposure: f32,
+    gamma: f32,
+    tonemap_mode: i32,
+) {
+    let (snapshot, target) = {
+        let Some(ui) = ui_handle.upgrade() else {
+            return;
+        };
+        let Ok(state) = app_state.read() else {
+            return;
+        };
+        let Some(cache) = state.image_cache.as_ref() else {
+            return; // nothing loaded yet
+        };
+        (
+            cache.snapshot(),
+            compute_display_target(&ui, cache.width, cache.height),
+        )
+    };
+
+    let generation = RENDER_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+
+    rayon::spawn(move || {
+        let post_frame = |buffer: slint::SharedPixelBuffer<slint::Rgba8Pixel>| {
+            let ui_handle = ui_handle.clone();
+            let _ = slint::invoke_from_event_loop(move || {
+                // Drop the frame if a newer render has since been requested.
+                if RENDER_GENERATION.load(Ordering::SeqCst) != generation {
+                    return;
+                }
+                if let Some(ui) = ui_handle.upgrade() {
+                    ui.set_exr_image(slint::Image::from_rgba8(buffer));
+                }
+            });
+        };
+
+        let (small, sw, sh) =
+            decimate_for_display(&snapshot.pixels, snapshot.width, snapshot.height, target);
+        let was_decimated = sw != snapshot.width || sh != snapshot.height;
+
+        post_frame(crate::io::image_cache::render_to_buffer(
+            &small,
+            sw,
+            sh,
+            exposure,
+            gamma,
+            tonemap_mode,
+            snapshot.color_matrix,
+        ));
+
+        // Full-res pass, unless we were already superseded.
+        if was_decimated && RENDER_GENERATION.load(Ordering::SeqCst) == generation {
+            post_frame(crate::io::image_cache::render_to_buffer(
+                &snapshot.pixels,
+                snapshot.width,
+                snapshot.height,
+                exposure,
+                gamma,
+                tonemap_mode,
+                snapshot.color_matrix,
+            ));
+        }
+    });
 }
