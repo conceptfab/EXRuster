@@ -20,24 +20,13 @@ use image;
 
 /// Statistics for timing operations
 pub struct TimingStats {
-    total_load_time: AtomicU64, // Total time for loading/creating thumbnails (in nanoseconds)
-    total_save_time: AtomicU64, // Total time for saving thumbnails (in nanoseconds)
-}
-
-impl Clone for TimingStats {
-    fn clone(&self) -> Self {
-        Self {
-            total_load_time: AtomicU64::new(self.total_load_time.load(AtomicOrdering::SeqCst)),
-            total_save_time: AtomicU64::new(self.total_save_time.load(AtomicOrdering::SeqCst)),
-        }
-    }
+    total_load_time: AtomicU64, // nanoseconds spent decoding + resizing
 }
 
 impl TimingStats {
     fn new() -> Self {
         Self {
             total_load_time: AtomicU64::new(0),
-            total_save_time: AtomicU64::new(0),
         }
     }
 
@@ -48,14 +37,6 @@ impl TimingStats {
 
     fn get_load_time(&self) -> Duration {
         Duration::from_nanos(self.total_load_time.load(AtomicOrdering::SeqCst))
-    }
-
-    fn get_save_time(&self) -> Duration {
-        Duration::from_nanos(self.total_save_time.load(AtomicOrdering::SeqCst))
-    }
-
-    fn get_total_time(&self) -> Duration {
-        self.get_load_time() + self.get_save_time()
     }
 }
 
@@ -97,7 +78,7 @@ pub fn generate_thumbnails_cpu_raw(
 
     let report = |p: &dyn ProgressSink, done: usize, path: &Path, verb: &str| {
         let frac = (done as f32) / (total_files as f32);
-        if done % PROGRESS_MESSAGE_EVERY == 0 || done == total_files {
+        if done.is_multiple_of(PROGRESS_MESSAGE_EVERY) || done == total_files {
             let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
             p.set(
                 frac,
@@ -157,14 +138,9 @@ pub fn generate_thumbnails_cpu_raw(
         )));
     }
 
-    let load_time = timing_stats.get_load_time();
-    let save_time = timing_stats.get_save_time();
-    let processing_time = timing_stats.get_total_time();
     log_info!(
-        "Thumbnail generation timing: Load: {:.2}ms, Save: {:.2}ms, Total: {:.2}ms",
-        load_time.as_millis(),
-        save_time.as_millis(),
-        processing_time.as_millis()
+        "Thumbnail generation timing: {} ms",
+        timing_stats.get_load_time().as_millis()
     );
 
     Ok(works)

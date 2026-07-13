@@ -261,7 +261,7 @@ impl LayerExporter {
         Ok(processed)
     }
 
-    /// Process color pixels with tone mapping and color correction (SIMD optimized)
+    /// Process color pixels: exposure, tone map, gamma, quantize to 16-bit.
     fn process_color_pixels(
         &self,
         pixels: &[f32],
@@ -271,111 +271,36 @@ impl LayerExporter {
         let output_channels = if has_alpha { 4 } else { 3 };
         let mut processed = Vec::with_capacity(pixel_count * output_channels);
 
-        // Use SIMD-optimized processing when feature is enabled
-        #[cfg(feature = "unified_simd")]
-        {
-            processed.extend(self.process_color_pixels_simd_optimized(pixels, has_alpha));
-        }
-
-        #[cfg(not(feature = "unified_simd"))]
-        {
-            let exposure_multiplier = 2.0_f32.powf(self.export_params.exposure);
-            let gamma_inv = 1.0 / self.export_params.gamma.max(1e-4);
-            let use_srgb = (self.export_params.gamma - 2.2).abs() < 0.2
-                || (self.export_params.gamma - 2.4).abs() < 0.2;
-            let mode = self.export_params.tonemap_mode;
-
-            for chunk in pixels.chunks_exact(4) {
-                let (r, g, b) = tone_map_and_gamma(
-                    chunk[0],
-                    chunk[1],
-                    chunk[2],
-                    exposure_multiplier,
-                    gamma_inv,
-                    use_srgb,
-                    mode,
-                );
-
-                let r_u16 = (r.clamp(0.0, 1.0) * 65535.0).round() as u16;
-                let g_u16 = (g.clamp(0.0, 1.0) * 65535.0).round() as u16;
-                let b_u16 = (b.clamp(0.0, 1.0) * 65535.0).round() as u16;
-
-                if has_alpha {
-                    let a_u16 = (chunk[3].clamp(0.0, 1.0) * 65535.0).round() as u16;
-                    processed.extend_from_slice(&[r_u16, g_u16, b_u16, a_u16]);
-                } else {
-                    processed.extend_from_slice(&[r_u16, g_u16, b_u16]);
-                }
-            }
-        }
-
-        Ok(processed)
-    }
-
-    #[cfg(feature = "unified_simd")]
-    /// SIMD-optimized color pixel processing
-    fn process_color_pixels_simd_optimized(&self, pixels: &[f32], has_alpha: bool) -> Vec<u16> {
-        use std::simd::{f32x4, u16x4, Simd, SimdFloat, SimdUint};
-
-        let exposure_multiplier = 2.0f32.powf(self.export_params.exposure);
+        let exposure_multiplier = 2.0_f32.powf(self.export_params.exposure);
         let gamma_inv = 1.0 / self.export_params.gamma.max(1e-4);
         let use_srgb = (self.export_params.gamma - 2.2).abs() < 0.2
             || (self.export_params.gamma - 2.4).abs() < 0.2;
         let mode = self.export_params.tonemap_mode;
 
-        // Process pixels in SIMD chunks of 4
-        pixels
-            .par_chunks_exact(16) // 4 pixels * 4 channels = 16 floats
-            .flat_map(|chunk_16| {
-                // Load 4 RGBA pixels at once
-                let pixel_data: [f32x4; 4] = [
-                    f32x4::from_slice(&chunk_16[0..4]),   // Pixel 0: RGBA
-                    f32x4::from_slice(&chunk_16[4..8]),   // Pixel 1: RGBA
-                    f32x4::from_slice(&chunk_16[8..12]),  // Pixel 2: RGBA
-                    f32x4::from_slice(&chunk_16[12..16]), // Pixel 3: RGBA
-                ];
+        for chunk in pixels.chunks_exact(4) {
+            let (r, g, b) = tone_map_and_gamma(
+                chunk[0],
+                chunk[1],
+                chunk[2],
+                exposure_multiplier,
+                gamma_inv,
+                use_srgb,
+                mode,
+            );
 
-                let mut results = Vec::with_capacity(if has_alpha { 16 } else { 12 });
+            let r_u16 = (r.clamp(0.0, 1.0) * 65535.0).round() as u16;
+            let g_u16 = (g.clamp(0.0, 1.0) * 65535.0).round() as u16;
+            let b_u16 = (b.clamp(0.0, 1.0) * 65535.0).round() as u16;
 
-                for pixel_rgba in pixel_data {
-                    // Apply exposure
-                    let exposed = pixel_rgba * f32x4::splat(exposure_multiplier);
+            if has_alpha {
+                let a_u16 = (chunk[3].clamp(0.0, 1.0) * 65535.0).round() as u16;
+                processed.extend_from_slice(&[r_u16, g_u16, b_u16, a_u16]);
+            } else {
+                processed.extend_from_slice(&[r_u16, g_u16, b_u16]);
+            }
+        }
 
-                    // Extract RGB channels for tone mapping
-                    let r = exposed[0];
-                    let g = exposed[1];
-                    let b = exposed[2];
-                    let a = exposed[3];
-
-                    // Apply tone mapping (exposure already applied)
-                    let (tone_r, tone_g, tone_b) = tone_map_and_gamma(
-                        r,
-                        g,
-                        b,
-                        1.0,
-                        gamma_inv,
-                        use_srgb,
-                        mode,
-                    );
-
-                    // Convert to u16
-                    let r_u16 = (tone_r.clamp(0.0, 1.0) * 65535.0).round() as u16;
-                    let g_u16 = (tone_g.clamp(0.0, 1.0) * 65535.0).round() as u16;
-                    let b_u16 = (tone_b.clamp(0.0, 1.0) * 65535.0).round() as u16;
-
-                    results.push(r_u16);
-                    results.push(g_u16);
-                    results.push(b_u16);
-
-                    if has_alpha {
-                        let a_u16 = (a.clamp(0.0, 1.0) * 65535.0).round() as u16;
-                        results.push(a_u16);
-                    }
-                }
-
-                results
-            })
-            .collect()
+        Ok(processed)
     }
 
     /// Generate output file path

@@ -1,4 +1,3 @@
-use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::sync::LazyLock;
 /// Channel classification using dictionary lookups and simple prefix/suffix patterns.
@@ -29,34 +28,6 @@ pub struct GroupDefinition {
     #[serde(default)]
     pub basic_rgb: bool,
 }
-
-/// Pre-computed hash-based pattern matching for ultra-fast channel classification
-static CHANNEL_PREFIX_MAP: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::new(|| {
-    let mut map = HashMap::new();
-
-    // Base channels
-    map.insert("Beauty", "base");
-    map.insert("R", "base");
-    map.insert("G", "base");
-    map.insert("B", "base");
-    map.insert("A", "base");
-
-    // Scene channels
-    map.insert("Background", "scene");
-    map.insert("VirtualBeauty", "scene");
-    map.insert("ZDepth", "scene");
-
-    // Technical channels (note: now uses patterns, but keeping for ultra-fast fallback)
-
-    // Light channels
-    map.insert("Sky", "light");
-    map.insert("Sun", "light");
-    map.insert("LightMix", "light");
-
-    // Cryptomatte channels (note: now uses patterns, but keeping for ultra-fast fallback)
-
-    map
-});
 
 /// String interning cache for group names to avoid repeated allocations
 pub static GROUP_NAME_CACHE: LazyLock<HashMap<&'static str, String>> = LazyLock::new(|| {
@@ -161,51 +132,13 @@ pub fn create_default_config() -> ChannelGroupConfig {
         groups,
     }
 }
-
-/// Ultra-fast channel group determination using precomputed lookups + SIMD patterns
-pub fn determine_channel_group_ultra_fast(channel_name: &str) -> &'static str {
-    // Fast path: Check if it's a basic RGB channel
-    if matches!(channel_name, "R" | "G" | "B" | "A") {
-        return "base";
-    }
-
-    // Extract prefix (before first dot)
-    let prefix = if let Some(dot_pos) = channel_name.find('.') {
-        &channel_name[..dot_pos]
-    } else {
-        channel_name
-    };
-
-    // Ultra-fast O(1) lookup for common prefixes
-    if let Some(&group_key) = CHANNEL_PREFIX_MAP.get(prefix) {
-        return group_key;
-    }
-
-    // Pattern matching for wildcards using SIMD when possible
-    if matches_pattern_simd(prefix, "Light*") {
-        return "light";
-    }
-
-    // Pattern matching will be handled by the configuration-based function
-    // This ultra-fast path only handles exact prefix matches
-
-    // Default fallback
-    "scene_objects"
-}
-
-/// Match a channel-classification glob pattern against `text`.
-///
-/// Supported patterns:
-///   "*"         — matches anything
-///   ""          — matches only the empty string
-///   "prefix*"   — matches strings starting with "prefix"
-///   "*suffix"   — matches strings ending with "suffix"
-///   "exact"     — matches only "exact"
+/// Fast parallel channel grouping with configuration support
+/// Glob-lite matcher for channel-group patterns: `*`, `prefix*`, `*suffix`, exact.
 ///
 /// Channel group names are short (well under 32 bytes), so `str::starts_with`
 /// and `str::ends_with` outperform the hand-rolled SSE2 matcher they replaced:
 /// the standard library already uses SIMD-accelerated memcmp internally, and
-/// the previous implementation only kicked in for prefixes ≥16 bytes anyway.
+/// the previous implementation only kicked in for prefixes >= 16 bytes anyway.
 pub fn matches_pattern_simd(text: &str, pattern: &str) -> bool {
     if pattern == "*" {
         return true;
@@ -222,29 +155,19 @@ pub fn matches_pattern_simd(text: &str, pattern: &str) -> bool {
     text == pattern
 }
 
-/// Fast parallel channel grouping with configuration support
-pub fn group_channels_parallel(
+/// Group channel names by their configured group.
+pub fn group_channels(
     channels: &[crate::io::fast_exr_metadata::ChannelInfo],
-    config: Option<&ChannelGroupConfig>,
+    config: &ChannelGroupConfig,
 ) -> HashMap<String, Vec<String>> {
-    let channel_groups: DashMap<String, Vec<String>> = DashMap::new();
-
-    // Process channels in parallel without locks
-    channels.iter().for_each(|channel| {
-        let group_name = if let Some(cfg) = config {
-            determine_channel_group_with_config(&channel.name, cfg)
-        } else {
-            determine_channel_group_ultra_fast(&channel.name).to_string()
-        };
-
+    let mut channel_groups: HashMap<String, Vec<String>> = HashMap::new();
+    for channel in channels {
         channel_groups
-            .entry(group_name)
+            .entry(determine_channel_group_with_config(&channel.name, config))
             .or_default()
             .push(channel.name.clone());
-    });
-
-    // Convert to regular HashMap
-    channel_groups.into_iter().collect()
+    }
+    channel_groups
 }
 
 /// Channel group determination with configuration support
@@ -359,23 +282,19 @@ mod tests {
         assert!(!matches_pattern_simd("wrongPrefix", "correct*"));
     }
 
+    /// Ported from the removed ultra-fast classifier, which production never used
+    /// (the config-based path is the only one reachable). Same cases, config path.
     #[test]
     fn test_channel_group_classification() {
-        assert_eq!(determine_channel_group_ultra_fast("R"), "base");
-        assert_eq!(determine_channel_group_ultra_fast("Beauty.red"), "base");
-        assert_eq!(determine_channel_group_ultra_fast("LightMix.blue"), "light");
-        assert_eq!(
-            determine_channel_group_ultra_fast("Background.red"),
-            "scene"
-        );
-        assert_eq!(
-            determine_channel_group_ultra_fast("ID0.red"),
-            "scene_objects"
-        );
-        assert_eq!(
-            determine_channel_group_ultra_fast("_testLayer.blue"),
-            "scene_objects"
-        );
+        let config = create_default_config();
+        let group = |name: &str| determine_channel_group_with_config(name, &config);
+
+        assert_eq!(group("R"), "Base");
+        assert_eq!(group("Beauty.red"), "Base");
+        assert_eq!(group("LightMix.blue"), "Light");
+        assert_eq!(group("Background.red"), "Scene");
+        assert_eq!(group("ID0.red"), "Scene Objects");
+        assert_eq!(group("_testLayer.blue"), "Scene Objects");
     }
 
     #[test]

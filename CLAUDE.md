@@ -34,11 +34,8 @@ python build.py --release
 # Run all tests
 cargo test
 
-# Run specific GPU tests with timeout
-timeout 45s cargo test test_gpu_thumbnail_generation -- --nocapture
-
-# Run with SIMD features
-cargo check --features unified_simd
+# Run a single test
+cargo test --bin EXruster <test_name> -- --nocapture
 ```
 
 **Code quality:**
@@ -60,32 +57,38 @@ The codebase follows a modular architecture organized into distinct functional a
 ### Core Modules
 
 **`src/io/`** - File I/O and caching systems
-- `image_cache.rs` - Basic image caching
-- `full_exr_cache.rs` - Advanced EXR file caching with metadata
-- `lazy_exr_loader.rs` - Lazy loading for performance
-- `thumbnails.rs` - Thumbnail generation and management
-- `file_operations.rs` - File system operations
-- `exr_metadata.rs` - EXR metadata extraction and handling
+- `image_cache.rs` - The loaded image: composite pixels, layer/channel switching, render API
+- `full_exr_cache.rs` - Whole-file EXR cache in RAM (all layers, all channels)
+- `lazy_exr_loader.rs` - On-demand layer loading for large files (>700 MB), mmap above 500 MB
+- `selective_layer_reader.rs` - Decode a single named layer instead of the whole file
+- `thumbnails.rs` - Thumbnail generation + LRU cache
+- `exr_metadata.rs` - Meta tab presenter
+- `fast_exr_metadata.rs` - Raw header parser used by exr_metadata (bails on multipart)
+- `hdr_loader.rs` - Radiance HDR decoding
+- `folder_tree.rs`, `file_operations.rs`, `progress_reader.rs`
 
 **`src/processing/`** - Image processing pipeline
-- `image_processing.rs` - Core image processing algorithms
-- `simd_processing.rs` - SIMD-optimized processing routines
-- `tone_mapping.rs` - HDR tone mapping algorithms (Reinhard, etc.)
-- `color_processing.rs` - Color space conversions and corrections
+- `image_processing.rs` - Per-pixel scalar pipeline
+- `simd_processing.rs` - SIMD tone-map/gamma kernels (portable_simd)
+- `tone_mapping.rs` - Tone-map curves (ACES, Reinhard, Filmic, Hable), sRGB LUT
+- `color_processing.rs` - Chromaticities -> sRGB matrix, cached (keyed on path+layer+mtime)
 - `histogram.rs` - Histogram generation and analysis
-- `pipeline.rs` - Processing pipeline coordination
+- `channel_classification.rs` - Group channels/layers by config
+- `layer_export.rs` - PNG16 (display-referred) and 32-bit float TIFF (scene-referred) export
 
 **`src/ui/`** - User interface components
 - `ui_handlers.rs` - Main UI event handlers and callbacks
 - `state.rs` - Application state management
 - `setup.rs` - UI initialization and callback setup
+- `file_handlers.rs` - Opening EXR/HDR files, layer model construction
 - `layers.rs` - Layer tree handling for EXR files
-- `image_controls.rs` - Image parameter controls (exposure, gamma)
+- `image_controls.rs` - Exposure/gamma controls + background preview rendering
+- `browser_handlers.rs`, `thumbnails.rs` - Folder tree and thumbnail browser
+- `export_handlers.rs` - Export callbacks
 - `progress.rs` - Progress reporting system
 
 **`src/utils/`** - Utility modules
-- `buffer_pool.rs` - Memory buffer pooling for performance
-- `cache.rs` - Generic caching utilities
+- `channel_config.rs` - Channel-group configuration (JSON)
 - `error_handling.rs` - Error handling and reporting
 - `logging.rs` - Logging infrastructure
 - `progress.rs` - Progress tracking utilities
@@ -96,17 +99,13 @@ The codebase follows a modular architecture organized into distinct functional a
 - **exr** - EXR file format handling
 - **rayon** - Parallel processing
 - **glam** - Linear algebra and SIMD math
-- **tokio** - Async runtime
 - **lru** - LRU caching
+- **memmap2** - Memory-mapping for large files (>500 MB, lazy mode)
 
 ### SIMD Support
 
-The project includes SIMD optimizations that can be enabled with:
-```bash
-cargo build --features unified_simd
-```
-
-SIMD code is located in `src/processing/simd_processing.rs` and uses Rust's portable SIMD feature.
+SIMD is always on. The kernels live in `src/processing/simd_processing.rs` and use
+Rust's portable SIMD feature (hence the nightly toolchain).
 
 ### Platform-Specific Code
 
@@ -126,16 +125,27 @@ The UI is defined in `.slint` files in the `ui/` directory:
 
 **Rust Toolchain:** Uses nightly Rust channel with portable SIMD features enabled.
 
-**Memory Management:** The application uses buffer pooling (`BufferPool`) for efficient memory management during image processing.
+**Threading rule (important):** All image processing and file I/O runs on the rayon
+pool. The Slint event loop only assigns `slint::Image`s and properties — it must
+never tone-map, decode, or touch the disk. Renders go through
+`image_cache::render_to_buffer` + `RenderSnapshot`: workers produce a
+`SharedPixelBuffer` (which is `Send`, unlike `slint::Image`), and the event loop
+just wraps it. Preview renders carry a generation counter so a slow frame cannot
+overwrite a newer one.
+
+**Memory Management:** `ImageCache::raw_pixels` is an `Arc<Vec<f32>>`, so a background
+render can hold the pixels without copying them or holding the app-state lock;
+mutations go through `Arc::make_mut`.
 
 **Error Handling:** Comprehensive error handling with custom error types and recovery mechanisms.
 
 **Threading:** Rayon thread pool is configured to use `num_cpus - 1` threads, leaving one core for UI responsiveness.
 
 **Caching Strategy:** Multi-level caching system:
-- `ImageCache` for basic image data
-- `FullExrCache` for complete EXR files with metadata
-- LRU eviction policies for memory management
+- `ImageCache` holds the current composite + the current layer's planar channels
+- `FullExrCacheData` (full mode) or `LazyExrLoader` (lazy mode) behind `ExrDataSource`
+- LRU caches for thumbnails (keyed on path+mtime+params) and colour matrices
+  (keyed on path+layer+mtime)
 
 ## Common Development Tasks
 
@@ -143,6 +153,7 @@ The UI is defined in `.slint` files in the `ui/` directory:
 
 **UI modifications:** Edit `.slint` files in `ui/` directory, then rebuild to regenerate Rust bindings.
 
-**Performance optimization:** Focus on `src/processing/simd_processing.rs` for SIMD implementations and `src/utils/buffer_pool.rs` for memory optimization.
+**Performance optimization:** Focus on `src/processing/simd_processing.rs` for the SIMD
+kernels. Before adding work to a UI callback, check the threading rule above.
 
 **Adding file format support:** Extend `src/io/file_operations.rs` and related caching systems.

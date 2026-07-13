@@ -122,7 +122,6 @@ pub fn render_to_buffer(
         gamma,
         tonemap_mode,
         color_matrix,
-        false,
         true, // parallel: callers are off the UI thread
     );
     buffer
@@ -599,8 +598,8 @@ impl ImageCache {
         Ok(())
     }
 
-    /// Renderowanie głębi/pojedynczego kanału: auto-normalizacja percentylowa
-    /// + opcjonalne odwrócenie. Zwraca bufor (`Send`), więc może powstać poza
+    /// Renderowanie głębi/pojedynczego kanału: auto-normalizacja percentylowa,
+    /// opcjonalnie odwrócona. Zwraca bufor (`Send`), więc może powstać poza
     /// wątkiem UI; pętla zdarzeń tylko opakowuje go w `slint::Image`.
     pub fn process_depth_to_buffer(
         &self,

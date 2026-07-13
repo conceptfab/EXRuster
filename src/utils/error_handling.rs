@@ -30,67 +30,6 @@ impl UiErrorReporter for AppWindow {
 
 }
 
-/// Macro for standard error handling pattern with UI updates
-///
-/// Usage:
-/// ```rust
-/// handle_ui_error!(result, ui, console, "histogram" => {
-///     // success handling code here
-/// });
-/// ```
-#[macro_export]
-macro_rules! handle_ui_error {
-    ($result:expr, $ui:expr, $console:expr, $context:expr => $success_block:block) => {
-        match $result {
-            Ok(value) => {
-                let _value = value;
-                $success_block
-            }
-            Err(e) => {
-                use $crate::utils::error_handling::UiErrorReporter;
-                $ui.report_error($console, $context, e);
-            }
-        }
-    };
-
-    ($result:expr, $ui:expr, $console:expr, $context:expr, $status_msg:expr => $success_block:block) => {
-        match $result {
-            Ok(value) => {
-                let _value = value;
-                $success_block
-            }
-            Err(e) => {
-                use $crate::utils::error_handling::UiErrorReporter;
-                $ui.report_error_with_status($console, $context, $status_msg, e);
-            }
-        }
-    };
-}
-
-/// Macro for handling Option values with error reporting
-///
-/// Usage:
-/// ```rust
-/// handle_ui_option!(some_option, ui, console, "file", "No file loaded" => {
-///     // success handling code here with value available
-/// });
-/// ```
-#[macro_export]
-macro_rules! handle_ui_option {
-    ($option:expr, $ui:expr, $console:expr, $context:expr, $error_msg:expr => $success_block:block) => {
-        match $option {
-            Some(value) => {
-                let _value = value;
-                $success_block
-            }
-            None => {
-                use $crate::utils::error_handling::UiErrorReporter;
-                $ui.report_error($console, $context, $error_msg);
-            }
-        }
-    };
-}
-
 #[cfg(test)]
 mod tests {
     #[test]

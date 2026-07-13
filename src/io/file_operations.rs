@@ -6,8 +6,10 @@ use std::path::{Path, PathBuf};
 /// # Returns
 /// * `Option<PathBuf>` - ścieżka do wybranego pliku lub None jeśli anulowano
 pub fn open_file_dialog() -> Option<PathBuf> {
+    // Only exr/hdr: every non-.hdr pick is parsed as EXR, so offering png/jpg/gif
+    // just produced a raw read error.
     FileDialog::new()
-        .add_filter("Obrazy", &["exr", "hdr", "png", "jpg", "jpeg", "gif"])
+        .add_filter("Obrazy HDR", &["exr", "hdr"])
         .add_filter("Wszystkie pliki", &["*"])
         .set_title("Otwórz plik obrazu")
         .pick_file()

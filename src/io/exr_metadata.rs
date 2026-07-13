@@ -1,6 +1,6 @@
 use crate::io::fast_exr_metadata::read_exr_metadata_ultra_fast;
 use crate::log_warn;
-use crate::processing::channel_classification::group_channels_parallel;
+use crate::processing::channel_classification::group_channels;
 use crate::utils::channel_config::{get_fallback_config, load_channel_config};
 use crate::utils::human_size;
 use ::exr::meta::attribute::AttributeValue;
@@ -92,7 +92,7 @@ fn read_and_group_metadata_fast(path: &Path) -> anyhow::Result<ExrMetadata> {
         );
         get_fallback_config()
     });
-    let channel_groups = group_channels_parallel(&fast_meta.channels, Some(&config));
+    let channel_groups = group_channels(&fast_meta.channels, &config);
 
     // Dodaj informacje o grupach kanałów do nagłówka
     let mut channel_info = Vec::new();

@@ -20,19 +20,17 @@ rfd = { version = "0.15", features = ["file-handle-inner"] }
 anyhow = "1.0"
 rayon = "1.11"
 num_cpus = "1.17"
-image = { version = "0.25", default-features = false, features = ["jpeg", "png", "hdr", "tiff", "webp", "bmp", "ico", "pnm", "tga", "dds", "exr"] }
+# Only png (save) and hdr (decode) are used: EXR goes through the `exr` crate,
+# TIFF through the `tiff` crate.
+image = { version = "0.25", default-features = false, features = ["png", "hdr"] }
 tiff = "0.10.2"
 glam = "0.30.5"
 lru = "0.16"
 trash = "5"
 memmap2 = "0.9"
-dashmap = "6.1"
 arboard = "3"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-
-[features]
-unified_simd = []
 
 # Windows-only: ustawianie ikony okna w runtime (WM_SETICON)
 [target.'cfg(windows)'.dependencies]
