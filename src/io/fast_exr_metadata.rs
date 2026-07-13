@@ -102,7 +102,14 @@ impl FastEXRParser {
         let _file_version = version & 0xFF;
         let _is_tiled = (version & 0x200) != 0;
         let _is_long_names = (version & 0x400) != 0;
-        let _is_multipart = (version & 0x1000) != 0;
+        let is_multipart = (version & 0x1000) != 0;
+        if is_multipart {
+            // This parser reads only the first header. Multipart files carry one
+            // header per part, so reporting the first as the whole file would
+            // understate the layer count. Bail out; read_and_group_metadata
+            // falls back to the standard exr-crate parser on Err.
+            return Err("multipart EXR not supported by fast parser".into());
+        }
 
         let mut metadata = FastEXRMetadata {
             channels: Vec::new(),
