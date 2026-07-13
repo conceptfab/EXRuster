@@ -60,6 +60,16 @@ pub enum ExrDataSource {
     Hdr,
 }
 
+impl Clone for ExrDataSource {
+    fn clone(&self) -> Self {
+        match self {
+            ExrDataSource::Full(c) => ExrDataSource::Full(Arc::clone(c)),
+            ExrDataSource::Lazy(l) => ExrDataSource::Lazy(Arc::clone(l)),
+            ExrDataSource::Hdr => ExrDataSource::Hdr,
+        }
+    }
+}
+
 pub struct ImageCache {
     // Arc, so a background render can hold the pixels without copying them and
     // without keeping the app-state lock. Mutations go through Arc::make_mut.
@@ -120,6 +130,12 @@ pub fn render_to_buffer(
 }
 
 impl ImageCache {
+    /// Handle to the underlying EXR data, so consumers (e.g. the exporter) work
+    /// in both full and lazy mode rather than requiring the full RAM cache.
+    pub fn data_source(&self) -> ExrDataSource {
+        self.data_source.clone()
+    }
+
     /// Cheap, lock-free-once-taken handle to the current pixels for background rendering.
     pub fn snapshot(&self) -> RenderSnapshot {
         RenderSnapshot {

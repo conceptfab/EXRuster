@@ -1,12 +1,13 @@
 use crate::processing::layer_export::{ExportFormat, ExportParams, LayerExporter};
 use crate::processing::tone_mapping::ToneMapMode;
-use crate::ui::progress::patterns;
+use crate::ui::progress::{ProgressSink, UiProgress};
 use crate::ui::state::SharedAppState;
 use crate::ui::ui_handlers::{push_console, ConsoleModel};
 use crate::AppWindow;
 use anyhow::Result;
 use slint::{ComponentHandle, Weak};
 use std::path::PathBuf;
+use std::sync::Arc;
 
 /// Export configuration passed from UI
 #[derive(Clone, Debug)]
@@ -62,45 +63,6 @@ pub fn export_cryptomatte(
 
 pub fn export_lights(ui_handle: Weak<AppWindow>, app_state: SharedAppState, console: ConsoleModel) {
     handle_export(ExportType::Lights, ui_handle, app_state, console);
-}
-
-/// Implementation for base layer export
-fn export_base_layer_impl(
-    ui: &AppWindow,
-    app_state: &SharedAppState,
-    export_config: UiExportConfig,
-) -> Result<PathBuf> {
-    let state = app_state
-        .read()
-        .map_err(|_| anyhow::anyhow!("Failed to read app state"))?;
-
-    // Validate file is loaded
-    let _file_path = state
-        .current_file_path
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("No file loaded"))?;
-
-    // Get full cache data
-    let cache_data = state
-        .full_exr_cache
-        .clone()
-        .ok_or_else(|| anyhow::anyhow!("No EXR cache available"))?;
-
-    // Use cached layers info instead of re-reading from disk
-    let layers_info = cache_data.to_layers_info();
-
-    // Create export parameters
-    let export_params = create_export_params(ui, &export_config)?;
-
-    // Create exporter
-    let exporter = LayerExporter::new(cache_data, layers_info).with_params(export_params);
-
-    // Export base layer
-    exporter.export_base_layer(
-        export_config.format,
-        &export_config.output_directory,
-        &export_config.base_filename,
-    )
 }
 
 /// Create export parameters from UI state
@@ -199,133 +161,122 @@ pub fn create_export_config_from_ui(
     }
 }
 
-/// Generic export handler for all export types
+/// Generic export handler for all export types.
+///
+/// Gathers everything that needs the UI thread (config, params), then hands the
+/// actual work to rayon: composing, tone-mapping, encoding and writing a
+/// multi-layer 4K EXR takes seconds, and used to take them on the event loop.
 pub fn handle_export(
     export_type: ExportType,
     ui_handle: Weak<AppWindow>,
     app_state: SharedAppState,
     console: ConsoleModel,
 ) {
-    if let Some(ui) = ui_handle.upgrade() {
-        let export_config =
-            match create_export_config_from_ui(ui_handle.clone(), &app_state, console.clone()) {
-                Some(config) => config,
-                None => return,
-            };
+    let Some(ui) = ui_handle.upgrade() else {
+        return;
+    };
 
-        let export_name = match export_type {
-            ExportType::Beauty => "beauty",
-            ExportType::All => "all layers",
-            ExportType::Scene => "scene layers",
-            ExportType::Objects => "object layers",
-            ExportType::Cryptomatte => "cryptomatte layers",
-            ExportType::Lights => "light layers",
-        };
+    let Some(export_config) =
+        create_export_config_from_ui(ui_handle.clone(), &app_state, console.clone())
+    else {
+        return;
+    };
 
-        let _prog = patterns::processing(ui.as_weak(), &format!("Exporting {}", export_name));
-
-        match export_type {
-            ExportType::Beauty => match export_base_layer_impl(&ui, &app_state, export_config) {
-                Ok(output_path) => {
-                    let msg = format!(
-                        "[export] {} exported to: {}",
-                        export_name,
-                        output_path.display()
-                    );
-                    push_console(&ui, &console, msg);
-                    ui.set_status_text(format!("{} export completed", export_name).into());
-                }
-                Err(e) => {
-                    let msg = format!("[export] Failed to export {}: {}", export_name, e);
-                    push_console(&ui, &console, msg);
-                    ui.set_status_text(format!("{} export failed", export_name).into());
-                }
-            },
-            _ => match export_layer_group_impl(&ui, &app_state, export_config, export_type) {
-                Ok(output_paths) => {
-                    let msg = format!(
-                        "[export] {} exported {} layers",
-                        export_name,
-                        output_paths.len()
-                    );
-                    push_console(&ui, &console, msg);
-                    for path in output_paths {
-                        push_console(&ui, &console, format!("  -> {}", path.display()));
-                    }
-                    ui.set_status_text(format!("{} export completed", export_name).into());
-                }
-                Err(e) => {
-                    let msg = format!("[export] Failed to export {}: {}", export_name, e);
-                    push_console(&ui, &console, msg);
-                    ui.set_status_text(format!("{} export failed", export_name).into());
-                }
-            },
+    let export_params = match create_export_params(&ui, &export_config) {
+        Ok(p) => p,
+        Err(e) => {
+            push_console(&ui, &console, format!("[export] config error: {}", e));
+            return;
         }
+    };
+
+    let export_name = match export_type {
+        ExportType::Beauty => "beauty",
+        ExportType::All => "all layers",
+        ExportType::Scene => "scene layers",
+        ExportType::Objects => "object layers",
+        ExportType::Cryptomatte => "cryptomatte layers",
+        ExportType::Lights => "light layers",
     }
+    .to_string();
+
+    push_console(&ui, &console, format!("[export] {} started", export_name));
+
+    let progress = Arc::new(UiProgress::new(ui.as_weak()));
+    progress.start_indeterminate(Some(&format!("Exporting {}", export_name)));
+
+    let ui_weak = ui.as_weak();
+
+    rayon::spawn(move || {
+        let result = run_export(&app_state, &export_config, export_params, &export_type);
+
+        let _ = slint::invoke_from_event_loop(move || {
+            let Some(ui) = ui_weak.upgrade() else {
+                return;
+            };
+            match result {
+                Ok(paths) => {
+                    // ConsoleModel is Rc and cannot cross threads, so append to the
+                    // console property directly instead.
+                    let mut log = ui.get_console_text().to_string();
+                    for p in &paths {
+                        if !log.is_empty() {
+                            log.push('\n');
+                        }
+                        log.push_str(&format!("[export] -> {}", p.display()));
+                    }
+                    ui.set_console_text(log.into());
+                    ui.set_status_text(
+                        format!("{} export completed ({} files)", export_name, paths.len()).into(),
+                    );
+                }
+                Err(e) => {
+                    ui.set_status_text(format!("{} export failed: {}", export_name, e).into());
+                }
+            }
+            progress.finish(None);
+        });
+    });
 }
 
-/// Implementation for layer group export
-fn export_layer_group_impl(
-    ui: &AppWindow,
+/// Runs on the rayon pool — must not touch UI objects.
+fn run_export(
     app_state: &SharedAppState,
-    export_config: UiExportConfig,
-    export_type: ExportType,
+    config: &UiExportConfig,
+    params: ExportParams,
+    export_type: &ExportType,
 ) -> Result<Vec<PathBuf>> {
-    let state = app_state
-        .read()
-        .map_err(|_| anyhow::anyhow!("Failed to read app state"))?;
+    // Take the data source, not full_exr_cache: in lazy mode the latter is None,
+    // which used to make every export fail with "No EXR cache available".
+    let (source, layers_info) = {
+        let state = app_state
+            .read()
+            .map_err(|_| anyhow::anyhow!("Failed to read app state"))?;
+        let cache = state
+            .image_cache
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("No image loaded"))?;
+        (cache.data_source(), cache.layers_info.clone())
+    };
 
-    // Validate file is loaded
-    let _file_path = state
-        .current_file_path
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("No file loaded"))?;
-
-    // Get full cache data
-    let cache_data = state
-        .full_exr_cache
-        .clone()
-        .ok_or_else(|| anyhow::anyhow!("No EXR cache available"))?;
-
-    // Use cached layers info instead of re-reading from disk
-    let layers_info = cache_data.to_layers_info();
-
-    // Create export parameters
-    let export_params = create_export_params(ui, &export_config)?;
-
-    // Create exporter
-    let exporter = LayerExporter::new(cache_data, layers_info).with_params(export_params);
+    let exporter = LayerExporter::new(source, layers_info).with_params(params);
+    let dir = &config.output_directory;
+    let base = &config.base_filename;
 
     match export_type {
-        ExportType::All => exporter.export_all_layers(
-            export_config.format,
-            &export_config.output_directory,
-            &export_config.base_filename,
-        ),
-        ExportType::Scene => exporter.export_layer_group(
-            "scene",
-            export_config.format,
-            &export_config.output_directory,
-            &export_config.base_filename,
-        ),
-        ExportType::Objects => exporter.export_layer_group(
-            "objects",
-            export_config.format,
-            &export_config.output_directory,
-            &export_config.base_filename,
-        ),
-        ExportType::Cryptomatte => exporter.export_layer_group(
-            "cryptomatte",
-            export_config.format,
-            &export_config.output_directory,
-            &export_config.base_filename,
-        ),
-        ExportType::Lights => exporter.export_layer_group(
-            "lights",
-            export_config.format,
-            &export_config.output_directory,
-            &export_config.base_filename,
-        ),
-        ExportType::Beauty => unreachable!("Beauty export should use base layer function"),
+        ExportType::Beauty => exporter
+            .export_base_layer(config.format.clone(), dir, base)
+            .map(|p| vec![p]),
+        ExportType::All => exporter.export_all_layers(config.format.clone(), dir, base),
+        ExportType::Scene => exporter.export_layer_group("scene", config.format.clone(), dir, base),
+        ExportType::Objects => {
+            exporter.export_layer_group("objects", config.format.clone(), dir, base)
+        }
+        ExportType::Cryptomatte => {
+            exporter.export_layer_group("cryptomatte", config.format.clone(), dir, base)
+        }
+        ExportType::Lights => {
+            exporter.export_layer_group("lights", config.format.clone(), dir, base)
+        }
     }
 }

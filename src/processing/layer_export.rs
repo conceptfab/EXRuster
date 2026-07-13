@@ -1,11 +1,9 @@
-use crate::io::full_exr_cache::FullExrCacheData;
-use crate::io::image_cache::{LayerChannels, LayerInfo};
+use crate::io::image_cache::{ExrDataSource, LayerChannels, LayerInfo};
 use crate::processing::channel_classification::determine_channel_group_with_config;
 use crate::utils::channel_config::load_channel_config;
 use crate::processing::tone_mapping::{tone_map_and_gamma, ToneMapMode};
 use anyhow::Result;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 /// Export format configuration
 #[derive(Clone, Debug)]
@@ -36,16 +34,16 @@ impl Default for ExportParams {
 
 /// High-performance layer export processor
 pub struct LayerExporter {
-    cache: Arc<FullExrCacheData>,
+    source: ExrDataSource,
     layers_info: Vec<LayerInfo>,
     export_params: ExportParams,
 }
 
 impl LayerExporter {
-    /// Create a new layer exporter with full EXR cache
-    pub fn new(cache: Arc<FullExrCacheData>, layers_info: Vec<LayerInfo>) -> Self {
+    /// Create a new layer exporter over any EXR data source (full cache or lazy).
+    pub fn new(source: ExrDataSource, layers_info: Vec<LayerInfo>) -> Self {
         Self {
-            cache,
+            source,
             layers_info,
             export_params: ExportParams::default(),
         }
@@ -173,9 +171,17 @@ impl LayerExporter {
         Ok(output_path)
     }
 
-    /// Load layer channels from full cache
+    /// Load layer channels from whichever data source backs this export.
     fn load_layer_channels(&self, layer_name: &str) -> Result<LayerChannels> {
-        crate::io::image_cache::load_all_channels_for_layer_from_full(&self.cache, layer_name, None)
+        match &self.source {
+            ExrDataSource::Full(full) => {
+                crate::io::image_cache::load_all_channels_for_layer_from_full(full, layer_name, None)
+            }
+            ExrDataSource::Lazy(lazy) => {
+                Ok(lazy.get_layer_data(layer_name, None)?.to_layer_channels())
+            }
+            ExrDataSource::Hdr => anyhow::bail!("Export is not supported for HDR files"),
+        }
     }
 
     /// Process layer to final pixels.
@@ -494,6 +500,7 @@ struct ProcessedPixels {
 mod tests {
     use super::*;
     use crate::io::full_exr_cache::{FullExrCacheData, FullLayer};
+    use std::sync::Arc;
 
     /// 2x1 layer, planar: R=[5.0, 5.0] G=[0.5, 0.5] B=[0.25, 0.25].
     /// R is deliberately above 1.0 — that is the HDR value a float export must keep.
@@ -509,7 +516,7 @@ mod tests {
             layers: vec![layer],
         });
         let layers_info = cache.to_layers_info();
-        LayerExporter::new(cache, layers_info)
+        LayerExporter::new(ExrDataSource::Full(cache), layers_info)
     }
 
     #[test]

@@ -124,53 +124,6 @@ impl ProgressSink for Arc<UiProgress> {
     }
 }
 
-/// RAII wrapper for UiProgress that automatically handles cleanup
-pub struct ScopedProgress {
-    inner: Arc<UiProgress>,
-    auto_finish: bool,
-}
-
-impl ScopedProgress {
-    /// Create a new scoped progress with automatic finish on drop
-    pub fn new(inner: Arc<UiProgress>) -> Self {
-        Self {
-            inner,
-            auto_finish: true,
-        }
-    }
-
-    /// Create a new scoped progress from UI weak reference
-    pub fn from_ui(ui: slint::Weak<AppWindow>) -> Self {
-        Self::new(Arc::new(UiProgress::new(ui)))
-    }
-
-    /// Start indeterminate progress and return self for chaining
-    pub fn start_indeterminate(self, message: Option<&str>) -> Self {
-        self.inner.start_indeterminate(message);
-        self
-    }
-}
-
-impl Drop for ScopedProgress {
-    fn drop(&mut self) {
-        if self.auto_finish {
-            self.inner.finish(None);
-        }
-    }
-}
-
-/// Extension trait for Weak<AppWindow> to provide convenient progress creation
-pub trait WeakProgressExt {
-    /// Create a new scoped progress that automatically finishes on drop
-    fn scoped_progress(&self) -> ScopedProgress;
-}
-
-impl WeakProgressExt for slint::Weak<AppWindow> {
-    fn scoped_progress(&self) -> ScopedProgress {
-        ScopedProgress::from_ui(self.clone())
-    }
-}
-
 /// Ustawia progress na 100% i planuje reset do 0.0 po 500 ms.
 /// Działa z dowolnego wątku (używa invoke_from_event_loop).
 pub fn schedule_progress_finish_with_reset(ui: slint::Weak<AppWindow>) {
@@ -186,15 +139,4 @@ pub fn schedule_progress_finish_with_reset(ui: slint::Weak<AppWindow>) {
             });
         }
     });
-}
-
-/// Convenience functions for common progress patterns
-pub mod patterns {
-    use super::*;
-
-    /// Create a progress for processing operations with step tracking
-    pub fn processing(ui: slint::Weak<AppWindow>, operation: &str) -> ScopedProgress {
-        let message = format!("Processing: {}", operation);
-        ui.scoped_progress().start_indeterminate(Some(&message))
-    }
 }
