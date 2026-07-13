@@ -61,7 +61,9 @@ pub enum ExrDataSource {
 }
 
 pub struct ImageCache {
-    pub raw_pixels: Vec<f32>, // Zmiana z Vec<(f32,f32,f32,f32)> na Vec<f32>
+    // Arc, so a background render can hold the pixels without copying them and
+    // without keeping the app-state lock. Mutations go through Arc::make_mut.
+    pub raw_pixels: Arc<Vec<f32>>,
     pub width: u32,
     pub height: u32,
     pub layers_info: Vec<LayerInfo>,
@@ -79,7 +81,55 @@ pub struct ImageCache {
     pub histogram: Option<Arc<crate::processing::histogram::HistogramData>>,
 }
 
+/// Everything a background thread needs to render a frame, detached from the
+/// cache (and therefore from the app-state lock).
+#[derive(Clone)]
+pub struct RenderSnapshot {
+    pub pixels: Arc<Vec<f32>>,
+    pub width: u32,
+    pub height: u32,
+    pub color_matrix: Option<Mat3>,
+}
+
+/// Render linear RGBA f32 pixels to an 8-bit buffer.
+///
+/// Callable from any thread: `SharedPixelBuffer` is `Send`, whereas `slint::Image`
+/// is not. Workers render here; the event loop only wraps the result via
+/// `Image::from_rgba8`.
+pub fn render_to_buffer(
+    pixels: &[f32],
+    width: u32,
+    height: u32,
+    exposure: f32,
+    gamma: f32,
+    tonemap_mode: i32,
+    color_matrix: Option<Mat3>,
+) -> SharedPixelBuffer<Rgba8Pixel> {
+    let mut buffer = SharedPixelBuffer::<Rgba8Pixel>::new(width, height);
+    crate::processing::simd_processing::process_rgba_chunk_optimized(
+        pixels,
+        buffer.make_mut_slice(),
+        exposure,
+        gamma,
+        tonemap_mode,
+        color_matrix,
+        false,
+        true, // parallel: callers are off the UI thread
+    );
+    buffer
+}
+
 impl ImageCache {
+    /// Cheap, lock-free-once-taken handle to the current pixels for background rendering.
+    pub fn snapshot(&self) -> RenderSnapshot {
+        RenderSnapshot {
+            pixels: Arc::clone(&self.raw_pixels),
+            width: self.width,
+            height: self.height,
+            color_matrix: self.color_matrix_rgb_to_srgb,
+        }
+    }
+
     pub fn new_with_full_cache(
         path: &Path,
         full_cache: Arc<FullExrCacheData>,
@@ -106,7 +156,7 @@ impl ImageCache {
         }
 
         Ok(ImageCache {
-            raw_pixels,
+            raw_pixels: Arc::new(raw_pixels),
             width,
             height,
             layers_info,
@@ -161,7 +211,7 @@ impl ImageCache {
         }
 
         Ok(ImageCache {
-            raw_pixels,
+            raw_pixels: Arc::new(raw_pixels),
             width,
             height,
             layers_info,
@@ -219,7 +269,7 @@ impl ImageCache {
         let raw_pixels = compose_composite_from_channels(&layer_channels);
 
         Ok(ImageCache {
-            raw_pixels,
+            raw_pixels: Arc::new(raw_pixels),
             width,
             height,
             layers_info,
@@ -257,7 +307,8 @@ impl ImageCache {
         self.width = layer_channels.width;
         self.height = layer_channels.height;
         self.current_layer_name = layer_channels.layer_name.clone();
-        compose_composite_into_buffer(&layer_channels, &mut self.raw_pixels);
+        // make_mut copies only if a background render still holds the previous Arc.
+        compose_composite_into_buffer(&layer_channels, Arc::make_mut(&mut self.raw_pixels));
         self.current_layer_channels = Some(layer_channels);
         // Sprawdź, czy macierz dla danej warstwy jest już w cache'u
         if self.color_matrices.contains_key(layer_name) {
@@ -288,56 +339,15 @@ impl ImageCache {
     }
 
     pub fn process_to_image(&self, exposure: f32, gamma: f32, tonemap_mode: i32) -> Image {
-        log_info!(
-            "=== PROCESS_TO_IMAGE START === {}x{}",
-            self.width, self.height
-        );
-
-        log_info!("Using CPU-only processing");
-
-        // GPU processing removed - using CPU processing only
-
-        // Fallback CPU (SIMD + Rayon)
-        log_info!("Using CPU processing for {}x{}", self.width, self.height);
-        let mut buffer = SharedPixelBuffer::<Rgba8Pixel>::new(self.width, self.height);
-        let out_slice = buffer.make_mut_slice();
-
-        let color_m = self.color_matrix_rgb_to_srgb;
-
-        // Optymalizowana SIMD: separuj SIMD od skalarnej reszty
-        self.process_rgba_chunks_optimized(
+        Image::from_rgba8(render_to_buffer(
             &self.raw_pixels,
-            out_slice,
+            self.width,
+            self.height,
             exposure,
             gamma,
             tonemap_mode,
-            color_m,
-        );
-
-        log_info!("=== PROCESS_TO_IMAGE END - CPU completed ===");
-        Image::from_rgba8(buffer)
-    }
-
-    fn process_rgba_chunks_optimized(
-        &self,
-        input: &[f32],
-        output: &mut [Rgba8Pixel],
-        exposure: f32,
-        gamma: f32,
-        tonemap_mode: i32,
-        color_m: Option<Mat3>,
-    ) {
-        // Use unified SIMD processing function with parallel processing
-        crate::processing::simd_processing::process_rgba_chunk_optimized(
-            input,
-            output,
-            exposure,
-            gamma,
-            tonemap_mode,
-            color_m,
-            false,
-            true,
-        );
+            self.color_matrix_rgb_to_srgb,
+        ))
     }
 
     pub fn process_to_composite(
@@ -658,12 +668,14 @@ impl ImageCache {
         let base = channel_index * pixel_count;
         let channel_slice = &layer_cache.channel_data[base..base + pixel_count];
 
-        // Reuse existing raw_pixels buffer - expand grayscale channel to RGBA
+        // Reuse existing raw_pixels buffer - expand grayscale channel to RGBA.
+        // make_mut copies only if a background render still holds the previous Arc.
         let buffer_size = pixel_count * 4;
-        self.raw_pixels.resize(buffer_size, 0.0);
+        let raw = Arc::make_mut(&mut self.raw_pixels);
+        raw.resize(buffer_size, 0.0);
 
         // Parallel grayscale expansion using rayon
-        self.raw_pixels.par_chunks_exact_mut(4).enumerate().for_each(|(i, chunk)| {
+        raw.par_chunks_exact_mut(4).enumerate().for_each(|(i, chunk)| {
             let v = channel_slice[i];
             chunk[0] = v; // R
             chunk[1] = v; // G
@@ -682,6 +694,16 @@ impl ImageCache {
         invert: bool,
         progress: Option<&dyn ProgressSink>,
     ) -> Image {
+        Image::from_rgba8(self.process_depth_to_buffer(invert, progress))
+    }
+
+    /// Same as `process_depth_image_with_progress`, but returns the raw buffer so
+    /// it can be produced off the UI thread (`SharedPixelBuffer` is `Send`).
+    pub fn process_depth_to_buffer(
+        &self,
+        invert: bool,
+        progress: Option<&dyn ProgressSink>,
+    ) -> SharedPixelBuffer<Rgba8Pixel> {
         if let Some(p) = progress {
             p.start_indeterminate(Some("Processing depth data..."));
         }
@@ -695,7 +717,7 @@ impl ImageCache {
             .map(|chunk| chunk[0])
             .collect();
         if values.is_empty() {
-            return Image::from_rgba8(buffer);
+            return buffer;
         }
 
         // Policz percentyle 1% i 99% (odporne na outliery) w ~O(n)
@@ -762,7 +784,7 @@ impl ImageCache {
         if let Some(p) = progress {
             p.finish(Some("Depth processed"));
         }
-        Image::from_rgba8(buffer)
+        buffer
     }
 
 }
